@@ -30,7 +30,7 @@ public class NotificationService {
 
         notificationRepository.save(notification);
 
-        notificationSenderService.send(notification);
+        notificationSenderService.call(notification);
 
         return NotificationSendResponse.from(notification);
     }

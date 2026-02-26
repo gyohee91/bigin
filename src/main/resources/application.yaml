@@ -36,13 +36,8 @@ springdoc:
 
 resilience4j:
   circuitbreaker:
-    configs:
-      default:
-        register-health-indicator: true
-        event-consumer-buffer-size: 10
     instances:
       notificationApi:
-        base-config: default
 
         # Sliding Window 설정
         sliding-window-type: COUNT_BASED
@@ -79,11 +74,15 @@ resilience4j:
   # Retry 설정
   retry:
     configs:
-      default:
-        max-attempts: 4
+      notificationApi:
+        max-attempts: 3
         wait-duration: 1s
         enable-exponential-backoff: true
         exponential-backoff-multiplier: 2
+        max-wait-duration: 10s
         # ✅ 여기에 추가!
         retry-exceptions:
-          - java.lang.Exception
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.client.HttpServerErrorException
+          - org.springframework.web.client.ResourceAccessException
