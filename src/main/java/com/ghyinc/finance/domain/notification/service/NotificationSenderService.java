@@ -11,7 +11,6 @@ import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.decorators.Decorators;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryRegistry;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
@@ -29,30 +28,9 @@ public class NotificationSenderService {
 
     private final RestTemplate restTemplate;
 
-    public void send(Notification notification) {
-        SmsRequest requestDto = SmsRequest.builder()
-                .recipient(notification.getRecipient())
-                .title(notification.getTitle())
-                .content(notification.getContent())
-                .build();
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        HttpEntity<SmsRequest> httpEntity = new HttpEntity<>(requestDto, headers);
-
-        ResponseEntity<SmsResponse> responseEntity = restTemplate.exchange(
-                "http://localhost:8090/send/sms",
-                HttpMethod.POST,
-                httpEntity,
-                SmsResponse.class
-        );
-
-        SmsResponse response = responseEntity.getBody();
-    }
-
     public ExternalApiResponse call(Notification notification) {
-        CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker("notificationApi");
-        Retry retry = retryRegistry.retry("notificationApi");
+        CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker("default");
+        Retry retry = retryRegistry.retry("default");
 
         return this.execute(notification, circuitBreaker, retry);
     }

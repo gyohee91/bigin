@@ -4,6 +4,7 @@ import com.ghyinc.finance.domain.notification.dto.NotificationSendRequest;
 import com.ghyinc.finance.domain.notification.dto.NotificationSendResponse;
 import com.ghyinc.finance.domain.notification.entity.Notification;
 import com.ghyinc.finance.domain.notification.enums.SendType;
+import com.ghyinc.finance.domain.notification.event.NotificationEventProducer;
 import com.ghyinc.finance.domain.notification.repository.NotificationRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,7 +17,7 @@ import java.time.LocalDateTime;
 @RequiredArgsConstructor
 public class NotificationService {
     private final NotificationRepository notificationRepository;
-    private final NotificationSenderService notificationSenderService;
+    private final NotificationEventProducer notificationEventProducer;
 
     public NotificationSendResponse sendNotification(NotificationSendRequest request) {
         Notification notification = Notification.builder()
@@ -30,7 +31,8 @@ public class NotificationService {
 
         notificationRepository.save(notification);
 
-        notificationSenderService.call(notification);
+        notificationEventProducer.publish(notification);
+        //notificationSenderService.call(notification);
 
         return NotificationSendResponse.from(notification);
     }
