@@ -1,6 +1,7 @@
 package com.ghyinc.finance.domain.notification.entity;
 
 import com.ghyinc.finance.domain.notification.enums.ChannelType;
+import com.ghyinc.finance.domain.notification.enums.NotificationStatus;
 import com.ghyinc.finance.domain.notification.enums.SendType;
 import jakarta.persistence.*;
 import lombok.*;
@@ -37,4 +38,25 @@ public class Notification {
 
     @Comment(value = "내용")
     private String content;
+
+    @Comment(value = "결과코드")
+    private String resultCode;
+
+    @Comment(value = "발송 상태")
+    @Builder.Default
+    private NotificationStatus status = NotificationStatus.PENDING;
+
+    @Comment(value = "전송 시간")
+    private LocalDateTime sentAt;
+
+    public void markAsSuccess(String resultCode) {
+        this.resultCode = resultCode;
+        this.status = NotificationStatus.SUCCESS;
+        this.sentAt = LocalDateTime.now();
+    }
+
+    public void markAsFailed(String resultCode) {
+        this.resultCode = resultCode;
+        this.status = NotificationStatus.FAILED;
+    }
 }

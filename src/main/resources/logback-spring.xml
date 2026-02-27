@@ -1,0 +1,21 @@
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <!--
+                [requestId 출력 포인트]
+                %X{requestId} : MDC에서 requestId 값을 꺼내 출력
+                값이 없으면 빈 문자열로 출력됨
+
+                출력 예시:
+                2026-02-27 14:30:00 INFO  [nio-8080-exec-1] [a1b2c3d4-...] NotificationService : 알림 저장 완료
+                2026-02-27 14:30:00 INFO  [ntainer#0-0-C-1] [a1b2c3d4-...] NotificationEventConsumer : 메시지 수신
+                                                                             ↑ 같은 requestId로 HTTP → Kafka 추적 가능
+            -->
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} %-5level [%thread] [%X{requestId}] %logger{36} : %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>
