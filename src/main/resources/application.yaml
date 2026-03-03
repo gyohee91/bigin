@@ -98,3 +98,8 @@ resilience4j:
           - java.util.concurrent.TimeoutException
           - org.springframework.web.client.HttpServerErrorException
           - org.springframework.web.client.ResourceAccessException
+
+# Notification Sender Server Configuration
+notification:
+  sender:
+    base-url: http://localhost:8090/send/sms

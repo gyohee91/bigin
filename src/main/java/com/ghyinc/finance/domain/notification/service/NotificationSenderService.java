@@ -4,6 +4,7 @@ import com.ghyinc.finance.domain.notification.dto.ExternalApiResponse;
 import com.ghyinc.finance.domain.notification.dto.SmsRequest;
 import com.ghyinc.finance.domain.notification.dto.SmsResponse;
 import com.ghyinc.finance.domain.notification.entity.Notification;
+import com.ghyinc.finance.global.client.ExternalApiClient;
 import com.ghyinc.finance.global.exception.ExternalApiFailException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
@@ -13,6 +14,7 @@ import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -25,8 +27,10 @@ import java.util.function.Supplier;
 public class NotificationSenderService {
     private final CircuitBreakerRegistry circuitBreakerRegistry;
     private final RetryRegistry retryRegistry;
+    private final ExternalApiClient apiClient;
 
-    private final RestTemplate restTemplate;
+    @Value("${notification.sender.base-url}")
+    private String url;
 
     public ExternalApiResponse call(Notification notification) {
         CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker("default");
@@ -41,33 +45,14 @@ public class NotificationSenderService {
             Retry retry
     ) {
         Supplier<ExternalApiResponse> apiCall = () -> {
-            SmsRequest requestDto = SmsRequest.builder()
-                    .recipient(notification.getRecipient())
-                    .title(notification.getTitle())
-                    .content(notification.getContent())
-                    .build();
+            //ExternalApiResponse response = apiClient.requestRestTemplate(notification, url);
+            ExternalApiResponse response = apiClient.requestWebClient(notification, url);
 
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            HttpEntity<SmsRequest> httpEntity = new HttpEntity<>(requestDto, headers);
-
-            ResponseEntity<SmsResponse> responseEntity = restTemplate.exchange(
-                    "http://localhost:8090/send/sms",
-                    HttpMethod.POST,
-                    httpEntity,
-                    SmsResponse.class
-            );
-
-            SmsResponse response = responseEntity.getBody();
-
-            if("SUCCESS".equals(response.getResultCode())) {
-                return ExternalApiResponse.success(notification.getId(), response.getResultCode(), response);
-            }
-            else {
-                return ExternalApiResponse.fail(notification.getId(), response.getResultCode(), "error");
-                //throw new ExternalApiFailException(response.getResultCode(), "error");
+            if(!response.isSuccess()) {
+                throw new ExternalApiFailException(response.getResultCode(), "외부 API 실패 - CODE: " + response.getResultCode());
             }
 
+            return response;
         };
 
         return Decorators.ofSupplier(apiCall)
