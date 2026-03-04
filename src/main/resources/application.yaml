@@ -25,11 +25,28 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        spring.json.trusted.packages: "com.ghyinc.finance.domain.notification.dto"
+        spring.json.trusted.packages: "com.ghyinc.finance.domain.notification.event"
 
 server:
   port: 8080
   shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus, metrics
+  endpoint:
+    prometheus:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      # 모든 매트릭에 애플리케이션 이름 태그 추가
+      # Grafana에서 application="notification-service" 로 필터링 가능
+      application: notification-service
 
 springdoc:
   swagger-ui:

@@ -8,7 +8,6 @@ import com.ghyinc.finance.global.exception.ExternalApiFailException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
@@ -23,6 +22,8 @@ import java.io.IOException;
 public class ExternalApiClient {
     private final RestTemplate restTemplate;
     private final WebClient webClient;
+
+    public static final String REQUEST_ID_KEY = "requestId";
 
     public ExternalApiResponse requestRestTemplate(Notification notification, String url) {
         SmsRequest requestDto = SmsRequest.builder()
@@ -56,7 +57,7 @@ public class ExternalApiClient {
 
         SmsResponse result = webClient.post()
                 .uri(url)
-                .header("X-Request-Id", MDC.get("requestId"))
+                .header("X-Request-Id", MDC.get(REQUEST_ID_KEY))
                 .bodyValue(requestDto)
                 .retrieve()
                 .onStatus(HttpStatusCode::is5xxServerError, response ->
@@ -82,7 +83,7 @@ public class ExternalApiClient {
 
         return webClient.post()
                 .uri(url)
-                .header("X-Request-Id", MDC.get("requestId"))
+                .header("X-Request-Id", MDC.get(REQUEST_ID_KEY))
                 .bodyValue(requestDto)
                 .retrieve()
                 .onStatus(HttpStatusCode::is5xxServerError, response ->
@@ -96,17 +97,17 @@ public class ExternalApiClient {
                 .bodyToMono(SmsResponse.class)
                 .map(response -> this.toCommonResponse(notification, response))
                 .onErrorResume(Exception.class, ex -> {
-                    log.warn("호출 실패 - requestId: {}, error: {}", MDC.get("requestId"), ex.getMessage());
-                    return Mono.just(ExternalApiResponse.fail(notification.getId(), "UNAVAILABLE", ex.getMessage()));
+                    log.warn("호출 실패 - requestId: {}, error: {}", MDC.get(REQUEST_ID_KEY), ex.getMessage());
+                    return Mono.just(ExternalApiResponse.fail(MDC.get(REQUEST_ID_KEY), "UNAVAILABLE", ex.getMessage()));
                 });
     }
 
     private ExternalApiResponse toCommonResponse(Notification notification, SmsResponse response) {
         if("SUCCESS".equals(response.getResultCode())) {
-            return ExternalApiResponse.success(notification.getId(), response.getResultCode(), response);
+            return ExternalApiResponse.success(MDC.get("requestId"), response.getResultCode(), response);
         }
         else {
-            return ExternalApiResponse.fail(notification.getId(), response.getResultCode(), "error");
+            return ExternalApiResponse.fail(MDC.get("requestId"), response.getResultCode(), "error");
             //throw new ExternalApiFailException(response.getResultCode(), "error");
         }
     }

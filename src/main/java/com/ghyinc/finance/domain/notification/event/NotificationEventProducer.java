@@ -1,6 +1,5 @@
 package com.ghyinc.finance.domain.notification.event;
 
-import com.ghyinc.finance.domain.notification.dto.NotificationEvent;
 import com.ghyinc.finance.domain.notification.entity.Notification;
 import lombok.RequiredArgsConstructor;
 import org.springframework.kafka.core.KafkaTemplate;

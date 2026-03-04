@@ -1,8 +1,6 @@
 package com.ghyinc.finance.domain.notification.service;
 
 import com.ghyinc.finance.domain.notification.dto.ExternalApiResponse;
-import com.ghyinc.finance.domain.notification.dto.SmsRequest;
-import com.ghyinc.finance.domain.notification.dto.SmsResponse;
 import com.ghyinc.finance.domain.notification.entity.Notification;
 import com.ghyinc.finance.global.client.ExternalApiClient;
 import com.ghyinc.finance.global.exception.ExternalApiFailException;
@@ -14,10 +12,9 @@ import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.*;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
 import java.util.function.Supplier;
 
@@ -32,6 +29,8 @@ public class NotificationSenderService {
     @Value("${notification.sender.base-url}")
     private String url;
 
+    public static final String REQUEST_ID_KEY = "requestId";
+
     public ExternalApiResponse call(Notification notification) {
         CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker("default");
         Retry retry = retryRegistry.retry("default");
@@ -45,8 +44,8 @@ public class NotificationSenderService {
             Retry retry
     ) {
         Supplier<ExternalApiResponse> apiCall = () -> {
-            //ExternalApiResponse response = apiClient.requestRestTemplate(notification, url);
-            ExternalApiResponse response = apiClient.requestWebClient(notification, url);
+            ExternalApiResponse response = apiClient.requestRestTemplate(notification, url);
+            //ExternalApiResponse response = apiClient.requestWebClient(notification, url);
 
             if(!response.isSuccess()) {
                 throw new ExternalApiFailException(response.getResultCode(), "외부 API 실패 - CODE: " + response.getResultCode());
@@ -76,6 +75,6 @@ public class NotificationSenderService {
                     notification.getId(), ex.getMessage());
         }
 
-        return ExternalApiResponse.unavailable(notification.getId());
+        return ExternalApiResponse.unavailable(MDC.get(REQUEST_ID_KEY));
     }
 }
