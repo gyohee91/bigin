@@ -1,0 +1,49 @@
+package com.ghyinc.finance.domain.loan.strategy;
+
+import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
+import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
+import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
+import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.domain.loan.enums.LoanType;
+
+import java.util.List;
+
+/**
+ * 대출 유형별 한도조회 전략 인터페이스
+ *
+ * 대출 종류마다 조회 가능한 은행, 유효성 검증,
+ * Adaptor 요청 변환 방식이 다르므로 Strategy 패턴으로 분리
+ *
+ */
+public interface LoanLimitStrategy {
+    /**
+     * 이 전락이 처리하는 대출 유형
+     */
+    LoanType getLoanType();
+
+    /**
+     * 조회 가능 금융사 목록
+     * - 대출 유형 별로 지원 금융사가 다를 수 있음.
+     * @return
+     */
+    List<PartnerCode> getSupportedBanks();
+
+    /**
+     * 서비스 요청을 어댑터 요청으로 변환
+     * - 대출 유형별 loanTypeCode, 필드 매핑 방식이 다름
+     * @param request
+     * @return
+     */
+    LoanLimitAdaptorRequest toAdaptorRequest(LoanLimitRequest request);
+
+    /**
+     * 어댑터 응답 후처리
+     * - 대출 유형별 후처리 로직이 필요한 경우 오버라이드
+     * - 기본 구현은 응답을 그대로 반환
+     * @param response
+     * @return
+     */
+    default LoanLimitAdaptorResponse postProcess(LoanLimitAdaptorResponse response) {
+        return response;
+    }
+}

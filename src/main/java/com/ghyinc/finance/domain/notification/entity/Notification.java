@@ -3,6 +3,7 @@ package com.ghyinc.finance.domain.notification.entity;
 import com.ghyinc.finance.domain.notification.enums.ChannelType;
 import com.ghyinc.finance.domain.notification.enums.NotificationStatus;
 import com.ghyinc.finance.domain.notification.enums.SendType;
+import com.ghyinc.finance.global.common.BaseTimeEntity;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.Comment;
@@ -14,7 +15,7 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
-public class Notification {
+public class Notification extends BaseTimeEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
