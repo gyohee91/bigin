@@ -26,7 +26,7 @@ public class PartnerApiProperties {
 
     @Getter
     @Setter
-    private static class PartnerApiConfig {
+    public static class PartnerApiConfig {
         private String baseUrl;
         private String path;
     }
