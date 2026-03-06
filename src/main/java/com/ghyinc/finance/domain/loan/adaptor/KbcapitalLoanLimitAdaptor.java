@@ -13,7 +13,7 @@ import org.springframework.web.client.RestTemplate;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
+public class KbcapitalLoanLimitAdaptor implements LoanLimitAdaptor {
     private final RestTemplate restTemplate;
 
     @Value("${notification.sender.base-url}")
@@ -25,7 +25,7 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
 
     @Override
     public PartnerCode getPartnerCode() {
-        return PartnerCode.KAKAO_BANK;
+        return PartnerCode.KB_CAPITAL;
     }
 
     @Override
@@ -33,6 +33,9 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
         long startTime = System.currentTimeMillis();
 
         try {
+            long resTimeMs = System.currentTimeMillis() - startTime;
+
+            //External API
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<LoanLimitAdaptorRequest> httpEntity = new HttpEntity<>(request, headers);
@@ -46,31 +49,25 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
 
             LimitResponse result = responseEntity.getBody();
 
-            long resTimeMs = System.currentTimeMillis() - startTime;
-
             if(!"SUCCESS".equals(result.resultCode())) {
-                log.warn("[{}] 한도조회 실패. resultCode={}", PartnerCode.KAKAO_BANK, result.resultCode());
+                log.warn("[{}] 한도조회 실패. resultCode={}", PartnerCode.KB_CAPITAL, result.resultCode());
                 return LoanLimitAdaptorResponse.fail(
-                        PartnerCode.KAKAO_BANK,
+                        PartnerCode.KB_CAPITAL,
                         result.resultCode(),
                         resTimeMs
                 );
             }
 
-            log.info("[{}] 한도조회 성공, resTimeMs={}", PartnerCode.KAKAO_BANK, resTimeMs);
+            log.info("[{}] 한도조회 성공, resTimeMs={}", PartnerCode.KB_CAPITAL, resTimeMs);
 
             return LoanLimitAdaptorResponse.success(
-                    PartnerCode.KAKAO_BANK,
+                    PartnerCode.KB_CAPITAL,
                     resTimeMs
             );
         } catch (Exception e) {
             long resTimeMs = System.currentTimeMillis() - startTime;
-            log.error("[{}] 한도조회 오류 발생", PartnerCode.KAKAO_BANK, e);
-            return LoanLimitAdaptorResponse.fail(
-                    PartnerCode.KAKAO_BANK,
-                    e.getMessage(),
-                    resTimeMs
-            );
+            log.error("[{}] 한도조회 오류 발생", PartnerCode.KB_CAPITAL, e);
+            return LoanLimitAdaptorResponse.fail(PartnerCode.KB_CAPITAL, e.getMessage(), resTimeMs);
         }
     }
 }

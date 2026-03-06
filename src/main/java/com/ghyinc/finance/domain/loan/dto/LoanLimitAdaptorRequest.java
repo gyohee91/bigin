@@ -5,6 +5,7 @@ import lombok.Builder;
 
 @Builder
 public record LoanLimitAdaptorRequest(
+        String loReqtNo,
         String name,
         String rrno,
         JobType jobType

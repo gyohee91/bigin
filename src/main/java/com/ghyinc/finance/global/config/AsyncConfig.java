@@ -1,9 +1,12 @@
 package com.ghyinc.finance.global.config;
 
+import org.slf4j.MDC;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.Executor;
 
 @Configuration
@@ -23,6 +26,22 @@ public class AsyncConfig {
         executor.setThreadNamePrefix("loan-limit-");
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(30);
+        //MDC 전파: 부모 스레드의 MDC 컨텍스트를 자식 스레드에 복사
+        //requestId 등 로그 추적 컨텍스트가 병렬 처리 스레드에서도 유지됨
+        executor.setTaskDecorator(task -> {
+            Map<String, String> parentMdcContext = MDC.getCopyOfContextMap();
+            return () -> {
+                try {
+                    if(Objects.nonNull(parentMdcContext)) {
+                        MDC.setContextMap(parentMdcContext);
+                    }
+                    task.run();
+                } finally {
+                    //스레드풀 스레드는 재사용되므로 반드시 초기화
+                    MDC.clear();
+                }
+            };
+        });
         executor.initialize();
         return executor;
     }

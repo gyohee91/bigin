@@ -20,6 +20,7 @@ public class LoanLimitInquiry extends BaseTimeEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(nullable = false)
     @Comment("대출 번호")
     private String loReqtNo;
 
@@ -27,6 +28,8 @@ public class LoanLimitInquiry extends BaseTimeEntity {
     @Comment("대출 유형")
     private LoanType loanType;
 
+    @OneToMany(mappedBy = "loanLimitInquiry", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
     private List<LoanLimitResult> results = new ArrayList<>();
 
     public void addResult(LoanLimitResult result) {

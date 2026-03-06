@@ -14,6 +14,19 @@ spring:
     url: jdbc:h2:mem:test   # 인메모리 DB
     username: sa
     password:
+  jpa:
+    hibernate:
+      ddl-auto: create
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.H2Dialect
+
+  # Kafka 자동설정 비활성화 (로컬 테스트 시 Kafka 없이 기동)
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration
 
   kafka:
     bootstrap-servers: localhost:9092

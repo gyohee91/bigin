@@ -2,6 +2,7 @@ package com.ghyinc.finance.global.exception;
 
 import com.ghyinc.finance.global.common.ErrorResponse;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.common.errors.InvalidRequestException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -19,6 +20,18 @@ import java.util.stream.Collectors;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    /**
+     * 지원하지 않는 금융사 등 (비즈니스 요청 오류)
+     */
+    @ExceptionHandler(InvalidRequestException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidRequestException(InvalidRequestException e) {
+        log.warn("InvalidRequestException: {}", e.getMessage());
+
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ErrorResponse.of(HttpStatus.BAD_REQUEST.getReasonPhrase(), e.getMessage()));
+    }
 
     /**
      *  외부 API 5xx 에러
