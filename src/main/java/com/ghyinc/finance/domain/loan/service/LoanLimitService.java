@@ -74,27 +74,7 @@ public class LoanLimitService {
         List<LoanLimitAdaptor> adaptors = adaptorFactory.getAdaptors(activePartnerCodes);
 
         //한도 조회
-        List<LoanLimitAdaptorResponse> adaptorResponses = loanLimitSenderService.inquiry(adaptors, adaptorRequest);
-
-        // 어댑터 응답을 후처리하고 Entity로 변환하여 저장
-        adaptorResponses.forEach(adaptorResponse -> {
-            // Strategy 후처리
-            LoanLimitAdaptorResponse processed = strategy.postProcess(adaptorResponse);
-
-            LoanLimitResult loanLimitResult = processed.success() ?
-                    LoanLimitResult.success(
-                            processed.partnerCode(),
-                            processed.resTimeMs()
-                    )
-                    :
-                    LoanLimitResult.fail(
-                            processed.partnerCode(),
-                            processed.failReason(),
-                            processed.resTimeMs()
-                    );
-
-            inquiry.addResult(loanLimitResult);
-        });
+        loanLimitSenderService.inquiry(inquiry.getId(), adaptors, adaptorRequest, strategy);
 
         return LoanLimitResponse.from(inquiry);
     }

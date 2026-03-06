@@ -3,11 +3,19 @@ package com.ghyinc.finance.domain.loan.service;
 import com.ghyinc.finance.domain.loan.adaptor.LoanLimitAdaptor;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
+import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
+import com.ghyinc.finance.domain.loan.entity.LoanLimitResult;
+import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
+import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.common.errors.InvalidRequestException;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
@@ -15,6 +23,8 @@ import java.util.concurrent.Executor;
 @Service
 @RequiredArgsConstructor
 public class LoanLimitSenderService {
+    private final LoanLimitInquiryRepository loanLimitInquiryRepository;
+
     private final Executor loanLimitExecutor;
 
     /**
@@ -27,10 +37,17 @@ public class LoanLimitSenderService {
      * @param adaptorRequest
      * @return
      */
-    public List<LoanLimitAdaptorResponse> inquiry(
+    @Async("loanLimitExecutor")
+    @Transactional
+    public void inquiry(
+            long id,
             List<LoanLimitAdaptor> adaptors,
-            LoanLimitAdaptorRequest adaptorRequest
+            LoanLimitAdaptorRequest adaptorRequest,
+            LoanLimitStrategy strategy
     ) {
+        LoanLimitInquiry loanLimitInquiry = loanLimitInquiryRepository.findById(id)
+                .orElseThrow(() -> new InvalidRequestException("존재하지 않는 조회 이력: " + id));
+
         List<CompletableFuture<LoanLimitAdaptorResponse>> futures = adaptors.stream()
                 .map(adaptor -> CompletableFuture
                         .supplyAsync(() -> adaptor.inquireLimit(adaptorRequest), loanLimitExecutor)
@@ -41,8 +58,29 @@ public class LoanLimitSenderService {
                 )
                 .toList();
 
-        return futures.stream()
+        List<LoanLimitAdaptorResponse> adaptorResponses = futures.stream()
                 .map(CompletableFuture::join)
                 .toList();
+
+        // 어댑터 응답을 후처리하고 Entity로 변환하여 저장
+        adaptorResponses.forEach(adaptorResponse -> {
+            // Strategy 후처리
+            LoanLimitAdaptorResponse processed = strategy.postProcess(adaptorResponse);
+
+            LoanLimitResult loanLimitResult = processed.success() ?
+                    LoanLimitResult.success(
+                            processed.partnerCode(),
+                            processed.resTimeMs()
+                    )
+                    :
+                    LoanLimitResult.fail(
+                            processed.partnerCode(),
+                            processed.failReason(),
+                            processed.resTimeMs()
+                    );
+
+            loanLimitInquiry.addResult(loanLimitResult);
+        });
+
     }
 }
