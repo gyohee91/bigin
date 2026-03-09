@@ -3,11 +3,20 @@ package com.ghyinc.finance.domain.notification.dto;
 import com.ghyinc.finance.domain.notification.enums.ChannelType;
 import com.ghyinc.finance.domain.notification.enums.SendType;
 import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 @Schema(description = "알림 발송 등록(요청)")
 @Getter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class NotificationSendRequest {
+    @Schema(description = "고객Id", example = "1")
+    private Long userId;
+
     @Schema(description = "채널 타입", example = "SMS")
     private ChannelType channelType;
 

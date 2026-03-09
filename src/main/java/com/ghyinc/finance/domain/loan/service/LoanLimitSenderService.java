@@ -8,15 +8,16 @@ import com.ghyinc.finance.domain.loan.entity.LoanLimitResult;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
+import com.ghyinc.finance.domain.loan.event.LoanLimitCompletedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
@@ -27,6 +28,7 @@ public class LoanLimitSenderService {
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
 
     private final Executor loanLimitExecutor;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * 여러 금융사에 대한 한도조회
@@ -94,6 +96,14 @@ public class LoanLimitSenderService {
                     : (successCount == 0 ? InquiryStatus.PARTIAL_SUCCESS : InquiryStatus.FAILED);
 
             loanLimitInquiry.updateInquiryStatus(resultStatus);
+
+            //알림 발송 - notification 도메인을 직접 알지 못함
+            eventPublisher.publishEvent(
+                    LoanLimitCompletedEvent.builder()
+                            .userId(loanLimitInquiry.getUserId())
+                            .loReqtNo(loanLimitInquiry.getLoReqtNo())
+                            .build()
+            );
         } catch(Exception e) {
             log.error("한도조회 처리 중 오류. id={}", loanLimitInquiry.getId(), e);
             loanLimitInquiry.updateInquiryStatus(InquiryStatus.FAILED);

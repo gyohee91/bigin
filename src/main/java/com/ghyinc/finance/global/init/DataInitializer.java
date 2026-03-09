@@ -1,9 +1,10 @@
-package com.ghyinc.finance.domain.loan.init;
+package com.ghyinc.finance.global.init;
 
 import com.ghyinc.finance.domain.loan.entity.Partner;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerType;
 import com.ghyinc.finance.domain.loan.repository.PartnerRepository;
+import com.ghyinc.finance.domain.user.entity.User;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
@@ -18,7 +19,7 @@ import java.util.List;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class PartnerDataInitializer implements ApplicationRunner {
+public class DataInitializer implements ApplicationRunner {
     private final PartnerRepository partnerRepository;
 
     @Override
@@ -45,5 +46,13 @@ public class PartnerDataInitializer implements ApplicationRunner {
         );
 
         partnerRepository.saveAll(initialPartner);
+
+        List<User> initialUser = List.of(
+                User.builder()
+                        .name("윤교희")
+                        .mobile("01056677055")
+                        .email("gyohee91@gmail.com")
+                        .build()
+        );
     }
 }

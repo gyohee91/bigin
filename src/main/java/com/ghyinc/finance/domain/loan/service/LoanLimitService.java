@@ -54,6 +54,7 @@ public class LoanLimitService {
         LoanLimitStrategy strategy = strategyFactory.getStrategy(request.getLoanType());
 
         LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
+                .userId(request.getUserId())
                 .loReqtNo(generator.generate())
                 .loanType(request.getLoanType())
                 .build();

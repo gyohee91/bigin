@@ -17,6 +17,9 @@ public class LoanLimitRequest {
     @Schema(description = "고객명", example = "윤교희")
     private String name;
 
+    @Schema(description = "고객ID", example = "1")
+    private Long userId;
+
     @Schema(description = "주민번호", example = "9102131012345")
     private String rrno;
 

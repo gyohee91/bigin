@@ -21,6 +21,10 @@ public class LoanLimitInquiry extends BaseTimeEntity {
     private Long id;
 
     @Column(nullable = false)
+    @Comment("고객번호")
+    private Long userId;
+
+    @Column(nullable = false, unique = true)
     @Comment("대출 번호")
     private String loReqtNo;
 
