@@ -26,7 +26,7 @@ public class LoanLimitResult {
 
     @Enumerated(EnumType.STRING)
     @Comment("응답 결과")
-    private InquiryStatus inquiryStatus;
+    private InquiryStatus status;
 
     @Comment("실패 사유")
     private String failReason;
@@ -41,7 +41,7 @@ public class LoanLimitResult {
     public static LoanLimitResult success(PartnerCode partnerCode, long resTimeMs) {
         return LoanLimitResult.builder()
                 .partnerCode(partnerCode)
-                .inquiryStatus(InquiryStatus.SUCCESS)
+                .status(InquiryStatus.SUCCESS)
                 .resTimeMs(resTimeMs)
                 .build();
     }
@@ -49,7 +49,7 @@ public class LoanLimitResult {
     public static LoanLimitResult fail(PartnerCode partnerCode, String failReason, long resTimeMs) {
         return LoanLimitResult.builder()
                 .partnerCode(partnerCode)
-                .inquiryStatus(InquiryStatus.FAILED)
+                .status(InquiryStatus.FAILED)
                 .failReason(failReason)
                 .resTimeMs(resTimeMs)
                 .build();

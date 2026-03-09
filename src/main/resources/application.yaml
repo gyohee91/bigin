@@ -134,7 +134,7 @@ notification:
   sender:
     base-url: http://localhost:8090/send/sms
 
-bank-api:
+loan-api:
   partners:
     KAKAO_BANK:
       base-url: http://localhost:8090

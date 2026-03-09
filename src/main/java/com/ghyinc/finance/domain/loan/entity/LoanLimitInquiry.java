@@ -28,9 +28,18 @@ public class LoanLimitInquiry extends BaseTimeEntity {
     @Comment("대출 유형")
     private LoanType loanType;
 
+    @Enumerated(EnumType.STRING)
+    @Comment("응답 결과")
+    @Builder.Default
+    private InquiryStatus status = InquiryStatus.PENDING;
+
     @OneToMany(mappedBy = "loanLimitInquiry", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<LoanLimitResult> results = new ArrayList<>();
+
+    public void updateInquiryStatus(InquiryStatus status) {
+        this.status = status;
+    }
 
     public void addResult(LoanLimitResult result) {
         this.results.add(result);

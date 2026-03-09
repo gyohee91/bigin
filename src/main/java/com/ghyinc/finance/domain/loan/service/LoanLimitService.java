@@ -15,6 +15,7 @@ import com.ghyinc.finance.domain.loan.factory.LoanLimitStrategyFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.domain.loan.repository.PartnerRepository;
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
+import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
@@ -40,8 +41,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class LoanLimitService {
     private final LoanLimitSenderService loanLimitSenderService;
+    private final LoReqtNoGenerator generator;
+
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
     private final PartnerRepository partnerRepository;
+
     private final LoanLimitStrategyFactory strategyFactory;
     private final LoanLimitAdaptorFactory adaptorFactory;
 
@@ -49,9 +53,8 @@ public class LoanLimitService {
     public LoanLimitResponse requestCompareLoan(LoanLimitRequest request) {
         LoanLimitStrategy strategy = strategyFactory.getStrategy(request.getLoanType());
 
-        String loReqtNo = this.getLoReqtNo();
         LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
-                .loReqtNo(loReqtNo)
+                .loReqtNo(generator.generate())
                 .loanType(request.getLoanType())
                 .build();
 
@@ -73,7 +76,8 @@ public class LoanLimitService {
         // 지원 은행 목록 조회 (Strategy) -> 어댑터 목록 획득 (Factory)
         List<LoanLimitAdaptor> adaptors = adaptorFactory.getAdaptors(activePartnerCodes);
 
-        //한도 조회
+        // 한도 조회(백그라운드 비동기 처리)
+        // @Async 적용을 위해 별도 Bean(LoanLimitSenderService)으로 분리
         loanLimitSenderService.inquiry(inquiry.getId(), adaptors, adaptorRequest, strategy);
 
         return LoanLimitResponse.from(inquiry);

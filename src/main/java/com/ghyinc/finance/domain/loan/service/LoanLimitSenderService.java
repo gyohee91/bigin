@@ -5,6 +5,7 @@ import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitResult;
+import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
 import lombok.RequiredArgsConstructor;
@@ -45,42 +46,57 @@ public class LoanLimitSenderService {
             LoanLimitAdaptorRequest adaptorRequest,
             LoanLimitStrategy strategy
     ) {
+        //새 트랜잭션에서 inquiry 조회 (호출 측 트랜잭션과 완전 분리)
         LoanLimitInquiry loanLimitInquiry = loanLimitInquiryRepository.findById(id)
                 .orElseThrow(() -> new InvalidRequestException("존재하지 않는 조회 이력: " + id));
 
-        List<CompletableFuture<LoanLimitAdaptorResponse>> futures = adaptors.stream()
-                .map(adaptor -> CompletableFuture
-                        .supplyAsync(() -> adaptor.inquireLimit(adaptorRequest), loanLimitExecutor)
-                        .exceptionally(ex -> {
-                            log.error("[{}] 비동기 한도조회 중 예외 발생", adaptor.getPartnerCode(), ex);
-                            return LoanLimitAdaptorResponse.fail(adaptor.getPartnerCode(), ex.getMessage(), 0L);
-                        })
-                )
-                .toList();
+        loanLimitInquiry.updateInquiryStatus(InquiryStatus.IN_PROGRESS);
 
-        List<LoanLimitAdaptorResponse> adaptorResponses = futures.stream()
-                .map(CompletableFuture::join)
-                .toList();
-
-        // 어댑터 응답을 후처리하고 Entity로 변환하여 저장
-        adaptorResponses.forEach(adaptorResponse -> {
-            // Strategy 후처리
-            LoanLimitAdaptorResponse processed = strategy.postProcess(adaptorResponse);
-
-            LoanLimitResult loanLimitResult = processed.success() ?
-                    LoanLimitResult.success(
-                            processed.partnerCode(),
-                            processed.resTimeMs()
+        try {
+            //금융사별 병렬 API 호출
+            List<CompletableFuture<LoanLimitAdaptorResponse>> futures = adaptors.stream()
+                    .map(adaptor -> CompletableFuture
+                            .supplyAsync(() -> adaptor.inquireLimit(adaptorRequest), loanLimitExecutor)
+                            .exceptionally(ex -> {
+                                log.error("[{}] 비동기 한도조회 중 예외 발생", adaptor.getPartnerCode(), ex);
+                                return LoanLimitAdaptorResponse.fail(adaptor.getPartnerCode(), ex.getMessage(), 0L);
+                            })
                     )
-                    :
-                    LoanLimitResult.fail(
-                            processed.partnerCode(),
-                            processed.failReason(),
-                            processed.resTimeMs()
-                    );
+                    .toList();
 
-            loanLimitInquiry.addResult(loanLimitResult);
-        });
+            List<LoanLimitAdaptorResponse> adaptorResponses = futures.stream()
+                    .map(CompletableFuture::join)
+                    .toList();
 
+            // 어댑터 응답을 후처리하고 Entity로 변환하여 저장
+            adaptorResponses.forEach(adaptorResponse -> {
+                // Strategy 후처리
+                LoanLimitAdaptorResponse processed = strategy.postProcess(adaptorResponse);
+
+                LoanLimitResult loanLimitResult = processed.success()
+                        ? LoanLimitResult.success(
+                                processed.partnerCode(),
+                                processed.resTimeMs()
+                        )
+                        : LoanLimitResult.fail(
+                                processed.partnerCode(),
+                                processed.failReason(),
+                                processed.resTimeMs()
+                        );
+
+                loanLimitInquiry.addResult(loanLimitResult);
+            });
+
+            //최종 상태 결정
+            long successCount = adaptorResponses.stream().filter(LoanLimitAdaptorResponse::success).count();
+            InquiryStatus resultStatus = successCount == adaptorResponses.size()
+                    ? InquiryStatus.SUCCESS
+                    : (successCount == 0 ? InquiryStatus.PARTIAL_SUCCESS : InquiryStatus.FAILED);
+
+            loanLimitInquiry.updateInquiryStatus(resultStatus);
+        } catch(Exception e) {
+            log.error("한도조회 처리 중 오류. id={}", loanLimitInquiry.getId(), e);
+            loanLimitInquiry.updateInquiryStatus(InquiryStatus.FAILED);
+        }
     }
 }
