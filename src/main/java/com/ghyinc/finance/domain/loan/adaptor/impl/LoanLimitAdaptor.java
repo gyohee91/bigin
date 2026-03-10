@@ -1,4 +1,4 @@
-package com.ghyinc.finance.domain.loan.adaptor;
+package com.ghyinc.finance.domain.loan.adaptor.impl;
 
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
@@ -19,7 +19,7 @@ public interface LoanLimitAdaptor {
     /**
      * 현재 어댑터가 지원하는 Partner code
      */
-    PartnerCode getPartnerCode();
+    boolean supports(PartnerCode partnerCode);
 
     /**
      * 외부 금융사 API 호출하여 대출 한도 조회
@@ -27,5 +27,5 @@ public interface LoanLimitAdaptor {
      * @param request   공통 요청 DTO
      * @return  공통 응답 DTO (성공/실패 여부 포함)
      */
-    LoanLimitAdaptorResponse inquireLimit(LoanLimitAdaptorRequest request);
+    LoanLimitAdaptorResponse inquireLimit(PartnerCode partnerCode, LoanLimitAdaptorRequest request);
 }

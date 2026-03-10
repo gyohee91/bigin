@@ -1,4 +1,4 @@
-package com.ghyinc.finance.domain.loan.adaptor;
+package com.ghyinc.finance.domain.loan.adaptor.impl;
 
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
@@ -13,7 +13,7 @@ import org.springframework.web.client.RestTemplate;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
+public class KbcapitalLoanLimitAdaptor implements LoanLimitAdaptor {
     private final RestTemplate restTemplate;
 
     @Value("${notification.sender.base-url}")
@@ -24,12 +24,12 @@ public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
     ) {}
 
     @Override
-    public PartnerCode getPartnerCode() {
-        return PartnerCode.TOSS_BANK;
+    public boolean supports(PartnerCode partnerCode) {
+        return partnerCode == PartnerCode.KB_CAPITAL;
     }
 
     @Override
-    public LoanLimitAdaptorResponse inquireLimit(LoanLimitAdaptorRequest request) {
+    public LoanLimitAdaptorResponse inquireLimit(PartnerCode partnerCode, LoanLimitAdaptorRequest request) {
         long startTime = System.currentTimeMillis();
 
         try {
@@ -50,24 +50,24 @@ public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
             LimitResponse result = responseEntity.getBody();
 
             if(!"SUCCESS".equals(result.resultCode())) {
-                log.warn("[{}] 한도조회 실패. resultCode={}", PartnerCode.TOSS_BANK, result.resultCode());
+                log.warn("[{}] 한도조회 실패. resultCode={}", PartnerCode.KB_CAPITAL, result.resultCode());
                 return LoanLimitAdaptorResponse.fail(
-                        PartnerCode.TOSS_BANK,
+                        PartnerCode.KB_CAPITAL,
                         result.resultCode(),
                         resTimeMs
                 );
             }
 
-            log.info("[{}] 한도조회 성공, resTimeMs={}", PartnerCode.TOSS_BANK, resTimeMs);
+            log.info("[{}] 한도조회 성공, resTimeMs={}", PartnerCode.KB_CAPITAL, resTimeMs);
 
             return LoanLimitAdaptorResponse.success(
-                    PartnerCode.TOSS_BANK,
+                    PartnerCode.KB_CAPITAL,
                     resTimeMs
             );
         } catch (Exception e) {
             long resTimeMs = System.currentTimeMillis() - startTime;
-            log.error("[{}] 한도조회 오류 발생", PartnerCode.TOSS_BANK, e);
-            return LoanLimitAdaptorResponse.fail(PartnerCode.TOSS_BANK, e.getMessage(), resTimeMs);
+            log.error("[{}] 한도조회 오류 발생", PartnerCode.KB_CAPITAL, e);
+            return LoanLimitAdaptorResponse.fail(PartnerCode.KB_CAPITAL, e.getMessage(), resTimeMs);
         }
     }
 }

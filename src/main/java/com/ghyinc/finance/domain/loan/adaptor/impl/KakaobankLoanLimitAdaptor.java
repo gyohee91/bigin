@@ -1,16 +1,13 @@
-package com.ghyinc.finance.domain.loan.adaptor;
+package com.ghyinc.finance.domain.loan.adaptor.impl;
 
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.config.PartnerApiProperties;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestTemplate;
 
 import java.util.Map;
 
@@ -36,13 +33,14 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
             String resultCode
     ) {}
 
+
     @Override
-    public PartnerCode getPartnerCode() {
-        return PartnerCode.KAKAO_BANK;
+    public boolean supports(PartnerCode partnerCode) {
+        return partnerCode == PartnerCode.KAKAO_BANK;
     }
 
     @Override
-    public LoanLimitAdaptorResponse inquireLimit(LoanLimitAdaptorRequest request) {
+    public LoanLimitAdaptorResponse inquireLimit(PartnerCode partnerCode, LoanLimitAdaptorRequest request) {
         long startTime = System.currentTimeMillis();
 
         try {

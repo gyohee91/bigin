@@ -1,11 +1,13 @@
 package com.ghyinc.finance.domain.loan.service;
 
-import com.ghyinc.finance.domain.loan.adaptor.LoanLimitAdaptor;
+import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitResult;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
+import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.domain.loan.factory.LoanLimitAdaptorFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
 import com.ghyinc.finance.domain.loan.event.LoanLimitCompletedEvent;
@@ -25,6 +27,7 @@ import java.util.concurrent.Executor;
 @Service
 @RequiredArgsConstructor
 public class LoanLimitSenderService {
+    private final LoanLimitAdaptorFactory adaptorFactory;
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
 
     private final Executor loanLimitExecutor;
@@ -36,7 +39,7 @@ public class LoanLimitSenderService {
      * <p> 각 은행 API 호출은 독립적이므로 CompletableFuture로 병렬 처리
      * 한 금융사의 실패가 다른 금융사 조회에 영향을 주지 않음.
      * 전용 스레드 풀을 사용하여 외부 I/O가 공통 스레드 풀을 점유하지 않도록 격리
-     * @param adaptors
+     * @param partnerCodes
      * @param adaptorRequest
      * @return
      */
@@ -44,7 +47,7 @@ public class LoanLimitSenderService {
     @Transactional
     public void inquiry(
             long id,
-            List<LoanLimitAdaptor> adaptors,
+            List<PartnerCode> partnerCodes,
             LoanLimitAdaptorRequest adaptorRequest,
             LoanLimitStrategy strategy
     ) {
@@ -56,14 +59,16 @@ public class LoanLimitSenderService {
 
         try {
             //금융사별 병렬 API 호출
-            List<CompletableFuture<LoanLimitAdaptorResponse>> futures = adaptors.stream()
-                    .map(adaptor -> CompletableFuture
-                            .supplyAsync(() -> adaptor.inquireLimit(adaptorRequest), loanLimitExecutor)
-                            .exceptionally(ex -> {
-                                log.error("[{}] 비동기 한도조회 중 예외 발생", adaptor.getPartnerCode(), ex);
-                                return LoanLimitAdaptorResponse.fail(adaptor.getPartnerCode(), ex.getMessage(), 0L);
-                            })
-                    )
+            List<CompletableFuture<LoanLimitAdaptorResponse>> futures = partnerCodes.stream()
+                    .map(partnerCode -> {
+                        LoanLimitAdaptor adaptor = adaptorFactory.getAdaptor(partnerCode);
+                        return CompletableFuture
+                                .supplyAsync(() -> adaptor.inquireLimit(partnerCode, adaptorRequest), loanLimitExecutor)
+                                .exceptionally(ex -> {
+                                    log.error("[{}] 비동기 한도조회 중 에러 발생", partnerCode, ex);
+                                    return LoanLimitAdaptorResponse.fail(partnerCode, ex.getMessage(), 0L);
+                                });
+                    })
                     .toList();
 
             List<LoanLimitAdaptorResponse> adaptorResponses = futures.stream()

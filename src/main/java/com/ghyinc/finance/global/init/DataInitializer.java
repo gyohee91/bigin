@@ -42,6 +42,24 @@ public class DataInitializer implements ApplicationRunner {
                         .partnerName(PartnerCode.KB_CAPITAL.getPartnerName())
                         .partnerType(PartnerType.CAPITAL)
                         .active(true)
+                        .build(),
+                Partner.builder()
+                        .partnerCode(PartnerCode.K_BANK)
+                        .partnerName(PartnerCode.K_BANK.getPartnerName())
+                        .partnerType(PartnerType.BANK)
+                        .active(true)
+                        .build(),
+                Partner.builder()
+                        .partnerCode(PartnerCode.LINE_BANK)
+                        .partnerName(PartnerCode.LINE_BANK.getPartnerName())
+                        .partnerType(PartnerType.BANK)
+                        .active(true)
+                        .build(),
+                Partner.builder()
+                        .partnerCode(PartnerCode.SHINHAN_BANK)
+                        .partnerName(PartnerCode.SHINHAN_BANK.getPartnerName())
+                        .partnerType(PartnerType.BANK)
+                        .active(true)
                         .build()
         );
 

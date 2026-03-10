@@ -1,14 +1,11 @@
 package com.ghyinc.finance.domain.loan.service;
 
-import com.ghyinc.finance.domain.loan.adaptor.LoanLimitAdaptor;
+import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResponse;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
-import com.ghyinc.finance.domain.loan.entity.LoanLimitResult;
 import com.ghyinc.finance.domain.loan.entity.Partner;
-import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.factory.LoanLimitAdaptorFactory;
 import com.ghyinc.finance.domain.loan.factory.LoanLimitStrategyFactory;
@@ -74,17 +71,10 @@ public class LoanLimitService {
         if(activePartnerCodes.isEmpty())
             throw new InvalidRequestException("현재 조회 가능한 금융사가 없습니다");
 
-        // 지원 은행 목록 조회 (Strategy) -> 어댑터 목록 획득 (Factory)
-        List<LoanLimitAdaptor> adaptors = adaptorFactory.getAdaptors(activePartnerCodes);
-
         // 한도 조회(백그라운드 비동기 처리)
         // @Async 적용을 위해 별도 Bean(LoanLimitSenderService)으로 분리
-        loanLimitSenderService.inquiry(inquiry.getId(), adaptors, adaptorRequest, strategy);
+        loanLimitSenderService.inquiry(inquiry.getId(), activePartnerCodes, adaptorRequest, strategy);
 
         return LoanLimitResponse.from(inquiry);
-    }
-
-    private String getLoReqtNo() {
-        return "".concat(UUID.randomUUID().toString());
     }
 }

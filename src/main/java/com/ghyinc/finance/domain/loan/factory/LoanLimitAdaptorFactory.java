@@ -1,7 +1,8 @@
 package com.ghyinc.finance.domain.loan.factory;
 
-import com.ghyinc.finance.domain.loan.adaptor.LoanLimitAdaptor;
+import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.springframework.stereotype.Component;
@@ -20,23 +21,15 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class LoanLimitAdaptorFactory {
-    private final Map<PartnerCode, LoanLimitAdaptor> adaptorMap;
-
-    public LoanLimitAdaptorFactory(List<LoanLimitAdaptor> adaptors) {
-        this.adaptorMap = adaptors.stream()
-                .collect(Collectors.toMap(LoanLimitAdaptor::getPartnerCode, Function.identity()));
-    }
+    private final List<LoanLimitAdaptor> adaptors;
 
     public LoanLimitAdaptor getAdaptor(PartnerCode partnerCode) {
-        LoanLimitAdaptor adaptor = adaptorMap.get(partnerCode);
-
-        if(Objects.isNull(adaptor)) {
-            log.error("지원하지 않는 금융사 코드. PartnerCode: {}", partnerCode);
-            throw new InvalidRequestException("지원하지 않는 금융사입니다. " + partnerCode);
-        }
-
-        return adaptor;
+        return adaptors.stream()
+                .filter(adaptor -> adaptor.supports(partnerCode))
+                .findFirst()
+                .orElseThrow(() -> new InvalidRequestException("지원하지 않는 금융사 입니다. " + partnerCode));
     }
 
     public List<LoanLimitAdaptor> getAdaptors(List<PartnerCode> partnerCodes) {
