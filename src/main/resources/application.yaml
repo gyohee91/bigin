@@ -145,3 +145,6 @@ loan-api:
     KB_CAPITAL:
       base-url: http://localhost:8090
       path: /send/sms
+    LINE_BANK:
+      base-url: http://localhost:8090
+      path: /send/sms

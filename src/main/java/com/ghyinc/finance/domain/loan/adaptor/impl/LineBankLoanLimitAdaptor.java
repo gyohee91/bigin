@@ -13,7 +13,7 @@ import org.springframework.web.client.RestTemplate;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class KbcapitalLoanLimitAdaptor implements LoanLimitAdaptor {
+public class LineBankLoanLimitAdaptor implements LoanLimitAdaptor {
     private final RestTemplate restTemplate;
 
     @Value("${notification.sender.base-url}")
@@ -25,7 +25,7 @@ public class KbcapitalLoanLimitAdaptor implements LoanLimitAdaptor {
 
     @Override
     public boolean supports(PartnerCode partnerCode) {
-        return partnerCode == PartnerCode.KB_CAPITAL;
+        return partnerCode == PartnerCode.LINE_BANK;
     }
 
     @Override

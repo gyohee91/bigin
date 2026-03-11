@@ -14,6 +14,11 @@ import java.util.List;
  * 대출 종류마다 조회 가능한 은행, 유효성 검증,
  * Adaptor 요청 변환 방식이 다르므로 Strategy 패턴으로 분리
  *
+ * [역할 분담]
+ * Strategy: 어떤 은행에 조회할지, 어떻게 요청을 구성할지 결정
+ * Adaptor: 해당 은행 API를 어떻게 호출할지 담당
+ * Service: 전략 선택하고 어댑터 조율
+ *
  */
 public interface LoanLimitStrategy {
     /**

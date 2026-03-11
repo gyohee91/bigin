@@ -1,11 +1,11 @@
 package com.ghyinc.finance.domain.loan.adaptor.common;
 
-import com.ghyinc.finance.domain.loan.adaptor.impl.KakaobankLoanLimitAdaptor;
 import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.config.PartnerApiProperties;
+import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -16,10 +16,12 @@ import java.util.Set;
 
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
-    private final RestClient restClient;
-    private final String path;
+    private final PartnerApiProperties partnerApiProperties;
+    private final Map<PartnerCode, RestClient> partnerRestClients;
 
+    /*
     public CommonLoanLimitAdaptor(
             Map<PartnerCode, RestClient> partnerRestClients,
             PartnerApiProperties partnerApiProperties
@@ -28,6 +30,17 @@ public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
         this.restClient = partnerRestClients.get(PartnerCode.KAKAO_BANK);
         this.path = partnerApiProperties.getConfig(PartnerCode.KAKAO_BANK).getPath();
     }
+
+     */
+
+    @Builder
+    private record CommonLimitRequest(
+            String loReqtNo,
+            String productCd,
+            String rrn,
+            String name,
+            String jobType
+    ) {}
 
     private record CommonLimitResponse(
             String resultCode
@@ -45,10 +58,19 @@ public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
     }
 
     @Override
-    public LoanLimitAdaptorResponse inquireLimit(PartnerCode partnerCode, LoanLimitAdaptorRequest request) {
+    public LoanLimitAdaptorResponse inquireLimit(PartnerCode partnerCode, LoanLimitAdaptorRequest requestParam) {
         long startTime = System.currentTimeMillis();
 
+        RestClient restClient = partnerRestClients.get(partnerCode);
+        String path = partnerApiProperties.getConfig(partnerCode).getPath();
+
         try {
+            CommonLimitRequest request = CommonLimitRequest.builder()
+                    .loReqtNo(requestParam.loReqtNo())
+                    .rrn(requestParam.rrno())
+                    .name(requestParam.name())
+                    .build();
+
             CommonLimitResponse result = restClient.post()
                     .uri(path)
                     .body(request)

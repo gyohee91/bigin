@@ -10,6 +10,6 @@ import java.util.List;
 
 @Repository
 public interface PartnerRepository extends JpaRepository<Partner, Long> {
-    @Query("Select t FROM Partner t WHERE t.active = true")
+    @Query("Select t FROM Partner t WHERE t.partnerCode IN :partnerCodes AND t.active = true")
     List<Partner> findActiveByPartnerCodes(List<PartnerCode> partnerCodes);
 }

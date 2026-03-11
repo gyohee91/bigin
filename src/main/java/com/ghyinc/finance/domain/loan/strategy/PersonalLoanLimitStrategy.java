@@ -17,7 +17,11 @@ public class PersonalLoanLimitStrategy implements LoanLimitStrategy {
 
     @Override
     public List<PartnerCode> getSupportedBanks() {
-        return List.of(PartnerCode.KAKAO_BANK, PartnerCode.TOSS_BANK);
+        return List.of(
+                PartnerCode.KAKAO_BANK,
+                PartnerCode.TOSS_BANK,
+                PartnerCode.LINE_BANK
+        );
     }
 
     @Override
