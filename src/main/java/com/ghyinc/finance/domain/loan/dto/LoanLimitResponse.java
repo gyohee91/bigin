@@ -13,15 +13,11 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class LoanLimitResponse {
-    @Schema(description = "신청번호")
-    private String loReqtNo;
-
     @Schema(description = "성공 여부")
     private boolean success;
 
     public static LoanLimitResponse from(LoanLimitInquiry inquiry) {
         return LoanLimitResponse.builder()
-                .loReqtNo(inquiry.getLoReqtNo())
                 .success(true)
                 .build();
     }

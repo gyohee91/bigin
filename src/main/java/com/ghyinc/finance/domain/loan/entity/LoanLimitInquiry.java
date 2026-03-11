@@ -24,10 +24,6 @@ public class LoanLimitInquiry extends BaseTimeEntity {
     @Comment("고객번호")
     private Long userId;
 
-    @Column(nullable = false, unique = true)
-    @Comment("대출 번호")
-    private String loReqtNo;
-
     @Enumerated(EnumType.STRING)
     @Comment("대출 유형")
     private LoanType loanType;

@@ -5,12 +5,15 @@ import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitResult;
+import com.ghyinc.finance.domain.loan.entity.Product;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.factory.LoanLimitAdaptorFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
+import com.ghyinc.finance.domain.loan.repository.ProductRepository;
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
 import com.ghyinc.finance.domain.loan.event.LoanLimitCompletedEvent;
+import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
@@ -20,8 +23,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -29,7 +34,9 @@ import java.util.concurrent.Executor;
 public class LoanLimitSenderService {
     private final LoanLimitAdaptorFactory adaptorFactory;
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
+    private final ProductRepository productRepository;
 
+    private final LoReqtNoGenerator generator;
     private final Executor loanLimitExecutor;
     private final ApplicationEventPublisher eventPublisher;
 
@@ -58,6 +65,28 @@ public class LoanLimitSenderService {
         loanLimitInquiry.updateInquiryStatus(InquiryStatus.IN_PROGRESS);
 
         try {
+            //금융사별 상품 조회 및 loReqtNo 채번 후 Result 선저장
+            //partnerCode -> 해당 금융사의 활성 상품 목록 조회
+            Map<PartnerCode, List<LoanLimitResult>> resultMap = partnerCodes.stream()
+                    .collect(Collectors.toMap(
+                            partnerCode -> partnerCode,
+                            partnerCode -> {
+                                List<Product> products = productRepository.findActiveByPartnerCode(partnerCode);
+                                return products.stream()
+                                        .map(product -> LoanLimitResult.builder()
+                                                .loReqtNo(generator.generate())
+                                                .partnerCode(partnerCode)
+                                                .productCode(product.getProductCode())
+                                                .build())
+                                        .toList();
+                            }
+                    ));
+
+            //LOAN_LIMIT_RESULT 선저장
+            resultMap.values().forEach(results ->
+                    results.forEach(loanLimitInquiry::addResult));
+
+
             //금융사별 병렬 API 호출
             List<CompletableFuture<LoanLimitAdaptorResponse>> futures = partnerCodes.stream()
                     .map(partnerCode -> {
@@ -79,6 +108,8 @@ public class LoanLimitSenderService {
             adaptorResponses.forEach(adaptorResponse -> {
                 // Strategy 후처리
                 LoanLimitAdaptorResponse processed = strategy.postProcess(adaptorResponse);
+
+
 
                 LoanLimitResult loanLimitResult = processed.success()
                         ? LoanLimitResult.success(
@@ -106,7 +137,7 @@ public class LoanLimitSenderService {
             eventPublisher.publishEvent(
                     LoanLimitCompletedEvent.builder()
                             .userId(loanLimitInquiry.getUserId())
-                            .loReqtNo(loanLimitInquiry.getLoReqtNo())
+                            //.loReqtNo(loanLimitInquiry.getLoReqtNo())
                             .build()
             );
         } catch(Exception e) {

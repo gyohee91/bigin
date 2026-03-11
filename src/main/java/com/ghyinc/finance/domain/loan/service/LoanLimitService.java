@@ -38,13 +38,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class LoanLimitService {
     private final LoanLimitSenderService loanLimitSenderService;
-    private final LoReqtNoGenerator generator;
 
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
     private final PartnerRepository partnerRepository;
 
     private final LoanLimitStrategyFactory strategyFactory;
-    private final LoanLimitAdaptorFactory adaptorFactory;
 
     @Transactional
     public LoanLimitResponse requestCompareLoan(LoanLimitRequest request) {
@@ -52,7 +50,6 @@ public class LoanLimitService {
 
         LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
                 .userId(request.getUserId())
-                .loReqtNo(generator.generate())
                 .loanType(request.getLoanType())
                 .build();
 
