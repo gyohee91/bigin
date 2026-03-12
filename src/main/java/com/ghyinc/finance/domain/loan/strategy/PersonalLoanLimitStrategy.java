@@ -30,6 +30,7 @@ public class PersonalLoanLimitStrategy implements LoanLimitStrategy {
                 .name(request.getName())
                 .rrno(request.getRrno())
                 .jobType(request.getJobType())
+                .jobName(request.getJobName())
                 .build();
     }
 }

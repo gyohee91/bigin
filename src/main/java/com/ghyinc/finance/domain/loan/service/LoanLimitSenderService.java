@@ -3,6 +3,7 @@ package com.ghyinc.finance.domain.loan.service;
 import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
+import com.ghyinc.finance.domain.loan.dto.RequestProduct;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitResult;
 import com.ghyinc.finance.domain.loan.entity.Product;
@@ -88,11 +89,26 @@ public class LoanLimitSenderService {
 
 
             //금융사별 병렬 API 호출
+            //partnerCode별 requestProducts 구성 후 병렬 호출
             List<CompletableFuture<LoanLimitAdaptorResponse>> futures = partnerCodes.stream()
                     .map(partnerCode -> {
+                        List<RequestProduct> requestProducts = resultMap.get(partnerCode)
+                                .stream()
+                                .map(result -> RequestProduct.builder()
+                                        .loReqtNo(result.getLoReqtNo())
+                                        .productCode(result.getProductCode())
+                                        .build()
+                                )
+                                .toList();
+
+                        //requestProducts를 포함한 요청 DTO 재구성
+                        LoanLimitAdaptorRequest adaptorRequests = adaptorRequest.toBuilder()
+                                .requestProducts(requestProducts)
+                                .build();
+
                         LoanLimitAdaptor adaptor = adaptorFactory.getAdaptor(partnerCode);
                         return CompletableFuture
-                                .supplyAsync(() -> adaptor.inquireLimit(partnerCode, adaptorRequest), loanLimitExecutor)
+                                .supplyAsync(() -> adaptor.inquireLimit(partnerCode, adaptorRequests), loanLimitExecutor)
                                 .exceptionally(ex -> {
                                     log.error("[{}] 비동기 한도조회 중 에러 발생", partnerCode, ex);
                                     return LoanLimitAdaptorResponse.fail(partnerCode, ex.getMessage(), 0L);
@@ -109,24 +125,27 @@ public class LoanLimitSenderService {
                 // Strategy 후처리
                 LoanLimitAdaptorResponse processed = strategy.postProcess(adaptorResponse);
 
-
-
-                LoanLimitResult loanLimitResult = processed.success()
-                        ? LoanLimitResult.success(
+                resultMap.get(processed.partnerCode()).forEach(result -> {
+                    if(processed.success()) {
+                        result.success(
                                 processed.partnerCode(),
                                 processed.resTimeMs()
-                        )
-                        : LoanLimitResult.fail(
+                        );
+                    }
+                    else {
+                        result.fail(
                                 processed.partnerCode(),
                                 processed.failReason(),
                                 processed.resTimeMs()
                         );
+                    }
+                });
 
-                loanLimitInquiry.addResult(loanLimitResult);
             });
 
             //최종 상태 결정
-            long successCount = adaptorResponses.stream().filter(LoanLimitAdaptorResponse::success).count();
+            long successCount = adaptorResponses.stream()
+                    .filter(LoanLimitAdaptorResponse::success).count();
             InquiryStatus resultStatus = successCount == adaptorResponses.size()
                     ? InquiryStatus.SUCCESS
                     : (successCount == 0 ? InquiryStatus.PARTIAL_SUCCESS : InquiryStatus.FAILED);

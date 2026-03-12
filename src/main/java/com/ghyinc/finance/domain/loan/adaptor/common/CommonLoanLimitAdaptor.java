@@ -3,6 +3,7 @@ package com.ghyinc.finance.domain.loan.adaptor.common;
 import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
+import com.ghyinc.finance.domain.loan.dto.RequestProduct;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.config.PartnerApiProperties;
 import lombok.Builder;
@@ -11,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -21,22 +23,9 @@ public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
     private final PartnerApiProperties partnerApiProperties;
     private final Map<PartnerCode, RestClient> partnerRestClients;
 
-    /*
-    public CommonLoanLimitAdaptor(
-            Map<PartnerCode, RestClient> partnerRestClients,
-            PartnerApiProperties partnerApiProperties
-    ) {
-        //PartnerCode 키로 전용 RestClient 주입
-        this.restClient = partnerRestClients.get(PartnerCode.KAKAO_BANK);
-        this.path = partnerApiProperties.getConfig(PartnerCode.KAKAO_BANK).getPath();
-    }
-
-     */
-
     @Builder
     private record CommonLimitRequest(
-            String loReqtNo,
-            String productCd,
+            List<RequestProduct> requestProducts,
             String rrn,
             String name,
             String jobType
@@ -66,7 +55,7 @@ public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
 
         try {
             CommonLimitRequest request = CommonLimitRequest.builder()
-                    .loReqtNo(requestParam.loReqtNo())
+                    .requestProducts(requestParam.requestProducts())
                     .rrn(requestParam.rrno())
                     .name(requestParam.name())
                     .build();

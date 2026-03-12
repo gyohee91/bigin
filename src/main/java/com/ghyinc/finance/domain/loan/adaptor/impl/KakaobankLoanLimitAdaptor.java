@@ -1,14 +1,18 @@
 package com.ghyinc.finance.domain.loan.adaptor.impl;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
+import com.ghyinc.finance.domain.loan.dto.RequestProduct;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.config.PartnerApiProperties;
+import lombok.Builder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -16,6 +20,35 @@ import java.util.Map;
 public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
     private final RestClient restClient;
     private final String path;
+
+    @Builder
+    private record KakaobankLimitRequest(
+            @JsonProperty("alnc_gds_infos")
+            List<AlncGdsInfo> alncGdsInfos,
+            @JsonProperty("rsdt_no")
+            String rsdtNo,
+            @JsonProperty("cust_nm")
+            String custNm,
+            @JsonProperty("cust_input_info")
+            CustInputInfo custInputInfo
+    ) {}
+
+    @Builder
+    private record AlncGdsInfo(
+            @JsonProperty("iqry_dman_no")
+            String iqryDmanNo,
+
+            @JsonProperty("alnc_gds_unq_cd")
+            String alncGdsUnqCd
+    ) {}
+
+    @Builder
+    private record CustInputInfo(
+            @JsonProperty("ocup_dvcd")
+            String ocupDvcd,
+            @JsonProperty("cur_wrst_nm")
+            String curWrstNm
+    ) {}
 
     public KakaobankLoanLimitAdaptor(
             Map<PartnerCode, RestClient> partnerRestClients,
@@ -25,9 +58,6 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
         this.restClient = partnerRestClients.get(PartnerCode.KAKAO_BANK);
         this.path = partnerApiProperties.getConfig(PartnerCode.KAKAO_BANK).getPath();
     }
-
-    @Value("${notification.sender.base-url}")
-    private String url;
 
     private record LimitResponse(
             String resultCode
@@ -40,10 +70,31 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
     }
 
     @Override
-    public LoanLimitAdaptorResponse inquireLimit(PartnerCode partnerCode, LoanLimitAdaptorRequest request) {
+    public LoanLimitAdaptorResponse inquireLimit(PartnerCode partnerCode, LoanLimitAdaptorRequest requestParam) {
         long startTime = System.currentTimeMillis();
 
         try {
+            KakaobankLimitRequest request = KakaobankLimitRequest.builder()
+                    .alncGdsInfos(
+                            requestParam.requestProducts().stream()
+                                    .map(
+                                            requestProduct -> AlncGdsInfo.builder()
+                                                    .iqryDmanNo(requestProduct.loReqtNo())
+                                                    .alncGdsUnqCd(requestProduct.productCode())
+                                                    .build()
+                                    )
+                                    .toList()
+                    )
+                    .rsdtNo(requestParam.rrno())
+                    .custNm(requestParam.name())
+                    .custInputInfo(
+                            CustInputInfo.builder()
+                                    .ocupDvcd(requestParam.jobType().name())
+                                    .curWrstNm(requestParam.jobName())
+                                    .build()
+                    )
+                    .build();
+
             LimitResponse result = restClient.post()
                     .uri(path)
                     .body(request)

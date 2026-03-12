@@ -45,20 +45,16 @@ public class LoanLimitResult {
         this.loanLimitInquiry = loanLimitInquiry;
     }
 
-    public static LoanLimitResult success(PartnerCode partnerCode, long resTimeMs) {
-        return LoanLimitResult.builder()
-                .partnerCode(partnerCode)
-                .status(InquiryStatus.SUCCESS)
-                .resTimeMs(resTimeMs)
-                .build();
+    public void success(PartnerCode partnerCode, long resTimeMs) {
+        this.partnerCode = partnerCode;
+        this.status = InquiryStatus.SUCCESS;
+        this.resTimeMs = resTimeMs;
     }
 
-    public static LoanLimitResult fail(PartnerCode partnerCode, String failReason, long resTimeMs) {
-        return LoanLimitResult.builder()
-                .partnerCode(partnerCode)
-                .status(InquiryStatus.FAILED)
-                .failReason(failReason)
-                .resTimeMs(resTimeMs)
-                .build();
+    public void fail(PartnerCode partnerCode, String failReason, long resTimeMs) {
+        this.partnerCode = partnerCode;
+        this.status = InquiryStatus.FAILED;
+        this.failReason = failReason;
+        this.resTimeMs = resTimeMs;
     }
 }

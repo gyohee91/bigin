@@ -26,6 +26,7 @@ public class BusinessLoanLimitStrategy implements LoanLimitStrategy {
                 .name(request.getName())
                 .rrno(request.getRrno())
                 .jobType(request.getJobType())
+                .jobName(request.getJobName())
                 .build();
     }
 }
