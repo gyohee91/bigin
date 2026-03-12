@@ -1,6 +1,7 @@
 package com.ghyinc.finance.global.config;
 
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.global.common.ConnectionType;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -29,5 +30,6 @@ public class PartnerApiProperties {
     public static class PartnerApiConfig {
         private String baseUrl;
         private String path;
+        private ConnectionType connectionType;
     }
 }

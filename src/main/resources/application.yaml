@@ -139,12 +139,16 @@ loan-api:
     KAKAO_BANK:
       base-url: http://localhost:8090
       path: /send/sms
+      connection-type: REST
     TOSS_BANK:
       base-url: http://localhost:8090
       path: /send/sms
+      connection-type: REST
     KB_CAPITAL:
       base-url: http://localhost:8090
       path: /send/sms
+      connection-type: REST
     LINE_BANK:
       base-url: http://localhost:8090
       path: /send/sms
+      connection-type: REST

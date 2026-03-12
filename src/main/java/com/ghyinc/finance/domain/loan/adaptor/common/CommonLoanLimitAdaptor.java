@@ -5,6 +5,8 @@ import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.dto.RequestProduct;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.global.client.ApiClient;
+import com.ghyinc.finance.global.client.ApiClientFactory;
 import com.ghyinc.finance.global.config.PartnerApiProperties;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
@@ -20,8 +22,8 @@ import java.util.Set;
 @Component
 @RequiredArgsConstructor
 public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
+    private final ApiClientFactory apiClientFactory;
     private final PartnerApiProperties partnerApiProperties;
-    private final Map<PartnerCode, RestClient> partnerRestClients;
 
     @Builder
     private record CommonLimitRequest(
@@ -50,7 +52,7 @@ public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
     public LoanLimitAdaptorResponse inquireLimit(PartnerCode partnerCode, LoanLimitAdaptorRequest requestParam) {
         long startTime = System.currentTimeMillis();
 
-        RestClient restClient = partnerRestClients.get(partnerCode);
+        ApiClient apiClient = apiClientFactory.getApiClient(partnerCode);
         String path = partnerApiProperties.getConfig(partnerCode).getPath();
 
         try {
@@ -60,11 +62,12 @@ public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
                     .name(requestParam.name())
                     .build();
 
-            CommonLimitResponse result = restClient.post()
-                    .uri(path)
-                    .body(request)
-                    .retrieve()
-                    .body(CommonLimitResponse.class);
+            CommonLimitResponse result = apiClient.post(
+                    partnerCode,
+                    path,
+                    request,
+                    CommonLimitResponse.class
+            );
 
             long resTimeMs = System.currentTimeMillis() - startTime;
 
