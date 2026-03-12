@@ -5,8 +5,11 @@ import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.dto.RequestProduct;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.global.client.ApiClient;
+import com.ghyinc.finance.global.client.ApiClientFactory;
 import com.ghyinc.finance.global.config.PartnerApiProperties;
 import lombok.Builder;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -17,7 +20,11 @@ import java.util.Map;
 
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
+    private final ApiClientFactory apiClientFactory;
+    private final PartnerApiProperties partnerApiProperties;
+
     private final RestClient restClient;
     private final String path;
 
@@ -50,6 +57,7 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
             String curWrstNm
     ) {}
 
+    /*
     public KakaobankLoanLimitAdaptor(
             Map<PartnerCode, RestClient> partnerRestClients,
             PartnerApiProperties partnerApiProperties
@@ -58,6 +66,8 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
         this.restClient = partnerRestClients.get(PartnerCode.KAKAO_BANK);
         this.path = partnerApiProperties.getConfig(PartnerCode.KAKAO_BANK).getPath();
     }
+
+     */
 
     private record LimitResponse(
             String resultCode
@@ -72,6 +82,9 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
     @Override
     public LoanLimitAdaptorResponse inquireLimit(PartnerCode partnerCode, LoanLimitAdaptorRequest requestParam) {
         long startTime = System.currentTimeMillis();
+
+        ApiClient apiClient = apiClientFactory.getApiClient(partnerCode);
+        String path = partnerApiProperties.getConfig(PartnerCode.KAKAO_BANK).getPath();
 
         try {
             KakaobankLimitRequest request = KakaobankLimitRequest.builder()
@@ -95,11 +108,12 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
                     )
                     .build();
 
-            LimitResponse result = restClient.post()
-                    .uri(path)
-                    .body(request)
-                    .retrieve()
-                    .body(LimitResponse.class);
+            LimitResponse result = apiClient.post(
+                    partnerCode,
+                    path,
+                    request,
+                    LimitResponse.class
+            );
 
             long resTimeMs = System.currentTimeMillis() - startTime;
 

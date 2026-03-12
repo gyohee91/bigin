@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 public class ApiClientFactory {
     private final RestApiClient restApiClient;
 
+    //yml에서 금융사별 통신 방식 설정
     private final PartnerApiProperties partnerApiProperties;
 
     public ApiClient getApiClient(PartnerCode partnerCode) {

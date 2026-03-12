@@ -52,6 +52,7 @@ public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
     public LoanLimitAdaptorResponse inquireLimit(PartnerCode partnerCode, LoanLimitAdaptorRequest requestParam) {
         long startTime = System.currentTimeMillis();
 
+        //통신 방식에 맞는 ApiClient 자동 선택
         ApiClient apiClient = apiClientFactory.getApiClient(partnerCode);
         String path = partnerApiProperties.getConfig(partnerCode).getPath();
 

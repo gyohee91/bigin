@@ -15,6 +15,7 @@ import com.ghyinc.finance.domain.loan.repository.ProductRepository;
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
 import com.ghyinc.finance.domain.loan.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
@@ -110,6 +111,12 @@ public class LoanLimitSenderService {
                         return CompletableFuture
                                 .supplyAsync(() -> adaptor.inquireLimit(partnerCode, adaptorRequests), loanLimitExecutor)
                                 .exceptionally(ex -> {
+                                    //Circuit Breaker OPEN 시
+                                    if(ex.getCause() instanceof CallNotPermittedException) {
+                                        log.warn("[{}] Circuit Breaker OPEN - 해당 금융사 격리", partnerCode, ex);
+                                        return LoanLimitAdaptorResponse.fail(partnerCode, ex.getMessage(), 0L);
+                                    }
+
                                     log.error("[{}] 비동기 한도조회 중 에러 발생", partnerCode, ex);
                                     return LoanLimitAdaptorResponse.fail(partnerCode, ex.getMessage(), 0L);
                                 });
