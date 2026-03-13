@@ -33,12 +33,12 @@ public class CircuitBreakerStateService {
         return CircuitBreakerInfo.builder()
                 .name(name)
                 .state(circuitBreaker.getState())
-                .failureRate(metrics.getFailureRate())
-                .slowCallRate(metrics.getSlowCallRate())
-                .numberOfBufferedCalls(metrics.getNumberOfBufferedCalls())
-                .numberOfFailedCalls(metrics.getNumberOfFailedCalls())
-                .numberOfSuccessfulCalls(metrics.getNumberOfSuccessfulCalls())
-                .numberOfNotPermittedCalls(metrics.getNumberOfNotPermittedCalls())
+                .failureRate(metrics.getFailureRate())      //실패 호출 비율(%). failure-rate-threshold: 50 설정 시 이 값이 50% 이상이면 CLOSED → OPEN 전환
+                .slowCallRate(metrics.getSlowCallRate())    //느린 호출 비율(%). slow-call-duration-threshold 초과 호출의 비율이며, slow-call-rate-threshold: 50 설정 시 50% 이상이면 OPEN 전환
+                .numberOfBufferedCalls(metrics.getNumberOfBufferedCalls())      //전체 호출 수. numberOfSuccessfulCalls + numberOfFailedCalls의 합계
+                .numberOfFailedCalls(metrics.getNumberOfFailedCalls())          //record-exceptions에 해당하는 예외가 발생한 호출이 카운트됨
+                .numberOfSuccessfulCalls(metrics.getNumberOfSuccessfulCalls())  //성공으로 기록된 호출 수
+                .numberOfNotPermittedCalls(metrics.getNumberOfNotPermittedCalls())  //OPEN 상태에서 차단된 호출 수
                 .build();
     }
 

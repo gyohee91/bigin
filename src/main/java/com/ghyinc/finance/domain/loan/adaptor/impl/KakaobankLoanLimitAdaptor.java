@@ -3,7 +3,6 @@ package com.ghyinc.finance.domain.loan.adaptor.impl;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
-import com.ghyinc.finance.domain.loan.dto.RequestProduct;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.client.ApiClient;
 import com.ghyinc.finance.global.client.ApiClientFactory;
@@ -11,12 +10,9 @@ import com.ghyinc.finance.global.config.PartnerApiProperties;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 
 import java.util.List;
-import java.util.Map;
 
 @Slf4j
 @Component
@@ -24,9 +20,6 @@ import java.util.Map;
 public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
     private final ApiClientFactory apiClientFactory;
     private final PartnerApiProperties partnerApiProperties;
-
-    private final RestClient restClient;
-    private final String path;
 
     @Builder
     private record KakaobankLimitRequest(
@@ -56,18 +49,6 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
             @JsonProperty("cur_wrst_nm")
             String curWrstNm
     ) {}
-
-    /*
-    public KakaobankLoanLimitAdaptor(
-            Map<PartnerCode, RestClient> partnerRestClients,
-            PartnerApiProperties partnerApiProperties
-    ) {
-        //PartnerCode 키로 전용 RestClient 주입
-        this.restClient = partnerRestClients.get(PartnerCode.KAKAO_BANK);
-        this.path = partnerApiProperties.getConfig(PartnerCode.KAKAO_BANK).getPath();
-    }
-
-     */
 
     private record LimitResponse(
             String resultCode

@@ -6,14 +6,13 @@ import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.dto.RequestProduct;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitResult;
-import com.ghyinc.finance.domain.loan.entity.Product;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.domain.loan.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.domain.loan.factory.LoanLimitAdaptorFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.domain.loan.repository.ProductRepository;
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
-import com.ghyinc.finance.domain.loan.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import lombok.RequiredArgsConstructor;
@@ -69,34 +68,28 @@ public class LoanLimitSenderService {
         try {
             //금융사별 상품 조회 및 loReqtNo 채번 후 Result 선저장
             //partnerCode -> 해당 금융사의 활성 상품 목록 조회
-            Map<PartnerCode, List<LoanLimitResult>> resultMap = partnerCodes.stream()
+            Map<PartnerCode, LoanLimitResult> resultMap = partnerCodes.stream()
                     .collect(Collectors.toMap(
                             partnerCode -> partnerCode,
                             partnerCode -> {
-                                List<Product> products = productRepository.findActiveByPartnerCode(partnerCode);
-                                return products.stream()
-                                        .map(product -> LoanLimitResult.builder()
-                                                .loReqtNo(generator.generate())
-                                                .partnerCode(partnerCode)
-                                                .productCode(product.getProductCode())
-                                                .build())
-                                        .toList();
+                                LoanLimitResult result = LoanLimitResult.builder()
+                                        .loReqtNo(generator.generate())
+                                        .partnerCode(partnerCode)
+                                        .build();
+                                loanLimitInquiry.addResult(result);
+                                return result;
                             }
                     ));
-
-            //LOAN_LIMIT_RESULT 선저장
-            resultMap.values().forEach(results ->
-                    results.forEach(loanLimitInquiry::addResult));
 
 
             //금융사별 병렬 API 호출
             //partnerCode별 requestProducts 구성 후 병렬 호출
             List<CompletableFuture<LoanLimitAdaptorResponse>> futures = partnerCodes.stream()
                     .map(partnerCode -> {
-                        List<RequestProduct> requestProducts = resultMap.get(partnerCode)
+                        List<RequestProduct> requestProducts = productRepository.findActiveByPartnerCode(partnerCode)
                                 .stream()
                                 .map(result -> RequestProduct.builder()
-                                        .loReqtNo(result.getLoReqtNo())
+                                        .loReqtNo(generator.generate())
                                         .productCode(result.getProductCode())
                                         .build()
                                 )
@@ -129,24 +122,17 @@ public class LoanLimitSenderService {
 
             // 어댑터 응답을 후처리하고 Entity로 변환하여 저장
             adaptorResponses.forEach(adaptorResponse -> {
-                // Strategy 후처리
-                LoanLimitAdaptorResponse processed = strategy.postProcess(adaptorResponse);
+                LoanLimitResult result = resultMap.get(adaptorResponse.partnerCode());
 
-                resultMap.get(processed.partnerCode()).forEach(result -> {
-                    if(processed.success()) {
-                        result.success(
-                                processed.partnerCode(),
-                                processed.resTimeMs()
-                        );
+                    if(adaptorResponse.success()) {
+                        result.success(adaptorResponse.resTimeMs());
                     }
                     else {
                         result.fail(
-                                processed.partnerCode(),
-                                processed.failReason(),
-                                processed.resTimeMs()
+                                adaptorResponse.failReason(),
+                                adaptorResponse.resTimeMs()
                         );
                     }
-                });
 
             });
 

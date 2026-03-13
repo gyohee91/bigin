@@ -28,9 +28,6 @@ public class LoanLimitResult {
     @Comment("금융사 코드")
     private PartnerCode partnerCode;
 
-    @Comment("상품코드")
-    private String productCode;
-
     @Enumerated(EnumType.STRING)
     @Comment("응답 결과")
     private InquiryStatus status;
@@ -45,14 +42,12 @@ public class LoanLimitResult {
         this.loanLimitInquiry = loanLimitInquiry;
     }
 
-    public void success(PartnerCode partnerCode, long resTimeMs) {
-        this.partnerCode = partnerCode;
+    public void success(long resTimeMs) {
         this.status = InquiryStatus.SUCCESS;
         this.resTimeMs = resTimeMs;
     }
 
-    public void fail(PartnerCode partnerCode, String failReason, long resTimeMs) {
-        this.partnerCode = partnerCode;
+    public void fail(String failReason, long resTimeMs) {
         this.status = InquiryStatus.FAILED;
         this.failReason = failReason;
         this.resTimeMs = resTimeMs;

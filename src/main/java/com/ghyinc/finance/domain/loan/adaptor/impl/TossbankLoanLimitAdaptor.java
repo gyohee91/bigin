@@ -3,21 +3,42 @@ package com.ghyinc.finance.domain.loan.adaptor.impl;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.global.client.ApiClient;
+import com.ghyinc.finance.global.client.ApiClientFactory;
+import com.ghyinc.finance.global.config.PartnerApiProperties;
+import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.*;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
+
+import java.util.List;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
-    private final RestTemplate restTemplate;
+    private final ApiClientFactory apiClientFactory;
+    private final PartnerApiProperties partnerApiProperties;
 
-    @Value("${notification.sender.base-url}")
-    private String url;
+    @Builder
+    private record TossbankLimitRequest(
+            Data data,
+            List<RequestProduct> requestProducts
+    ) {}
+
+    @Builder
+    private record Data(
+            String name,
+            String jobType,
+            String rrn,
+            String corporateName
+    ){}
+
+    @Builder
+    private record RequestProduct(
+            String loanReqNo,
+            String loanProductId
+    ) {}
 
     private record LimitResponse(
             String resultCode
@@ -30,25 +51,41 @@ public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
     }
 
     @Override
-    public LoanLimitAdaptorResponse inquireLimit(PartnerCode partnerCode, LoanLimitAdaptorRequest request) {
+    public LoanLimitAdaptorResponse inquireLimit(PartnerCode partnerCode, LoanLimitAdaptorRequest requestParam) {
         long startTime = System.currentTimeMillis();
 
+        ApiClient apiClient = apiClientFactory.getApiClient(partnerCode);
+        String path = partnerApiProperties.getConfig(partnerCode).getPath();
+
         try {
-            long resTimeMs = System.currentTimeMillis() - startTime;
+            TossbankLimitRequest request = TossbankLimitRequest.builder()
+                    .data(Data.builder()
+                            .rrn(requestParam.rrno())
+                            .name(requestParam.name())
+                            .jobType(requestParam.jobType().name())
+                            .corporateName(requestParam.jobName())
+                            .build()
+                    )
+                    .requestProducts(
+                            requestParam.requestProducts().stream()
+                                    .map(requestProduct -> RequestProduct.builder()
+                                            .loanReqNo(requestProduct.loReqtNo())
+                                            .loanProductId(requestProduct.productCode())
+                                            .build()
+                                    )
+                                    .toList()
+                    )
+                    .build();
 
             //External API
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            HttpEntity<LoanLimitAdaptorRequest> httpEntity = new HttpEntity<>(request, headers);
-
-            ResponseEntity<LimitResponse> responseEntity = restTemplate.exchange(
-                    url,
-                    HttpMethod.POST,
-                    httpEntity,
+            LimitResponse result = apiClient.post(
+                    partnerCode,
+                    path,
+                    request,
                     LimitResponse.class
             );
 
-            LimitResponse result = responseEntity.getBody();
+            long resTimeMs = System.currentTimeMillis() - startTime;
 
             if(!"SUCCESS".equals(result.resultCode())) {
                 log.warn("[{}] 한도조회 실패. resultCode={}", PartnerCode.TOSS_BANK, result.resultCode());
