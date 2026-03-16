@@ -37,6 +37,10 @@ public class LoanLimitInquiry extends BaseTimeEntity {
     @Builder.Default
     private List<LoanLimitResult> results = new ArrayList<>();
 
+    @OneToMany(mappedBy = "loanLimitInquiry", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<LoanLimitProductResult> productResults = new ArrayList<>();
+
     public void updateInquiryStatus(InquiryStatus status) {
         this.status = status;
     }
@@ -44,5 +48,10 @@ public class LoanLimitInquiry extends BaseTimeEntity {
     public void addResult(LoanLimitResult result) {
         this.results.add(result);
         result.assignInquiry(this);
+    }
+
+    public void addProductResult(LoanLimitProductResult productResult) {
+        this.productResults.add(productResult);
+        productResult.assignInquiry(this);
     }
 }

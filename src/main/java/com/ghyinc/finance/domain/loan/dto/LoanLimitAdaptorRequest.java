@@ -8,7 +8,6 @@ import java.util.List;
 @Builder(toBuilder = true)
 public record LoanLimitAdaptorRequest(
         List<RequestProduct> requestProducts,
-        String loReqtNo,
         String name,
         String rrno,
         JobType jobType,
