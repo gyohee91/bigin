@@ -141,7 +141,7 @@ public class LoanLimitSenderService {
                     .filter(LoanLimitAdaptorResponse::success).count();
             InquiryStatus resultStatus = successCount == adaptorResponses.size()
                     ? InquiryStatus.SUCCESS
-                    : (successCount == 0 ? InquiryStatus.PARTIAL_SUCCESS : InquiryStatus.FAILED);
+                    : (successCount == 0 ? InquiryStatus.FAILED : InquiryStatus.PARTIAL_SUCCESS);
 
             loanLimitInquiry.updateInquiryStatus(resultStatus);
 

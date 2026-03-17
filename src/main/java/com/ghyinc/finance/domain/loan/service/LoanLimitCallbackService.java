@@ -14,6 +14,8 @@ import org.apache.kafka.common.errors.InvalidRequestException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.stream.Collectors;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -26,18 +28,22 @@ public class LoanLimitCallbackService {
         PartnerCode partnerCode = PartnerCode.valueOf(requestPartnerCode);
 
         LoanLimitCallbackAdaptor adaptor = callbackAdaptorFactory.getAdaptor(partnerCode);
-        String loReqtNo = adaptor.extractLoReqtNo(reqBody);
 
         LoanLimitCallbackRequest request = adaptor.convert(reqBody);
+        String loReqtNo = request.getPreScrResultList().stream()
+                .map(LoanLimitCallbackRequest.PreScrResultList::getLoReqtNo)
+                .findFirst()
+                .orElseThrow(() -> new InvalidRequestException(partnerCode + " loReqtNo 추출 실패"));
 
-        LoanLimitInquiry inquiry = loanLimitResultRepository.findInquiryByPartnerCode(partnerCode)
+        LoanLimitInquiry inquiry = loanLimitResultRepository.findInquiryByPartnerCode(loReqtNo, partnerCode)
                         .orElseThrow(() -> new InvalidRequestException("한도조회 이력 없음. PartnerCode: " + partnerCode));
 
-        request.getRequestProductResult().forEach(item -> {
+        request.getPreScrResultList().forEach(item -> {
             LoanLimitProductResult productResult = LoanLimitProductResult.builder()
                     .loanLimitInquiry(inquiry)
                     .loReqtNo(item.getLoReqtNo())
                     .productCode(item.getProductCode())
+                    .resultCode(item.getResultCode())
                     .amount(item.getAmount())
                     .interestRate(item.getInterestRate())
                     .build();

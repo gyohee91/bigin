@@ -1,6 +1,8 @@
 package com.ghyinc.finance.domain.loan.entity;
 
+import com.ghyinc.finance.domain.loan.enums.LoanLimitResultCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.global.common.BaseTimeEntity;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.Comment;
@@ -10,7 +12,7 @@ import org.hibernate.annotations.Comment;
 @Builder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
-public class LoanLimitProductResult {
+public class LoanLimitProductResult extends BaseTimeEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -28,6 +30,10 @@ public class LoanLimitProductResult {
 
     @Comment("상품 코드")
     private String productCode;
+
+    @Enumerated(EnumType.STRING)
+    @Comment("한도조회 결과 코드")
+    private LoanLimitResultCode resultCode;
 
     @Comment("한도금액")
     private Long amount;

@@ -10,6 +10,8 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -22,9 +24,13 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class LoanLimitCallbackController {
     private final LoanLimitCallbackService loanLimitCallbackService;
-    private final LoanLimitCallbackAdaptorFactory callbackAdaptorFactory;
 
-    @Operation(summary = "한도결과 수신 API", description = "금융사로부터 한도조회 결과를 수신합니다")
+    @Operation(summary = "한도결과 수신 API", description = "금융사로부터 한도조회 결과를 수신")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "처리 성공"),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "500", description = "서버 오류")
+    })
     @PostMapping
     public ResponseEntity<Void> receiveCallback(
             @Parameter(description = "금융사 코드", example = "LINE_BANK")
@@ -33,18 +39,19 @@ public class LoanLimitCallbackController {
                     description = "한도결과 요청",
                     content = @Content(
                             mediaType = MediaType.APPLICATION_JSON_VALUE,
-                            examples = @ExampleObject(value = "{\n" +
-                                    "                                      \"loanResult\": [\n" +
-                                    "                                        {\n" +
-                                    "                                          \"loReqtNo\": \"LR20260311A3F2C891\",\n" +
-                                    "                                          \"productCode\": \"KA_PERSONAL_001\",\n" +
-                                    "                                          \"amount\": 30000000,\n" +
-                                    "                                          \"minRate\": 4.5,\n" +
-                                    "                                          \"maxRate\": 8.2,\n" +
-                                    "                                          \"resultCode\": \"SUCCESS\"\n" +
-                                    "                                        }\n" +
-                                    "                                      ]\n" +
-                                    "                                    }")
+                            examples = @ExampleObject(value = "" +
+                                    "{" +
+                                    "   \"preScrResultList\": [" +
+                                    "       {\n" +
+                                    "           \"loReqtNo\": \"LR20260311A3F2C891\",\n" +
+                                    "           \"productCode\": \"KA_PERSONAL_001\",\n" +
+                                    "           \"resultCode\": \"00\",\n" +
+                                    "           \"amount\": 30000000,\n" +
+                                    "           \"interestRate\": 4.5,\n" +
+                                    "           \"resultCode\": \"SUCCESS\"\n" +
+                                    "       }\n" +
+                                    "   ]\n" +
+                                    "}")
                     )
             )
             @RequestBody JsonNode reqBody
