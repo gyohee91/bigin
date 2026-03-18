@@ -17,23 +17,9 @@ import java.util.Set;
 public class CommonCallbackAdaptor implements LoanLimitCallbackAdaptor {
     private final ObjectMapper objectMapper;
 
-    private static final Set<PartnerCode> SUPPORTED_PARTNERS = Set.of(
-            PartnerCode.K_BANK,
-            PartnerCode.SHINHAN_BANK,
-            PartnerCode.LINE_BANK
-    );
-
     @Override
     public boolean supports(PartnerCode partnerCode) {
-        return SUPPORTED_PARTNERS.contains(partnerCode);
-    }
-
-    @Override
-    public String extractLoReqtNo(JsonNode reqBody) {
-        return reqBody.path("loanRequest")
-                .get(0)
-                .path("loReqtNo")
-                .asText();
+        return partnerCode.isStandard();
     }
 
     @Override

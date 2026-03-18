@@ -37,15 +37,9 @@ public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
             String resultCode
     ) {}
 
-    private static final Set<PartnerCode> SUPPORTED_PARTNERS = Set.of(
-            PartnerCode.K_BANK,
-            PartnerCode.SHINHAN_BANK,
-            PartnerCode.LINE_BANK
-    );
-
     @Override
     public boolean supports(PartnerCode partnerCode) {
-        return SUPPORTED_PARTNERS.contains(partnerCode);
+        return partnerCode.isStandard();
     }
 
     @Override

@@ -42,14 +42,6 @@ public class KakaobankCallbackAdaptor implements LoanLimitCallbackAdaptor {
     }
 
     @Override
-    public String extractLoReqtNo(JsonNode reqBody) {
-        return reqBody.path("products")
-                .get(0)
-                .path("iqry_dman_no")
-                .asText();
-    }
-
-    @Override
     public LoanLimitCallbackRequest convert(JsonNode body) {
         KakaobankCallbackRequest kakaobankRequest = objectMapper.convertValue(body, KakaobankCallbackRequest.class);
 

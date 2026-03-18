@@ -42,6 +42,7 @@ public class LoanLimitCallbackService {
             LoanLimitProductResult productResult = LoanLimitProductResult.builder()
                     .loanLimitInquiry(inquiry)
                     .loReqtNo(item.getLoReqtNo())
+                    .partnerCode(partnerCode)
                     .productCode(item.getProductCode())
                     .resultCode(item.getResultCode())
                     .amount(item.getAmount())

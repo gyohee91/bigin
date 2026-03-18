@@ -6,6 +6,5 @@ import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 
 public interface LoanLimitCallbackAdaptor {
     boolean supports(PartnerCode partnerCode);
-    String extractLoReqtNo(JsonNode reqBody);
     LoanLimitCallbackRequest convert(JsonNode body);  //원문 -> 표준 DTO
 }
