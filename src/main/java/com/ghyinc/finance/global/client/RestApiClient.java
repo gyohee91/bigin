@@ -41,6 +41,7 @@ public class RestApiClient implements ApiClient {
                     return partnerRestClients.get(partnerCode)
                             .post()
                             .uri(path)
+                            .header("X-Partner-Code", partnerCode.name())
                             .body(request)
                             .retrieve()
                             .onStatus(HttpStatusCode::is4xxClientError, (req, res) -> {
