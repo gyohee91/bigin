@@ -3,10 +3,9 @@ package com.ghyinc.finance.domain.loan.adaptor.callback.impl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
-import com.fasterxml.jackson.databind.PropertyNamingStrategy;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
-import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitCallbackAdaptor;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitCallbackRequest;
+import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptor;
+import com.ghyinc.finance.domain.loan.dto.LoanLimitResultRequest;
 import com.ghyinc.finance.domain.loan.enums.LoanLimitResultCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import lombok.RequiredArgsConstructor;
@@ -19,10 +18,10 @@ import java.util.Objects;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class KakaobankCallbackAdaptor implements LoanLimitCallbackAdaptor {
+public class KakaobankResultAdaptor implements LoanLimitResultAdaptor {
     private final ObjectMapper objectMapper;
 
-    private record KakaobankCallbackRequest(
+    private record KakaobankResultequest(
             List<Product> products
     ) {}
 
@@ -42,12 +41,12 @@ public class KakaobankCallbackAdaptor implements LoanLimitCallbackAdaptor {
     }
 
     @Override
-    public LoanLimitCallbackRequest convert(JsonNode body) {
-        KakaobankCallbackRequest kakaobankRequest = objectMapper.convertValue(body, KakaobankCallbackRequest.class);
+    public LoanLimitResultRequest convert(JsonNode body) {
+        KakaobankResultequest kakaobankRequest = objectMapper.convertValue(body, KakaobankResultequest.class);
 
-        List<LoanLimitCallbackRequest.PreScrResultList> preScrResultLists = kakaobankRequest.products().stream()
+        List<LoanLimitResultRequest.PreScrResultList> preScrResultLists = kakaobankRequest.products().stream()
                 .map(item -> {
-                    return LoanLimitCallbackRequest.PreScrResultList.builder()
+                    return LoanLimitResultRequest.PreScrResultList.builder()
                             .loReqtNo(item.iqryDmanNo)
                             .productCode(item.alncGdsUnqCd)
                             .resultCode(Objects.equals("CP0000", item.rsltCd) ? LoanLimitResultCode.SUCCESS : LoanLimitResultCode.UNKNOWN_ERROR)
@@ -57,7 +56,7 @@ public class KakaobankCallbackAdaptor implements LoanLimitCallbackAdaptor {
                 })
                 .toList();
 
-        return LoanLimitCallbackRequest.builder()
+        return LoanLimitResultRequest.builder()
                 .preScrResultList(preScrResultLists)
                 .build();
     }

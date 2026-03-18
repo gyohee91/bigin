@@ -13,7 +13,7 @@ import java.util.List;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class LoanLimitCallbackRequest {
+public class LoanLimitResultRequest {
     @JsonProperty("preScrResultList")
     private List<PreScrResultList> preScrResultList;
 

@@ -1,9 +1,10 @@
 package com.ghyinc.finance.domain.loan.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.ghyinc.finance.domain.loan.dto.LoanLimitResultResponse;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResponse;
-import com.ghyinc.finance.domain.loan.service.LoanLimitCallbackService;
+import com.ghyinc.finance.domain.loan.service.LoanLimitResultService;
 import com.ghyinc.finance.domain.loan.service.LoanLimitService;
 import com.ghyinc.finance.global.common.ApiCommResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -28,7 +29,7 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class LoanLimitController {
     private final LoanLimitService loanLimitService;
-    private final LoanLimitCallbackService loanLimitCallbackService;
+    private final LoanLimitResultService loanLimitCallbackService;
 
     @Operation(
             summary = "금리 한도조회",
@@ -41,7 +42,7 @@ public class LoanLimitController {
                     content = @Content(schema = @Schema(implementation = LoanLimitResponse.class))
             )
     )
-    @PostMapping("/send")
+    @PostMapping("/request-compare-loan")
     public ResponseEntity<ApiCommResponse<LoanLimitResponse>> requestCompareLoan(
             @Valid @RequestBody LoanLimitRequest request
     ) {
@@ -57,33 +58,32 @@ public class LoanLimitController {
             @ApiResponse(responseCode = "400", description = "잘못된 요청"),
             @ApiResponse(responseCode = "500", description = "서버 오류")
     })
-    @PostMapping
-    public ResponseEntity<Void> receiveCallback(
+    @PostMapping("/response-compare-loan-result")
+    public ResponseEntity<LoanLimitResultResponse> responseCompareLoanResult(
             @Parameter(description = "금융사 코드", example = "LINE_BANK")
             @RequestHeader("X-Partner-Code") String requestPartnerCode,
             @io.swagger.v3.oas.annotations.parameters.RequestBody(
                     description = "한도결과 요청",
                     content = @Content(
                             mediaType = MediaType.APPLICATION_JSON_VALUE,
-                            examples = @ExampleObject(value = "" +
-                                    "{" +
+                            examples = @ExampleObject(value = "{" +
                                     "   \"preScrResultList\": [" +
-                                    "       {\n" +
-                                    "           \"loReqtNo\": \"LR20260311A3F2C891\",\n" +
-                                    "           \"productCode\": \"KA_PERSONAL_001\",\n" +
-                                    "           \"resultCode\": \"00\",\n" +
-                                    "           \"amount\": 30000000,\n" +
-                                    "           \"interestRate\": 4.5,\n" +
-                                    "           \"resultCode\": \"00\"\n" +
-                                    "       }\n" +
-                                    "   ]\n" +
+                                    "       {" +
+                                    "           \"loReqtNo\": \"LR20260311A3F2C891\"," +
+                                    "           \"productCode\": \"KA_PERSONAL_001\"," +
+                                    "           \"resultCode\": \"00\"," +
+                                    "           \"amount\": 30000000," +
+                                    "           \"interestRate\": 4.5," +
+                                    "           \"resultCode\": \"00\"" +
+                                    "       }" +
+                                    "   ]" +
                                     "}")
                     )
             )
             @RequestBody JsonNode reqBody
     ) {
-        loanLimitCallbackService.process(requestPartnerCode, reqBody);
+        LoanLimitResultResponse response = loanLimitCallbackService.responseCompareLoanResult(requestPartnerCode, reqBody);
 
-        return ResponseEntity.ok().build();
+        return ResponseEntity.ok(response);
     }
 }

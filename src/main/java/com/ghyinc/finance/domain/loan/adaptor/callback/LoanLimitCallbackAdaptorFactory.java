@@ -10,9 +10,9 @@ import java.util.List;
 @Component
 @RequiredArgsConstructor
 public class LoanLimitCallbackAdaptorFactory {
-    private final List<LoanLimitCallbackAdaptor> adaptors;
+    private final List<LoanLimitResultAdaptor> adaptors;
 
-    public LoanLimitCallbackAdaptor getAdaptor(PartnerCode partnerCode) {
+    public LoanLimitResultAdaptor getAdaptor(PartnerCode partnerCode) {
         return adaptors.stream()
                 .filter(adaptor -> adaptor.supports(partnerCode))
                 .findFirst()
