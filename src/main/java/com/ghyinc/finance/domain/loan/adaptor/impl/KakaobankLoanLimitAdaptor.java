@@ -1,8 +1,8 @@
 package com.ghyinc.finance.domain.loan.adaptor.impl;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
+import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
+import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.client.ApiClient;
 import com.ghyinc.finance.global.client.ApiClientFactory;

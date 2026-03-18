@@ -1,5 +1,6 @@
-package com.ghyinc.finance.domain.loan.dto;
+package com.ghyinc.finance.domain.loan.adaptor.dto;
 
+import com.ghyinc.finance.domain.loan.dto.RequestProduct;
 import com.ghyinc.finance.domain.loan.enums.JobType;
 import lombok.Builder;
 

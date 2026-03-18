@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResultResponse;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResponse;
+import com.ghyinc.finance.domain.loan.dto.ResultResponse;
 import com.ghyinc.finance.domain.loan.service.LoanLimitResultService;
 import com.ghyinc.finance.domain.loan.service.LoanLimitService;
 import com.ghyinc.finance.global.common.ApiCommResponse;
@@ -29,7 +30,7 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class LoanLimitController {
     private final LoanLimitService loanLimitService;
-    private final LoanLimitResultService loanLimitCallbackService;
+    private final LoanLimitResultService loanLimitResultService;
 
     @Operation(
             summary = "금리 한도조회",
@@ -59,7 +60,7 @@ public class LoanLimitController {
             @ApiResponse(responseCode = "500", description = "서버 오류")
     })
     @PostMapping("/response-compare-loan-result")
-    public ResponseEntity<LoanLimitResultResponse> responseCompareLoanResult(
+    public ResponseEntity<ResultResponse> responseCompareLoanResult(
             @Parameter(description = "금융사 코드", example = "LINE_BANK")
             @RequestHeader("X-Partner-Code") String requestPartnerCode,
             @io.swagger.v3.oas.annotations.parameters.RequestBody(
@@ -82,7 +83,7 @@ public class LoanLimitController {
             )
             @RequestBody JsonNode reqBody
     ) {
-        LoanLimitResultResponse response = loanLimitCallbackService.responseCompareLoanResult(requestPartnerCode, reqBody);
+       ResultResponse response = loanLimitResultService.responseCompareLoanResult(requestPartnerCode, reqBody);
 
         return ResponseEntity.ok(response);
     }

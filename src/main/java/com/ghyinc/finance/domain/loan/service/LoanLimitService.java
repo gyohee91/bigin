@@ -1,18 +1,15 @@
 package com.ghyinc.finance.domain.loan.service;
 
-import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
+import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResponse;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.Partner;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
-import com.ghyinc.finance.domain.loan.factory.LoanLimitAdaptorFactory;
 import com.ghyinc.finance.domain.loan.factory.LoanLimitStrategyFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.domain.loan.repository.PartnerRepository;
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
-import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
@@ -20,7 +17,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.UUID;
 
 /**
  * 파트너 Entity

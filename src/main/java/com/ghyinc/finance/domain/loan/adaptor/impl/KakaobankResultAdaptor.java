@@ -1,4 +1,4 @@
-package com.ghyinc.finance.domain.loan.adaptor.callback.impl;
+package com.ghyinc.finance.domain.loan.adaptor.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptor;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResultRequest;
+import com.ghyinc.finance.domain.loan.dto.ResultResponse;
 import com.ghyinc.finance.domain.loan.enums.LoanLimitResultCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import lombok.RequiredArgsConstructor;
@@ -21,7 +22,7 @@ import java.util.Objects;
 public class KakaobankResultAdaptor implements LoanLimitResultAdaptor {
     private final ObjectMapper objectMapper;
 
-    private record KakaobankResultequest(
+    private record KakaobankResultRequest(
             List<Product> products
     ) {}
 
@@ -33,7 +34,12 @@ public class KakaobankResultAdaptor implements LoanLimitResultAdaptor {
             long loanLimitAmt,
             double lastLoanIntr,
             String loanTrmMcnt
-    ) { }
+    ) {}
+
+    @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
+    private record KakaobankResultResponse(
+            String rsltCd
+    ) implements ResultResponse {}
 
     @Override
     public boolean supports(PartnerCode partnerCode) {
@@ -42,7 +48,7 @@ public class KakaobankResultAdaptor implements LoanLimitResultAdaptor {
 
     @Override
     public LoanLimitResultRequest convert(JsonNode body) {
-        KakaobankResultequest kakaobankRequest = objectMapper.convertValue(body, KakaobankResultequest.class);
+        KakaobankResultRequest kakaobankRequest = objectMapper.convertValue(body, KakaobankResultRequest.class);
 
         List<LoanLimitResultRequest.PreScrResultList> preScrResultLists = kakaobankRequest.products().stream()
                 .map(item -> {
@@ -59,5 +65,12 @@ public class KakaobankResultAdaptor implements LoanLimitResultAdaptor {
         return LoanLimitResultRequest.builder()
                 .preScrResultList(preScrResultLists)
                 .build();
+    }
+
+    @Override
+    public ResultResponse buildResponse(boolean success, String resultMessage) {
+        return new KakaobankResultResponse(
+                success ? "CP0000" : "CP9999"
+        );
     }
 }

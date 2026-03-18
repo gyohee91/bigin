@@ -2,9 +2,9 @@ package com.ghyinc.finance.domain.loan.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptor;
-import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitCallbackAdaptorFactory;
+import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptorFactory;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResultRequest;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitResultResponse;
+import com.ghyinc.finance.domain.loan.dto.ResultResponse;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
@@ -21,17 +21,17 @@ import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 public class LoanLimitResultService {
-    private final LoanLimitCallbackAdaptorFactory callbackAdaptorFactory;
+    private final LoanLimitResultAdaptorFactory resultAdaptorFactory;
     private final LoanLimitResultRepository loanLimitResultRepository;
 
     @Transactional
-    public LoanLimitResultResponse responseCompareLoanResult(String requestPartnerCode, JsonNode reqBody) {
+    public ResultResponse responseCompareLoanResult(String requestPartnerCode, JsonNode reqBody) {
+        PartnerCode partnerCode = Optional.of(PartnerCode.valueOf(requestPartnerCode))
+                .orElseThrow(() -> new InvalidRequestException("유효하지 않은 partnerCode. PartnerCode: " + requestPartnerCode));
+
+        LoanLimitResultAdaptor adaptor = resultAdaptorFactory.getAdaptor(partnerCode);
+
         try {
-            PartnerCode partnerCode = Optional.of(PartnerCode.valueOf(requestPartnerCode))
-                    .orElseThrow(() -> new InvalidRequestException("유효하지 않은 partnerCode. PartnerCode: " + requestPartnerCode));
-
-            LoanLimitResultAdaptor adaptor = callbackAdaptorFactory.getAdaptor(partnerCode);
-
             LoanLimitResultRequest request = adaptor.convert(reqBody);
             String loReqtNo = request.getPreScrResultList().stream()
                     .map(LoanLimitResultRequest.PreScrResultList::getLoReqtNo)
@@ -55,15 +55,15 @@ public class LoanLimitResultService {
                 inquiry.addProductResult(productResult);
             });
 
-            return LoanLimitResultResponse.success();
+            return adaptor.buildResponse(true, "한도결과 API 정상 처리");
         }
         catch (InvalidRequestException e) {
             log.error("[{}] 한도결과 API 처리 중 오류. message={}", requestPartnerCode, e.getMessage());
-            return LoanLimitResultResponse.fail(e.getMessage());
+            return adaptor.buildResponse(false, e.getMessage());
         }
         catch (Exception e) {
             log.error("[{}] 한도결과 API 처리 중 오류. ", requestPartnerCode, e);
-            return LoanLimitResultResponse.fail(e.getMessage());
+            return adaptor.buildResponse(false, e.getMessage());
         }
     }
 }

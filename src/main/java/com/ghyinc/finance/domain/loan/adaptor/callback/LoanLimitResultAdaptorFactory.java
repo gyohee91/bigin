@@ -9,7 +9,7 @@ import java.util.List;
 
 @Component
 @RequiredArgsConstructor
-public class LoanLimitCallbackAdaptorFactory {
+public class LoanLimitResultAdaptorFactory {
     private final List<LoanLimitResultAdaptor> adaptors;
 
     public LoanLimitResultAdaptor getAdaptor(PartnerCode partnerCode) {

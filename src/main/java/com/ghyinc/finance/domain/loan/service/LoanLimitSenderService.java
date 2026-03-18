@@ -1,8 +1,8 @@
 package com.ghyinc.finance.domain.loan.service;
 
 import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
+import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
+import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.dto.RequestProduct;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitResult;

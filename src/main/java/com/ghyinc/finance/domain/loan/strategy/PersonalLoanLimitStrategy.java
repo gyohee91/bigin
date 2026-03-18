@@ -1,6 +1,6 @@
 package com.ghyinc.finance.domain.loan.strategy;
 
-import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
+import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;

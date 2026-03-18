@@ -1,8 +1,8 @@
 package com.ghyinc.finance.domain.loan.adaptor.common;
 
 import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorRequest;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitAdaptorResponse;
+import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
+import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.dto.RequestProduct;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.client.ApiClient;
@@ -12,11 +12,8 @@ import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 @Slf4j
 @Component
