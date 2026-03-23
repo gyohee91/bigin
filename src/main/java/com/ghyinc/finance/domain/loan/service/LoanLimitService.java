@@ -4,11 +4,9 @@ import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResponse;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
-import com.ghyinc.finance.domain.loan.entity.Partner;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.factory.LoanLimitStrategyFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
-import com.ghyinc.finance.domain.loan.repository.PartnerRepository;
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,7 +34,6 @@ public class LoanLimitService {
     private final LoanLimitSenderService loanLimitSenderService;
 
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
-    private final PartnerRepository partnerRepository;
 
     private final LoanLimitStrategyFactory strategyFactory;
 
@@ -56,11 +53,7 @@ public class LoanLimitService {
 
         //Strategy: 대출 유형상 가능한 금융사(코드 레벨 고정)
         //DB      : 현재 활성화된 은행 (운영 팀이 배포 없이 제어)
-        List<PartnerCode> activePartnerCodes = partnerRepository
-                .findActiveByPartnerCodes(strategy.getSupportedBanks())
-                .stream()
-                .map(Partner::getPartnerCode)
-                .toList();
+        List<PartnerCode> activePartnerCodes = strategy.getSupportedBanks();
         if(activePartnerCodes.isEmpty())
             throw new InvalidRequestException("현재 조회 가능한 금융사가 없습니다");
 

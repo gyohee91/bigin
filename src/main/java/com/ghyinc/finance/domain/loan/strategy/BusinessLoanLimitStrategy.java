@@ -4,12 +4,17 @@ import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.domain.loan.repository.PartnerLoanTypeRepository;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
 @Component
+@RequiredArgsConstructor
 public class BusinessLoanLimitStrategy implements LoanLimitStrategy {
+    private final PartnerLoanTypeRepository partnerLoanTypeRepository;
+
     @Override
     public LoanType getLoanType() {
         return LoanType.BUSINESS;
@@ -17,7 +22,7 @@ public class BusinessLoanLimitStrategy implements LoanLimitStrategy {
 
     @Override
     public List<PartnerCode> getSupportedBanks() {
-        return List.of(PartnerCode.KB_CAPITAL);
+        return partnerLoanTypeRepository.findActivePartnerCodeByLoanType(this.getLoanType());
     }
 
     @Override

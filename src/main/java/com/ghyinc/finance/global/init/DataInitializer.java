@@ -1,10 +1,12 @@
 package com.ghyinc.finance.global.init;
 
 import com.ghyinc.finance.domain.loan.entity.Partner;
+import com.ghyinc.finance.domain.loan.entity.PartnerLoanType;
 import com.ghyinc.finance.domain.loan.entity.Product;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerType;
+import com.ghyinc.finance.domain.loan.repository.PartnerLoanTypeRepository;
 import com.ghyinc.finance.domain.loan.repository.PartnerRepository;
 import com.ghyinc.finance.domain.loan.repository.ProductRepository;
 import com.ghyinc.finance.domain.user.entity.Member;
@@ -26,6 +28,7 @@ import java.util.Objects;
 @RequiredArgsConstructor
 public class DataInitializer implements ApplicationRunner {
     private final PartnerRepository partnerRepository;
+    private final PartnerLoanTypeRepository partnerLoanTypeRepository;
     private final ProductRepository productRepository;
     private final MemberRepository memberRepository;
 
@@ -70,6 +73,51 @@ public class DataInitializer implements ApplicationRunner {
                         .build()
         );
         partnerRepository.saveAll(initialPartner);
+
+        List<PartnerLoanType> initialPartnerLoanType = List.of(
+                PartnerLoanType.builder()
+                        .partner(
+                                initialPartner.stream()
+                                        .filter(partner -> Objects.equals(PartnerCode.KAKAO_BANK, partner.getPartnerCode()))
+                                        .findFirst()
+                                        .orElse(null)
+                        )
+                        .loanType(LoanType.PERSONAL_CREDIT)
+                        .active(true)
+                        .build(),
+                PartnerLoanType.builder()
+                        .partner(
+                                initialPartner.stream()
+                                        .filter(partner -> Objects.equals(PartnerCode.TOSS_BANK, partner.getPartnerCode()))
+                                        .findFirst()
+                                        .orElse(null)
+                        )
+                        .loanType(LoanType.PERSONAL_CREDIT)
+                        .active(true)
+                        .build(),
+                PartnerLoanType.builder()
+                        .partner(
+                                initialPartner.stream()
+                                        .filter(partner -> Objects.equals(PartnerCode.LINE_BANK, partner.getPartnerCode()))
+                                        .findFirst()
+                                        .orElse(null)
+                        )
+                        .loanType(LoanType.PERSONAL_CREDIT)
+                        .active(true)
+                        .build(),
+                PartnerLoanType.builder()
+                        .partner(
+                                initialPartner.stream()
+                                        .filter(partner -> Objects.equals(PartnerCode.KB_CAPITAL, partner.getPartnerCode()))
+                                        .findFirst()
+                                        .orElse(null)
+                        )
+                        .loanType(LoanType.BUSINESS)
+                        .active(true)
+                        .build()
+        );
+
+        partnerLoanTypeRepository.saveAll(initialPartnerLoanType);
 
         List<Product> initialProduct = List.of(
                 Product.builder()
