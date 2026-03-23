@@ -28,4 +28,8 @@ public class Product {
 
     @Comment("상품명")
     private String productName;
+
+    @Column(nullable = false)
+    @Comment("활성화 여부")
+    private Boolean active;
 }

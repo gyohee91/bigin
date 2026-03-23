@@ -1,6 +1,7 @@
 package com.ghyinc.finance.domain.loan.repository;
 
 import com.ghyinc.finance.domain.loan.entity.Product;
+import com.ghyinc.finance.domain.loan.enums.LoanType;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -15,4 +16,13 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
             "   JOIN FETCH t.partner " +
             "WHERE t.partner.partnerCode = :partnerCode")
     List<Product> findActiveByPartnerCode(@Param("partnerCode") PartnerCode partnerCode);
+
+    @Query("SELECT t FROM Product t " +
+            "WHERE t.partner.partnerCode = :partnerCode " +
+            "   AND t.loanType = :loanType " +
+            "   AND t.active = true")
+    List<Product> findActiveByPartnerCodeAndLoanType(
+            @Param("partnerCode") PartnerCode partnerCode,
+            @Param("loanType") LoanType loanType
+    );
 }

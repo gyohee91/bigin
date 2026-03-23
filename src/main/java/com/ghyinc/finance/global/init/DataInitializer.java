@@ -82,6 +82,7 @@ public class DataInitializer implements ApplicationRunner {
                         )
                         .productCode("P060100206")
                         .productName("사잇돌")
+                        .active(true)
                         .build(),
                 Product.builder()
                         .loanType(LoanType.PERSONAL_CREDIT)
@@ -93,6 +94,7 @@ public class DataInitializer implements ApplicationRunner {
                         )
                         .productCode("P060100205")
                         .productName("드림론")
+                        .active(true)
                         .build(),
                 Product.builder()
                         .loanType(LoanType.PERSONAL_CREDIT)
@@ -104,6 +106,7 @@ public class DataInitializer implements ApplicationRunner {
                         )
                         .productCode("TA")
                         .productName("갈아타기OK론")
+                        .active(true)
                         .build(),
                 Product.builder()
                         .loanType(LoanType.PERSONAL_CREDIT)
@@ -115,6 +118,7 @@ public class DataInitializer implements ApplicationRunner {
                         )
                         .productCode("FNQ005")
                         .productName("kiwi비상금")
+                        .active(true)
                         .build()
         );
         productRepository.saveAll(initialProduct);

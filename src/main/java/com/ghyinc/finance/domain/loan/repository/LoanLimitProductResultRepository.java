@@ -13,4 +13,6 @@ public interface LoanLimitProductResultRepository extends JpaRepository<LoanLimi
 
     //@Query("SELECT r.PartnerCode FROM LoanLimitProductResult r WHERE r.loReqtNo = :loReqtNo")
     //Optional<PartnerCode> findPartnerCodeByLoReqtNo(@Param("loReqtNo") String loReqtNo);
+
+    Boolean existsByLoReqtNo(@Param("loReqtNo") String loReqtNo);
 }
