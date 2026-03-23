@@ -140,15 +140,27 @@ loan-api:
       base-url: http://localhost:8090
       path: /send/sms
       connection-type: REST
+      crypto:
+        algorithm: AES_256_CBC
+        key: wvtX75QJj1Uw1xKqw2kyPOVNBAmDr2vr
     TOSS_BANK:
       base-url: http://localhost:8090
       path: /send/sms
       connection-type: REST
+      crypto:
+        algorithm: AES_256_CBC
+        key: bd0001eb9404dc257b90547d1343c4de
     KB_CAPITAL:
       base-url: http://localhost:8090
       path: /send/sms
       connection-type: REST
+      crypto:
+        algorithm: RSA_OAEP
+        key: AAEGRJuHwTWvrYsaa0V7vAqk+wZuSa2l
     LINE_BANK:
       base-url: http://localhost:8090
       path: /send/sms
       connection-type: REST
+      crypto:
+        algorithm: AES_256_CBC
+        key: AAEGRJuHwTWvrYsaa0V7vAqk+wZuSa2l

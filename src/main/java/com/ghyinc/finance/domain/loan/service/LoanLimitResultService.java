@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -54,17 +55,14 @@ public class LoanLimitResultService {
                     .map(Product::getProductCode)
                     .collect(Collectors.toSet());
 
-            request.getPreScrResultList().forEach(item -> {
-                if(!validProductCodes.contains(item.getProductCode())) {
-                    log.warn("[{}] 유효하지 않은 상품코드. loReqtNo={}, productCode={}", partnerCode, item.getLoReqtNo(), item.getProductCode());
-                    return;
-                }
+            // REQ Data에 대한 유효성 체크
+            Map<Boolean, List<LoanLimitResultRequest.PreScrResultList>> validRequested = request.getPreScrResultList().stream()
+                    .collect(Collectors.partitioningBy(item ->
+                            validProductCodes.contains(item.getProductCode()) &&
+                                    !loanLimitProductResultRepository.existsByLoReqtNo(item.getLoReqtNo())
+                    ));
 
-                if(loanLimitProductResultRepository.existsByLoReqtNo(item.getLoReqtNo())) {
-                    log.warn("[{}] 한도결과 중복 전송됨. loReqtNo={}", partnerCode, item.getLoReqtNo());
-                    return;
-                }
-
+            validRequested.get(true).forEach(item -> {
                 LoanLimitProductResult productResult = LoanLimitProductResult.builder()
                         .loanLimitInquiry(inquiry)
                         .loReqtNo(item.getLoReqtNo())

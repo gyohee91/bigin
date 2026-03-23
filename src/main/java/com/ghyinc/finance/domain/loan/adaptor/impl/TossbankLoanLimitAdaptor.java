@@ -6,6 +6,8 @@ import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.client.ApiClient;
 import com.ghyinc.finance.global.client.ApiClientFactory;
 import com.ghyinc.finance.global.config.PartnerApiProperties;
+import com.ghyinc.finance.global.crypto.CryptoFactory;
+import com.ghyinc.finance.global.crypto.CryptoService;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +20,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
     private final ApiClientFactory apiClientFactory;
+    private final CryptoFactory cryptoFactory;
     private final PartnerApiProperties partnerApiProperties;
 
     @Builder
@@ -55,13 +58,14 @@ public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
         long startTime = System.currentTimeMillis();
 
         ApiClient apiClient = apiClientFactory.getApiClient(partnerCode);
+        CryptoService cryptoService = cryptoFactory.getCryptoService(partnerCode);
         String path = partnerApiProperties.getConfig(partnerCode).getPath();
 
         try {
             TossbankLimitRequest request = TossbankLimitRequest.builder()
                     .data(Data.builder()
-                            .rrn(requestParam.rrno())
-                            .name(requestParam.name())
+                            .rrn(cryptoService.encrypt(requestParam.rrno()))
+                            .name(cryptoService.encrypt(requestParam.name()))
                             .jobType(requestParam.jobType().name())
                             .corporateName(requestParam.jobName())
                             .build()

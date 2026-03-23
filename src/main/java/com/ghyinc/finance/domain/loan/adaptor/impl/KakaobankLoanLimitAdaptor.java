@@ -7,6 +7,8 @@ import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.client.ApiClient;
 import com.ghyinc.finance.global.client.ApiClientFactory;
 import com.ghyinc.finance.global.config.PartnerApiProperties;
+import com.ghyinc.finance.global.crypto.CryptoFactory;
+import com.ghyinc.finance.global.crypto.CryptoService;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +21,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
     private final ApiClientFactory apiClientFactory;
+    private final CryptoFactory cryptoFactory;
     private final PartnerApiProperties partnerApiProperties;
 
     @Builder
@@ -64,6 +67,7 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
     public LoanLimitAdaptorResponse inquireLimit(PartnerCode partnerCode, LoanLimitAdaptorRequest requestParam) {
         long startTime = System.currentTimeMillis();
 
+        CryptoService cryptoService = cryptoFactory.getCryptoService(partnerCode);
         ApiClient apiClient = apiClientFactory.getApiClient(partnerCode);
         String path = partnerApiProperties.getConfig(PartnerCode.KAKAO_BANK).getPath();
 
@@ -79,8 +83,8 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
                                     )
                                     .toList()
                     )
-                    .rsdtNo(requestParam.rrno())
-                    .custNm(requestParam.name())
+                    .rsdtNo(cryptoService.encrypt(requestParam.rrno()))
+                    .custNm(cryptoService.encrypt(requestParam.name()))
                     .custInputInfo(
                             CustInputInfo.builder()
                                     .ocupDvcd(requestParam.jobType().name())

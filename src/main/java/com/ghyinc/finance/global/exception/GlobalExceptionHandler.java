@@ -22,6 +22,18 @@ import java.util.stream.Collectors;
 public class GlobalExceptionHandler {
 
     /**
+     * 암호화 처리 오류
+     */
+    @ExceptionHandler(CryptoException.class)
+    public ResponseEntity<ErrorResponse> handleCryptoException(CryptoException e) {
+        log.warn("CryptoException: {}", e.getMessage());
+
+        return ResponseEntity
+                .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ErrorResponse.of("암호화 처리 오류", e.getMessage()));
+    }
+
+    /**
      * 지원하지 않는 금융사 등 (비즈니스 요청 오류)
      */
     @ExceptionHandler(InvalidRequestException.class)

@@ -8,6 +8,8 @@ import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.client.ApiClient;
 import com.ghyinc.finance.global.client.ApiClientFactory;
 import com.ghyinc.finance.global.config.PartnerApiProperties;
+import com.ghyinc.finance.global.crypto.CryptoFactory;
+import com.ghyinc.finance.global.crypto.CryptoService;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +22,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
     private final ApiClientFactory apiClientFactory;
+    private final CryptoFactory cryptoFactory;
     private final PartnerApiProperties partnerApiProperties;
 
     @Builder
@@ -45,13 +48,14 @@ public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
 
         //통신 방식에 맞는 ApiClient 자동 선택
         ApiClient apiClient = apiClientFactory.getApiClient(partnerCode);
+        CryptoService cryptoService = cryptoFactory.getCryptoService(partnerCode);
         String path = partnerApiProperties.getConfig(partnerCode).getPath();
 
         try {
             CommonLimitRequest request = CommonLimitRequest.builder()
                     .requestProducts(requestParam.requestProducts())
-                    .rrn(requestParam.rrno())
-                    .name(requestParam.name())
+                    .rrn(cryptoService.encrypt(requestParam.rrno()))
+                    .name(cryptoService.encrypt(requestParam.name()))
                     .build();
 
             CommonLimitResponse result = apiClient.post(
