@@ -73,7 +73,6 @@ public class LoanLimitSenderService {
                             partnerCode -> partnerCode,
                             partnerCode -> {
                                 LoanLimitResult result = LoanLimitResult.builder()
-                                        .loReqtNo(generator.generate())
                                         .partnerCode(partnerCode)
                                         .build();
                                 loanLimitInquiry.addResult(result);

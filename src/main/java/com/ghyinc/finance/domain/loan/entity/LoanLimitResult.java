@@ -20,10 +20,6 @@ public class LoanLimitResult {
     @JoinColumn(name = "inquiry_id", nullable = false)
     private LoanLimitInquiry loanLimitInquiry;
 
-    @Column(nullable = false)
-    @Comment("신청번호")
-    private String loReqtNo;
-
     @Enumerated(EnumType.STRING)
     @Comment("금융사 코드")
     private PartnerCode partnerCode;

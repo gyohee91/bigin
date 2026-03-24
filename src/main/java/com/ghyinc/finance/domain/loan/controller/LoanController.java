@@ -1,10 +1,8 @@
 package com.ghyinc.finance.domain.loan.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitResultResponse;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitResponse;
-import com.ghyinc.finance.domain.loan.dto.ResultResponse;
+import com.ghyinc.finance.domain.loan.dto.*;
+import com.ghyinc.finance.domain.loan.service.LoanApplyService;
 import com.ghyinc.finance.domain.loan.service.LoanLimitResultService;
 import com.ghyinc.finance.domain.loan.service.LoanLimitService;
 import com.ghyinc.finance.global.common.ApiCommResponse;
@@ -28,9 +26,10 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/loan")
 @RequiredArgsConstructor
-public class LoanLimitController {
-    private final LoanLimitService loanLimitService;
-    private final LoanLimitResultService loanLimitResultService;
+public class LoanController {
+    private final LoanLimitService loanLimitService;    //한도조회
+    private final LoanLimitResultService loanLimitResultService;    //한도결과
+    private final LoanApplyService loanApplyService;    //대출신청
 
     @Operation(
             summary = "금리 한도조회",
@@ -86,5 +85,24 @@ public class LoanLimitController {
        ResultResponse response = loanLimitResultService.responseCompareLoanResult(requestPartnerCode, reqBody);
 
         return ResponseEntity.ok(response);
+    }
+
+    @Operation(summary = "대출신청 API", description = "고객이 선택한 한도결과 건에 대한 대출신청 진행")
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "처리 성공",
+                    content = @Content(schema = @Schema(implementation = LoanApplyResponse.class))
+            ),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "500", description = "서버 오류")
+    })
+    @PostMapping("/apply")
+    public ResponseEntity<ApiCommResponse<LoanApplyResponse>> apply(
+            @Valid @RequestBody LoanApplyRequest request
+    ) {
+        LoanApplyResponse response = loanApplyService.apply(request);
+
+        return ResponseEntity.ok(ApiCommResponse.success("대출신청 성공", response));
     }
 }
