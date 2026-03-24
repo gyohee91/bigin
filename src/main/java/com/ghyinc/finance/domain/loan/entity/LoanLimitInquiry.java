@@ -1,6 +1,7 @@
 package com.ghyinc.finance.domain.loan.entity;
 
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
+import com.ghyinc.finance.domain.loan.enums.JobType;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
 import com.ghyinc.finance.global.common.BaseTimeEntity;
 import jakarta.persistence.*;
@@ -23,6 +24,13 @@ public class LoanLimitInquiry extends BaseTimeEntity {
     @Column(nullable = false)
     @Comment("고객번호")
     private Long userId;
+
+    @Enumerated(EnumType.STRING)
+    @Comment("직업 구분")
+    private JobType jobType;
+
+    @Comment("직장명")
+    private String jobName;
 
     @Enumerated(EnumType.STRING)
     @Comment("대출 유형")

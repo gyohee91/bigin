@@ -30,7 +30,5 @@ public class PartnerApiProperties {
     public static class PartnerApiConfig {
         private String baseUrl;
         private String path;
-        private ConnectionType connectionType;
-        private CryptoConfig crypto;
     }
 }

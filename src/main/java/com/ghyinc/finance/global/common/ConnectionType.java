@@ -6,7 +6,6 @@ import lombok.RequiredArgsConstructor;
 @Getter
 @RequiredArgsConstructor
 public enum ConnectionType {
-    REST;
-    //LEASE_LINE;
-
+    REST,       //REST API
+    LEASE_LINE; //전용선
 }

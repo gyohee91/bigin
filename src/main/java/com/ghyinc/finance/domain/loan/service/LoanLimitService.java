@@ -43,6 +43,8 @@ public class LoanLimitService {
 
         LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
                 .userId(request.getUserId())
+                .jobType(request.getJobType())
+                .jobName(request.getJobName())
                 .loanType(request.getLoanType())
                 .build();
 
