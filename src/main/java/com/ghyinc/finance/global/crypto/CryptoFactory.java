@@ -1,40 +1,43 @@
 package com.ghyinc.finance.global.crypto;
 
+import com.ghyinc.finance.domain.loan.entity.Partner;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.domain.loan.repository.PartnerRepository;
 import com.ghyinc.finance.global.config.CryptoConfig;
 import com.ghyinc.finance.global.config.PartnerApiProperties;
 import com.ghyinc.finance.global.crypto.impl.AesCryptoService;
 import com.ghyinc.finance.global.crypto.impl.RsaCryptoService;
 import com.ghyinc.finance.global.exception.CryptoException;
+import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Component
+@RequiredArgsConstructor
 public class CryptoFactory {
-    private final Map<PartnerCode, CryptoService> cryptoServiceMap;
+    private final PartnerRepository partnerRepository;
 
-    // 금융사별 CryptoService 선택
-    public CryptoFactory(PartnerApiProperties partnerApiProperties) {
-        this.cryptoServiceMap = partnerApiProperties.getPartners().entrySet().stream()
-                .filter(e -> e.getValue().getCrypto() != null)
-                .collect(Collectors.toMap(
-                        Map.Entry::getKey,
-                        e -> this.buildCryptoService(e.getValue().getCrypto())
-                ));
-    }
-
+    @Cacheable(value = "cryptoService", key = "#partnerCode")
     public CryptoService getCryptoService(PartnerCode partnerCode) {
-        return Optional.ofNullable(cryptoServiceMap.get(partnerCode))
-                .orElseThrow(() -> new CryptoException(partnerCode + " 암호화 설정 없음"));
+        Partner partner = partnerRepository.findByPartnerCodeAndActive(partnerCode, true)
+                .orElseThrow(() -> new CryptoException(partnerCode + " 파트너 정보 없음"));
+
+        if(Objects.isNull(partner.getAlgorithm())) {
+            throw new CryptoException(partnerCode + " 암호화 설정 없음");
+        }
+
+        return this.buildCryptoService(partner);
     }
 
-    private CryptoService buildCryptoService(CryptoConfig crypto) {
-        return switch (crypto.getAlgorithm()) {
-            case AES_256_CBC, AES_256_ECB -> new AesCryptoService(crypto.getKey(), crypto.getAlgorithm());
-            case RSA_OAEP -> new RsaCryptoService();
+    private CryptoService buildCryptoService(Partner partner) {
+        return switch (partner.getAlgorithm()) {
+            case AES_256_CBC, AES_256_ECB -> new AesCryptoService(partner.getCryptoKey(), partner.getAlgorithm());
+            case RSA_OAEP -> new RsaCryptoService(partner.getPublicKey(), partner.getPrivateKey(), partner.getAlgorithm());
         };
     }
 

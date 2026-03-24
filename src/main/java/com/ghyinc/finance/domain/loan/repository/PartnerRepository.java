@@ -8,9 +8,12 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface PartnerRepository extends JpaRepository<Partner, Long> {
     @Query("Select t FROM Partner t WHERE t.partnerCode IN :partnerCodes AND t.active = true")
     List<Partner> findActiveByPartnerCodes(@Param("partnerCodes") List<PartnerCode> partnerCodes);
+
+    Optional<Partner> findByPartnerCodeAndActive(@Param("partnerCode") PartnerCode partnerCode, boolean active);
 }
