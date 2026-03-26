@@ -41,6 +41,12 @@ public class LoanLimitProductResult extends BaseTimeEntity {
     @Comment("금리")
     private double interestRate;
 
+    public void updateResult(LoanLimitResultCode resultCode, long amount, double interestRate) {
+        this.resultCode = resultCode;
+        this.amount = amount;
+        this.interestRate = interestRate;
+    }
+
     void assignInquiry(LoanLimitInquiry loanLimitInquiry) {
         this.loanLimitInquiry = loanLimitInquiry;
     }

@@ -42,12 +42,15 @@ public class LoanLimitResultService {
 
         try {
             LoanLimitResultRequest request = adaptor.convert(reqBody);
-            String loReqtNo = request.getPreScrResultList().stream()
-                    .map(LoanLimitResultRequest.PreScrResultList::getLoReqtNo)
-                    .findFirst()
-                    .orElseThrow(() -> new InvalidRequestException(partnerCode + " loReqtNo 추출 실패"));
 
-            LoanLimitInquiry inquiry = loanLimitResultRepository.findInquiryByPartnerCode(loReqtNo, partnerCode)
+            request.getPreScrResultList().forEach(item -> {
+                LoanLimitProductResult productResult = loanLimitProductResultRepository.findByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
+                        .orElseThrow(() -> new InvalidRequestException("존재하지 않는 식별번호&상품코드. loReqtNo: " + item.getLoReqtNo() + ", productCode: " + item.getProductCode()));
+
+                productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
+            });
+            /*
+            LoanLimitInquiry inquiry = loanLimitProductResultRepository.findPartnerCodeByLoReqtNo(partnerCode)
                     .orElseThrow(() -> new InvalidRequestException("한도조회 이력 없음. PartnerCode: " + partnerCode));
 
             Set<String> validProductCodes = productRepository.findActiveByPartnerCodeAndLoanType(partnerCode, inquiry.getLoanType())
@@ -63,19 +66,12 @@ public class LoanLimitResultService {
                     ));
 
             validRequested.get(true).forEach(item -> {
-                LoanLimitProductResult productResult = LoanLimitProductResult.builder()
-                        .loanLimitInquiry(inquiry)
-                        .loReqtNo(item.getLoReqtNo())
-                        .partnerCode(partnerCode)
-                        .productCode(item.getProductCode())
-                        .resultCode(item.getResultCode())
-                        .amount(item.getAmount())
-                        .interestRate(item.getInterestRate())
-                        .build();
+                LoanLimitProductResult productResult = loanLimitProductResultRepository.findByLoReqtNo(item.getLoReqtNo())
+                        .orElseThrow(() -> new InvalidRequestException("존재하지 않는 식별번호. loReqtNo: " + item.getLoReqtNo()));
 
-                inquiry.addProductResult(productResult);
+                productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
             });
-
+            */
             return adaptor.buildResponse(true, "한도결과 API 정상 처리");
         }
         catch (InvalidRequestException e) {

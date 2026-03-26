@@ -5,6 +5,7 @@ import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.dto.RequestProduct;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
+import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitResult;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
@@ -80,23 +81,44 @@ public class LoanLimitSenderService {
                             }
                     ));
 
+            Map<PartnerCode, List<LoanLimitProductResult>> productResultMap = partnerCodes.stream()
+                    .collect(Collectors.toMap(
+                            partnerCode -> partnerCode,
+                            partnerCode -> productRepository.findActiveByPartnerCode(partnerCode)
+                                    .stream()
+                                    .map(product -> {
+                                        LoanLimitProductResult productResult =
+                                                LoanLimitProductResult.builder()
+                                                        .loanLimitInquiry(loanLimitInquiry)
+                                                        .loReqtNo(generator.generate())
+                                                        .partnerCode(partnerCode)
+                                                        .productCode(product.getProductCode())
+                                                        .build();
+                                        loanLimitInquiry.addProductResult(productResult);
+                                        return productResult;
+                                    }).toList()
+                    ));
+
+            Map<PartnerCode, List<RequestProduct>> requestProductMap = productResultMap.entrySet().stream()
+                    .collect(Collectors.toMap(
+                            Map.Entry::getKey,
+                            entry -> entry.getValue().stream()
+                                    .map(productResult ->
+                                            RequestProduct.builder()
+                                                    .loReqtNo(productResult.getLoReqtNo())
+                                                    .productCode(productResult.getProductCode())
+                                                    .build()
+                                    ).toList()
+                    ));
+
 
             //금융사별 병렬 API 호출
             //partnerCode별 requestProducts 구성 후 병렬 호출
             List<CompletableFuture<LoanLimitAdaptorResponse>> futures = partnerCodes.stream()
                     .map(partnerCode -> {
-                        List<RequestProduct> requestProducts = productRepository.findActiveByPartnerCode(partnerCode)
-                                .stream()
-                                .map(result -> RequestProduct.builder()
-                                        .loReqtNo(generator.generate())
-                                        .productCode(result.getProductCode())
-                                        .build()
-                                )
-                                .toList();
-
                         //requestProducts를 포함한 요청 DTO 재구성
                         LoanLimitAdaptorRequest adaptorRequests = adaptorRequest.toBuilder()
-                                .requestProducts(requestProducts)
+                                .requestProducts(requestProductMap.get(partnerCode))
                                 .build();
 
                         LoanLimitAdaptor adaptor = adaptorFactory.getAdaptor(partnerCode);

@@ -12,12 +12,4 @@ import java.util.Optional;
 
 @Repository
 public interface LoanLimitResultRepository extends JpaRepository<LoanLimitResult, Long> {
-    @Query("" +
-            "SELECT t.loanLimitInquiry " +
-            "FROM LoanLimitResult t " +
-            "WHERE t.loReqtNo = :loReqtNo AND t.partnerCode = :partnerCode AND t.status = 'SUCCESS'")
-    Optional<LoanLimitInquiry> findInquiryByPartnerCode(
-            @Param("loReqtNo") String loReqtNo,
-            @Param("partnerCode") PartnerCode partnerCode
-    );
 }
