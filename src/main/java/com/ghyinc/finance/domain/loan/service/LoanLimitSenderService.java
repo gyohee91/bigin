@@ -67,13 +67,14 @@ public class LoanLimitSenderService {
         loanLimitInquiry.updateInquiryStatus(InquiryStatus.IN_PROGRESS);
 
         try {
-            //금융사별 상품 조회 및 loReqtNo 채번 후 Result 선저장
-            //partnerCode -> 해당 금융사의 활성 상품 목록 조회
+            //각 금융사에 대한 Result 선저장
+            //partnerCode -> 해당 금융사 코드
             Map<PartnerCode, LoanLimitResult> resultMap = partnerCodes.stream()
                     .collect(Collectors.toMap(
                             partnerCode -> partnerCode,
                             partnerCode -> {
                                 LoanLimitResult result = LoanLimitResult.builder()
+                                        .loanLimitInquiry(loanLimitInquiry)
                                         .partnerCode(partnerCode)
                                         .build();
                                 loanLimitInquiry.addResult(result);
@@ -81,16 +82,17 @@ public class LoanLimitSenderService {
                             }
                     ));
 
+            //금융사별 상품 조회 및 ProductResult 선저장
             Map<PartnerCode, List<LoanLimitProductResult>> productResultMap = partnerCodes.stream()
                     .collect(Collectors.toMap(
                             partnerCode -> partnerCode,
-                            partnerCode -> productRepository.findActiveByPartnerCode(partnerCode)
+                            partnerCode -> productRepository.findActiveByPartnerCodeAndLoanType(partnerCode, strategy.getLoanType())
                                     .stream()
                                     .map(product -> {
                                         LoanLimitProductResult productResult =
                                                 LoanLimitProductResult.builder()
                                                         .loanLimitInquiry(loanLimitInquiry)
-                                                        .loReqtNo(generator.generate())
+                                                        .loReqtNo(generator.generate()) //신청번호 채번
                                                         .partnerCode(partnerCode)
                                                         .productCode(product.getProductCode())
                                                         .build();
@@ -99,6 +101,7 @@ public class LoanLimitSenderService {
                                     }).toList()
                     ));
 
+            //금융사별 RequestProduct(공통 요청 DTO) 구성
             Map<PartnerCode, List<RequestProduct>> requestProductMap = productResultMap.entrySet().stream()
                     .collect(Collectors.toMap(
                             Map.Entry::getKey,

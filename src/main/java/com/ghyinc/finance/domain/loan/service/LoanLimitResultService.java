@@ -44,34 +44,14 @@ public class LoanLimitResultService {
             LoanLimitResultRequest request = adaptor.convert(reqBody);
 
             request.getPreScrResultList().forEach(item -> {
+                //loReqtNo와 productCode로 선저장된 ProductResult 조회
                 LoanLimitProductResult productResult = loanLimitProductResultRepository.findByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
                         .orElseThrow(() -> new InvalidRequestException("존재하지 않는 식별번호&상품코드. loReqtNo: " + item.getLoReqtNo() + ", productCode: " + item.getProductCode()));
 
+                //한도결과 UPDATE
                 productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
             });
-            /*
-            LoanLimitInquiry inquiry = loanLimitProductResultRepository.findPartnerCodeByLoReqtNo(partnerCode)
-                    .orElseThrow(() -> new InvalidRequestException("한도조회 이력 없음. PartnerCode: " + partnerCode));
 
-            Set<String> validProductCodes = productRepository.findActiveByPartnerCodeAndLoanType(partnerCode, inquiry.getLoanType())
-                    .stream()
-                    .map(Product::getProductCode)
-                    .collect(Collectors.toSet());
-
-            // REQ Data에 대한 유효성 체크
-            Map<Boolean, List<LoanLimitResultRequest.PreScrResultList>> validRequested = request.getPreScrResultList().stream()
-                    .collect(Collectors.partitioningBy(item ->
-                            validProductCodes.contains(item.getProductCode()) &&
-                                    !loanLimitProductResultRepository.existsByLoReqtNo(item.getLoReqtNo())
-                    ));
-
-            validRequested.get(true).forEach(item -> {
-                LoanLimitProductResult productResult = loanLimitProductResultRepository.findByLoReqtNo(item.getLoReqtNo())
-                        .orElseThrow(() -> new InvalidRequestException("존재하지 않는 식별번호. loReqtNo: " + item.getLoReqtNo()));
-
-                productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
-            });
-            */
             return adaptor.buildResponse(true, "한도결과 API 정상 처리");
         }
         catch (InvalidRequestException e) {
@@ -80,7 +60,7 @@ public class LoanLimitResultService {
         }
         catch (Exception e) {
             log.error("[{}] 한도결과 API 처리 중 오류. ", requestPartnerCode, e);
-            return adaptor.buildResponse(false, e.getMessage());
+            return adaptor.buildResponse(false, "처리 중 오류가 발생했습니다");
         }
     }
 }

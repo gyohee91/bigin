@@ -41,6 +41,7 @@ public class LoanLimitService {
     public LoanLimitResponse requestCompareLoan(LoanLimitRequest request) {
         LoanLimitStrategy strategy = strategyFactory.getStrategy(request.getLoanType());
 
+        //LoanLimitInquiry INSERT
         LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
                 .userId(request.getUserId())
                 .jobType(request.getJobType())
