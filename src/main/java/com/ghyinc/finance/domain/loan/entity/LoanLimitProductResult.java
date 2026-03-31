@@ -2,6 +2,7 @@ package com.ghyinc.finance.domain.loan.entity;
 
 import com.ghyinc.finance.domain.loan.enums.LoanLimitResultCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.global.common.BaseTimeEntity;
 import jakarta.persistence.*;
 import lombok.*;
@@ -32,6 +33,10 @@ public class LoanLimitProductResult extends BaseTimeEntity {
     private String productCode;
 
     @Enumerated(EnumType.STRING)
+    @Comment("상품 처리상태")
+    private PartnerInquiryStatus status;
+
+    @Enumerated(EnumType.STRING)
     @Comment("한도조회 결과 코드")
     private LoanLimitResultCode resultCode;
 
@@ -42,6 +47,7 @@ public class LoanLimitProductResult extends BaseTimeEntity {
     private double interestRate;
 
     public void updateResult(LoanLimitResultCode resultCode, long amount, double interestRate) {
+        this.status = PartnerInquiryStatus.SUCCESS;
         this.resultCode = resultCode;
         this.amount = amount;
         this.interestRate = interestRate;
@@ -49,5 +55,13 @@ public class LoanLimitProductResult extends BaseTimeEntity {
 
     void assignInquiry(LoanLimitInquiry loanLimitInquiry) {
         this.loanLimitInquiry = loanLimitInquiry;
+    }
+
+    public void sendSuccess() {
+        this.status = PartnerInquiryStatus.SEND_SUCCESS;
+    }
+
+    public void sendFail() {
+        this.status = PartnerInquiryStatus.SEND_FAILED;
     }
 }

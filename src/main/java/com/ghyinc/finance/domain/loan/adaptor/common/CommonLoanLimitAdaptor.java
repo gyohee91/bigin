@@ -76,6 +76,8 @@ public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
                 );
             }
 
+            log.info("[{}] 한도조회 성공, resTimeMs={}", partnerCode, resTimeMs);
+
             return LoanLimitAdaptorResponse.success(
                     partnerCode,
                     resTimeMs

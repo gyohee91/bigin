@@ -5,10 +5,9 @@ import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptor;
 import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptorFactory;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResultRequest;
 import com.ghyinc.finance.domain.loan.dto.ResultResponse;
-import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
-import com.ghyinc.finance.domain.loan.entity.Product;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepository;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitResultRepository;
 import com.ghyinc.finance.domain.loan.repository.ProductRepository;
@@ -18,11 +17,7 @@ import org.apache.kafka.common.errors.InvalidRequestException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
-import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -47,6 +42,19 @@ public class LoanLimitResultService {
                 //loReqtNo와 productCode로 선저장된 ProductResult 조회
                 LoanLimitProductResult productResult = loanLimitProductResultRepository.findByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
                         .orElseThrow(() -> new InvalidRequestException("존재하지 않는 식별번호&상품코드. loReqtNo: " + item.getLoReqtNo() + ", productCode: " + item.getProductCode()));
+
+                //중복 or 처리불가 상태 체크
+                if(productResult.getStatus() != PartnerInquiryStatus.SEND_SUCCESS) {
+                    log.warn("[{}] 처리 불가 상태의 결과 수신. loReqtNo={}, status={}",
+                            partnerCode, item.getLoReqtNo(), productResult.getStatus());
+
+                    if(productResult.getStatus() == PartnerInquiryStatus.SUCCESS) {
+                        log.warn("[{}] 중복 수신. loReqtNo={}",
+                                partnerCode, item.getLoReqtNo());
+                    }
+
+                    return;
+                }
 
                 //한도결과 UPDATE
                 productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());

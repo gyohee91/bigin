@@ -9,6 +9,7 @@ import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitResult;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.domain.loan.factory.LoanLimitAdaptorFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
@@ -95,6 +96,7 @@ public class LoanLimitSenderService {
                                                         .loReqtNo(generator.generate()) //신청번호 채번
                                                         .partnerCode(partnerCode)
                                                         .productCode(product.getProductCode())
+                                                        .status(PartnerInquiryStatus.PENDING)
                                                         .build();
                                         loanLimitInquiry.addProductResult(productResult);
                                         return productResult;
@@ -150,12 +152,17 @@ public class LoanLimitSenderService {
 
                     if(adaptorResponse.success()) {
                         result.success(adaptorResponse.resTimeMs());
+                        productResultMap.get(adaptorResponse.partnerCode())
+                                .forEach(LoanLimitProductResult::sendSuccess);
                     }
                     else {
                         result.fail(
                                 adaptorResponse.failReason(),
                                 adaptorResponse.resTimeMs()
                         );
+
+                        productResultMap.get(adaptorResponse.partnerCode())
+                                .forEach(LoanLimitProductResult::sendFail);
                     }
 
             });
