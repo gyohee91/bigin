@@ -2,7 +2,6 @@ package com.ghyinc.finance.domain.loan.repository;
 
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
-import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
@@ -20,6 +19,9 @@ public interface LoanLimitProductResultRepository extends JpaRepository<LoanLimi
     );
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("SELECT r FROM LoanLimitInquiry r WHERE r.id = :id")
-    Optional<LoanLimitInquiry> findByIdWithLock(@Param("id") Long id);
+    @Query("SELECT t.loanLimitInquiry FROM LoanLimitProductResult t WHERE t.loReqtNo = :loReqtNo AND t.productCode = :productCode")
+    Optional<LoanLimitInquiry> findInquiryByLoReqtNoAndProduceCodeWithLock(
+            @Param("loReqtNo") String loReqtNo,
+            @Param("productCode") String productCode
+    );
 }

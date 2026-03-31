@@ -74,7 +74,7 @@ public class LoanLimitInquiry extends BaseTimeEntity {
         this.successProductCount = 0;
     }
 
-    public void incrementSuccess() {
+    public void incrementSuccessCount() {
         this.successProductCount++;
     }
 }
