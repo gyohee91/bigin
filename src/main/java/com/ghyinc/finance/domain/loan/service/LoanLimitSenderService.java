@@ -103,6 +103,12 @@ public class LoanLimitSenderService {
                                     }).toList()
                     ));
 
+            //상품 전체 수 초기화
+            int totalProductCount = productResultMap.values().stream()
+                    .mapToInt(List::size)
+                    .sum();
+            loanLimitInquiry.initProductCount(totalProductCount);
+
             //금융사별 RequestProduct(공통 요청 DTO) 구성
             Map<PartnerCode, List<RequestProduct>> requestProductMap = productResultMap.entrySet().stream()
                     .collect(Collectors.toMap(

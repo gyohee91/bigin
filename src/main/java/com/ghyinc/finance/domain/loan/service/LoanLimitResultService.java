@@ -5,6 +5,7 @@ import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptor;
 import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptorFactory;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResultRequest;
 import com.ghyinc.finance.domain.loan.dto.ResultResponse;
+import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
@@ -43,6 +44,10 @@ public class LoanLimitResultService {
                 LoanLimitProductResult productResult = loanLimitProductResultRepository.findByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
                         .orElseThrow(() -> new InvalidRequestException("존재하지 않는 식별번호&상품코드. loReqtNo: " + item.getLoReqtNo() + ", productCode: " + item.getProductCode()));
 
+                //비관적 Lock으로 동시 수신 시 순차 처리 보장
+                LoanLimitInquiry loanLimitInquiry = loanLimitProductResultRepository.findByIdWithLock(productResult.getLoanLimitInquiry().getId())
+                        .orElseThrow(() -> new InvalidRequestException("존재하지 않는 이력"));
+
                 //중복 or 처리불가 상태 체크
                 if(productResult.getStatus() != PartnerInquiryStatus.SEND_SUCCESS) {
                     log.warn("[{}] 처리 불가 상태의 결과 수신. loReqtNo={}, status={}",
@@ -57,6 +62,7 @@ public class LoanLimitResultService {
                 }
 
                 //한도결과 UPDATE
+                loanLimitInquiry.incrementSuccess();
                 productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
             });
 

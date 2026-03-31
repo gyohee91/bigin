@@ -22,6 +22,7 @@ public class LoanLimitProductResult extends BaseTimeEntity {
     @JoinColumn(name = "inquiry_id", nullable = false)
     private LoanLimitInquiry loanLimitInquiry;
 
+    @Column(nullable = false, unique = true)
     @Comment("신청번호")
     private String loReqtNo;
 
