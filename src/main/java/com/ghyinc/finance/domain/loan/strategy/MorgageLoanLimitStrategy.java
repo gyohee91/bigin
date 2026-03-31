@@ -5,8 +5,8 @@ import com.ghyinc.finance.domain.loan.dto.ExternalDataContext;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
-import com.ghyinc.finance.domain.loan.external.nice.dto.NiceDnrResult;
-import com.ghyinc.finance.domain.loan.external.nice.service.NiceDnrService;
+import com.ghyinc.finance.domain.loan.external.coocon.dto.KbAppraisalResult;
+import com.ghyinc.finance.domain.loan.external.coocon.service.KbAppraisalService;
 import com.ghyinc.finance.domain.loan.repository.PartnerLoanTypeRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -15,13 +15,13 @@ import java.util.List;
 
 @Component
 @RequiredArgsConstructor
-public class AutoLoanLimitStrategy implements LoanLimitStrategy{
-    private final NiceDnrService niceDnrService;
+public class MorgageLoanLimitStrategy implements LoanLimitStrategy {
+    private final KbAppraisalService kbAppraisalService;
     private final PartnerLoanTypeRepository partnerLoanTypeRepository;
 
     @Override
     public LoanType getLoanType() {
-        return LoanType.AUTO;
+        return LoanType.MORTGATE;
     }
 
     @Override
@@ -31,23 +31,22 @@ public class AutoLoanLimitStrategy implements LoanLimitStrategy{
 
     @Override
     public ExternalDataContext fetchExternalData(LoanLimitRequest request) {
-        NiceDnrResult result = niceDnrService.inquireNiceDnr(request.getCarNo(), request.getName());
+        KbAppraisalResult result = kbAppraisalService.inquireKbAppraisal(request.getAddress());
         return ExternalDataContext.builder()
-                .niceDnrResult(result)
+                .kbAppraisalResult(result)
                 .build();
     }
 
     @Override
     public LoanLimitAdaptorRequest toAdaptorRequest(LoanLimitRequest request, ExternalDataContext externalDataContext) {
-        NiceDnrResult result = externalDataContext.niceDnrResult();
+        KbAppraisalResult result = externalDataContext.kbAppraisalResult();
         return LoanLimitAdaptorRequest.builder()
                 .name(request.getName())
                 .rrno(request.getRrno())
                 .jobType(request.getJobType())
                 .jobName(request.getJobName())
-                .carNo(request.getCarNo())
-                .autoInfo(result.autoInfo())
-                .autoSecondInfo(result.autoSecondInfo())
+                .address(request.getAddress())
+                .respData(result.respData())
                 .build();
     }
 

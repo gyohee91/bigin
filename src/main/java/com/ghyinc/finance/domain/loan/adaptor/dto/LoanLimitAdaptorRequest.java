@@ -2,6 +2,7 @@ package com.ghyinc.finance.domain.loan.adaptor.dto;
 
 import com.ghyinc.finance.domain.loan.dto.RequestProduct;
 import com.ghyinc.finance.domain.loan.enums.JobType;
+import com.ghyinc.finance.domain.loan.external.coocon.dto.RespData;
 import com.ghyinc.finance.domain.loan.external.nice.dto.AutoInfo;
 import com.ghyinc.finance.domain.loan.external.nice.dto.AutoSecondInfo;
 import lombok.Builder;
@@ -16,7 +17,9 @@ public record LoanLimitAdaptorRequest(
         JobType jobType,
         String jobName,
         String carNo,
+        String address,
         AutoInfo autoInfo,
-        AutoSecondInfo autoSecondInfo
+        AutoSecondInfo autoSecondInfo,
+        RespData respData
 ) {
 }

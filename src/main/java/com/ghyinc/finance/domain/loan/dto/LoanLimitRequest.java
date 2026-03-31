@@ -34,4 +34,7 @@ public class LoanLimitRequest {
 
     @Schema(description = "대출 유형", example = "PERSONAL_CREDIT")
     private LoanType loanType;
+
+    @Schema(description = "주소", example = "수원시 영통구 영통로90번길 4-27 ...")
+    private String address;
 }

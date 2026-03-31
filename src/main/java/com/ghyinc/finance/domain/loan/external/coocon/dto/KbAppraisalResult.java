@@ -6,7 +6,8 @@ import lombok.Builder;
 public record KbAppraisalResult(
         String resultCd,
         String resultMg,
-        String totalCount
-        //KB부동산 시세 정보
+        String totalCount,
+        RespData respData
+        // KB부동산 시세 정보
 ) {
 }
