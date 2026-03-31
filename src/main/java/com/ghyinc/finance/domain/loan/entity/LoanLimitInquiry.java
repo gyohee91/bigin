@@ -36,6 +36,9 @@ public class LoanLimitInquiry extends BaseTimeEntity {
     @Comment("대출 유형")
     private LoanType loanType;
 
+    @Comment("차량번호")
+    private String carNo;
+
     @Enumerated(EnumType.STRING)
     @Comment("응답 결과")
     @Builder.Default

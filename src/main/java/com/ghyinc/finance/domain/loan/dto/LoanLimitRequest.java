@@ -26,8 +26,11 @@ public class LoanLimitRequest {
     @Schema(description = "직업 구분", example = "EMPLOYEE")
     private JobType jobType;
 
-    @Schema(description = "직장명", example = "라인플러스")
+    @Schema(description = "직장명", example = "오케이저축은행")
     private String jobName;
+
+    @Schema(description = "차량번호", example = "12가1234")
+    private String carNo;
 
     @Schema(description = "대출 유형", example = "PERSONAL_CREDIT")
     private LoanType loanType;

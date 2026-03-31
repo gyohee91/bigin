@@ -1,6 +1,7 @@
 package com.ghyinc.finance.domain.loan.strategy;
 
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
+import com.ghyinc.finance.domain.loan.dto.ExternalDataContext;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
@@ -26,12 +27,22 @@ public class PersonalLoanLimitStrategy implements LoanLimitStrategy {
     }
 
     @Override
-    public LoanLimitAdaptorRequest toAdaptorRequest(LoanLimitRequest request) {
+    public ExternalDataContext fetchExternalData(LoanLimitRequest request) {
+        return ExternalDataContext.empty();
+    }
+
+    @Override
+    public LoanLimitAdaptorRequest toAdaptorRequest(LoanLimitRequest request, ExternalDataContext externalDataContext) {
         return LoanLimitAdaptorRequest.builder()
                 .name(request.getName())
                 .rrno(request.getRrno())
                 .jobType(request.getJobType())
                 .jobName(request.getJobName())
                 .build();
+    }
+
+    @Override
+    public boolean requiresExternalData() {
+        return false;
     }
 }

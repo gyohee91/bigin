@@ -2,9 +2,10 @@ package com.ghyinc.finance.domain.loan.strategy;
 
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
+import com.ghyinc.finance.domain.loan.dto.ExternalDataContext;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
-import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
+import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 
 import java.util.List;
 
@@ -33,13 +34,21 @@ public interface LoanLimitStrategy {
      */
     List<PartnerCode> getSupportedBanks();
 
+    ExternalDataContext fetchExternalData(LoanLimitRequest request);
+
     /**
      * 서비스 요청을 어댑터 요청으로 변환
      * - 대출 유형별 loanTypeCode, 필드 매핑 방식이 다름
      * @param request
      * @return
      */
-    LoanLimitAdaptorRequest toAdaptorRequest(LoanLimitRequest request);
+    LoanLimitAdaptorRequest toAdaptorRequest(LoanLimitRequest request, ExternalDataContext externalDataContext);
+
+    /**
+     * 외부 API 조회 필요 여부
+     * @return
+     */
+    boolean requiresExternalData();
 
     /**
      * 어댑터 응답 후처리
