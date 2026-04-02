@@ -22,7 +22,7 @@
 실무에서 직접 경험한 **제휴 금융사 한도조회 시스템의 핵심 도메인**을 새로운 기술 스택과 아키텍처로 재설계하여 구현했습니다.
 
 - 실무와 동일한 비즈니스 로직 (콜백 기반 비동기 한도조회, 상품별 채번, 디자인 패턴 등)
-- Java 21 + Spring Boot 3.5로 업그레이드하여 최신 기능 적용
+- Java 17 + Spring Boot 3.5로 업그레이드하여 최신 기능 적용
 - Layered Architecture → Domain-driven Package Structure로 전환
 
 <br>
