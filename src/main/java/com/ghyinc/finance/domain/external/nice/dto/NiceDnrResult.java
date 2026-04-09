@@ -1,4 +1,4 @@
-package com.ghyinc.finance.domain.loan.external.nice.dto;
+package com.ghyinc.finance.domain.external.nice.dto;
 
 import lombok.Builder;
 

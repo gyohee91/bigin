@@ -2,9 +2,9 @@ package com.ghyinc.finance.domain.loan.adaptor.dto;
 
 import com.ghyinc.finance.domain.loan.dto.RequestProduct;
 import com.ghyinc.finance.domain.loan.enums.JobType;
-import com.ghyinc.finance.domain.loan.external.coocon.dto.RespData;
-import com.ghyinc.finance.domain.loan.external.nice.dto.AutoInfo;
-import com.ghyinc.finance.domain.loan.external.nice.dto.AutoSecondInfo;
+import com.ghyinc.finance.domain.external.coocon.dto.RespData;
+import com.ghyinc.finance.domain.external.nice.dto.AutoInfo;
+import com.ghyinc.finance.domain.external.nice.dto.AutoSecondInfo;
 import lombok.Builder;
 
 import java.util.List;

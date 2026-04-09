@@ -1,4 +1,4 @@
-package com.ghyinc.finance.domain.loan.external.coocon.dto;
+package com.ghyinc.finance.domain.external.coocon.dto;
 
 import lombok.Builder;
 

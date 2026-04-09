@@ -1,7 +1,7 @@
-package com.ghyinc.finance.domain.loan.external.coocon.service;
+package com.ghyinc.finance.domain.external.coocon.service;
 
-import com.ghyinc.finance.domain.loan.external.coocon.dto.KbAppraisalResult;
-import com.ghyinc.finance.domain.loan.external.coocon.dto.RespData;
+import com.ghyinc.finance.domain.external.coocon.dto.KbAppraisalResult;
+import com.ghyinc.finance.domain.external.coocon.dto.RespData;
 import org.springframework.stereotype.Service;
 
 @Service

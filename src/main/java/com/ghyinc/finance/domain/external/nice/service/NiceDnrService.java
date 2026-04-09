@@ -1,8 +1,8 @@
-package com.ghyinc.finance.domain.loan.external.nice.service;
+package com.ghyinc.finance.domain.external.nice.service;
 
-import com.ghyinc.finance.domain.loan.external.nice.dto.AutoInfo;
-import com.ghyinc.finance.domain.loan.external.nice.dto.AutoSecondInfo;
-import com.ghyinc.finance.domain.loan.external.nice.dto.NiceDnrResult;
+import com.ghyinc.finance.domain.external.nice.dto.AutoInfo;
+import com.ghyinc.finance.domain.external.nice.dto.AutoSecondInfo;
+import com.ghyinc.finance.domain.external.nice.dto.NiceDnrResult;
 import org.springframework.stereotype.Service;
 
 @Service

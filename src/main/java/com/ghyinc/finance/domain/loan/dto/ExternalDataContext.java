@@ -1,7 +1,7 @@
 package com.ghyinc.finance.domain.loan.dto;
 
-import com.ghyinc.finance.domain.loan.external.coocon.dto.KbAppraisalResult;
-import com.ghyinc.finance.domain.loan.external.nice.dto.NiceDnrResult;
+import com.ghyinc.finance.domain.external.coocon.dto.KbAppraisalResult;
+import com.ghyinc.finance.domain.external.nice.dto.NiceDnrResult;
 import lombok.Builder;
 
 import java.util.HashMap;

@@ -89,8 +89,9 @@ com.ghyinc.finance
 │   │   ├── entity
 │   │   ├── repository
 │   │   └── enums
-│   └── external
-│       └── nice               # Nice DNR (자동차등록원부) 연동
+│   └── external               # 외부 기관 API
+│       ├── nice               # Nice DNR (자동차등록원부) 연동
+│       └── coocon             # KB 부동산 시세 연동
 ├── global
 │   ├── client                 # 통신 방식별 ApiClient (REST, 전용선)
 │   ├── common                 # 공통 유틸 (채번, BaseEntity 등)
