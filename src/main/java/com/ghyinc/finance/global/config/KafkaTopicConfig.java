@@ -15,9 +15,25 @@ import org.springframework.kafka.config.TopicBuilder;
 @Configuration
 public class KafkaTopicConfig {
 
+    /**
+     * 알림서비스 전송
+     * @return
+     */
     @Bean
     public NewTopic notificationSendTopic() {
         return TopicBuilder.name("notification.send")
+                .partitions(3)
+                .replicas(1)
+                .build();
+    }
+
+    /**
+     * 한도조회 완료
+     * @return
+     */
+    @Bean
+    public NewTopic loanLimitSendTopic() {
+        return TopicBuilder.name("loan-limit-completed")
                 .partitions(3)
                 .replicas(1)
                 .build();

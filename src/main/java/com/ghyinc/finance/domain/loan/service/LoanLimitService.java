@@ -59,6 +59,7 @@ public class LoanLimitService {
         //LoanLimitInquiry INSERT
         LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
                 .userId(request.getUserId())
+                .name(request.getName())
                 .jobType(request.getJobType())
                 .jobName(request.getJobName())
                 .loanType(request.getLoanType())

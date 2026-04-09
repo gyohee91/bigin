@@ -9,7 +9,7 @@
 
 ### 실무 배경
 
-현재 재직 중인 회사에서 **40개 이상의 금융사와 연동하는 대출 비교 플랫폼(OK비교대출)** 을 개발·운영하고 있습니다.
+현재 재직 중인 회사에서 **40개 이상의 금융사와 연동하는 대출 비교 플랫폼** 을 개발·운영하고 있습니다.
 
 실무에서는 아래와 같은 제약이 있었습니다.
 
@@ -31,28 +31,30 @@
 
 ### 실무 vs 개인 프로젝트 비교
 
-| 구분           | 실무 (OK비교대출)         | 개인 프로젝트 (Bigin)                      |
-|--------------|---------------------|--------------------------------------|
-| Language     | Java 8              | Java 17                              |
-| Framework    | Spring Boot 2.7     | Spring Boot 3.5                      |
+| 구분           | 실무         | 개인 프로젝트 (Bigin)                      |
+|--------------|--------------------|--------------------------------------|
+| Language     | Java 8             | Java 17                              |
+| Framework    | Spring Boot 2.7    | Spring Boot 3.5                      |
 | Architecture | Layered Architecture | Domain-driven Package Structure      |
-| DB           | Oracle DB           | H2 DB (In-memory)                    |
-| 메시지큐         | ActiveMQ            | Kafka                                |
-| API 통신       | RestTemplate        | RestClient                           |
+| DB           | Oracle DB          | H2 DB (In-memory)                    |
+| 메시지큐         | ActiveMQ           | Kafka                                |
+| API 통신       | RestTemplate       | RestClient                           |
 
 ### 개인 프로젝트 상세 스택
 
-| 구분 | 기술                                   |
-|---|--------------------------------------|
-| Language | Java 17                              |
+| 구분        | 기술                                   |
+|-----------|--------------------------------------|
+| Language  | Java 17                              |
 | Framework | Spring Boot 3.5                      |
-| ORM | Spring Data JPA / Hibernate          |
-| DB | H2 DB                                |
-| 비동기 | Spring @Async / CompletableFuture    |
-| 장애격리 | Resilience4j Circuit Breaker / Retry |
-| 암복호화 | AES-256-CBC, AES-256-ECB, RSA-OAEP   |
-| API 문서 | SpringDoc OpenAPI (Swagger)          |
-| Build | Gradle                               |
+| ORM       | Spring Data JPA / Hibernate          |
+| DB        | H2 DB                                |
+| 비동기       | Spring @Async / CompletableFuture    |
+| 장애격리      | Resilience4j Circuit Breaker / Retry |
+| 암복호화      | AES-256-CBC, AES-256-ECB, RSA-OAEP   |
+| API 문서    | SpringDoc OpenAPI (Swagger)          |
+| Build     | Gradle                               |
+| 메시지큐      | Apache Kafka                         |
+
 
 <br>
 
@@ -76,6 +78,17 @@ com.ghyinc.finance
 │   │   ├── repository         # Spring Data JPA
 │   │   ├── dto                # 요청/응답 DTO
 │   │   └── enums              # 상태/타입 Enum
+│   ├── notification
+│   │   ├── service            # 알림 비즈니스 로직
+│   │   │   ├── NotificationService.java
+│   │   │   └── NotificationSenderService.java
+│   │   ├── event
+│   │   │   ├── NotificationEventProducer.java       # Kafka Producer
+│   │   │   ├── NotificationEventConsumer.java       # Kafka Consumer (발송 처리)
+│   │   │   └── LoanLimitCompletedEventConsumer.java # loan-limit-completed 토픽 수신
+│   │   ├── entity
+│   │   ├── repository
+│   │   └── enums
 │   └── external
 │       └── nice               # Nice DNR (자동차등록원부) 연동
 ├── global
@@ -114,6 +127,24 @@ FE → POST /api/loan/limit/inquiry
   ├── loReqtNo + productCode로 선저장 데이터 조회 및 UPDATE
   ├── 비관적 락으로 count 동시성 제어
   └── 완료 시 알림 이벤트 발행
+           │
+         ▼ Kafka
+  LoanLimitCompletedEventConsumer (notification 도메인)
+  └── NotificationService → notification.send 토픽 발행
+         │
+         ▼ Kafka
+  NotificationEventConsumer
+  └── 실제 Push/SMS 발송
+```
+
+### 2. Kafka 토픽 구성
+
+```
+loan-limit-completed   loan → notification 도메인 간 이벤트 전달
+                        한도조회 완료 시 발행 (inquiryNo가 partition key)
+ 
+notification.send      notification 도메인 내부 비동기 발송 처리
+                        Notification INSERT 후 실제 발송 분리
 ```
 
 ### 2. 디자인 패턴
@@ -231,6 +262,68 @@ ExternalDataContext context = strategy.requiresExternalData()
 
 <br>
 
+## 📨 알림 서비스 - Kafka 기반 비동기 처리
+
+한도조회 완료 후 고객에게 알림을 발송하는 notification 도메인을 Kafka로 loan 도메인과 분리했습니다.
+
+### 도메인 간 Kafka 이벤트 흐름
+
+```
+[loan 도메인]
+LoanLimitCallbackService
+  → KafkaTemplate.send("loan-limit-completed", inquiryNo, event)
+ 
+        ↓ Kafka (loan-limit-completed 토픽)
+ 
+[notification 도메인]
+LoanLimitCompletedEventConsumer
+  → NotificationService.sendNotification()
+      → Notification INSERT
+      → KafkaTemplate.send("notification.send", id, event)
+ 
+        ↓ Kafka (notification.send 토픽)
+ 
+NotificationEventConsumer
+  → NotificationSenderService.call()   ← 실제 Push/SMS 발송
+  → 발송 결과 UPDATE
+```
+
+### ApplicationEventPublisher 대신 Kafka를 선택한 이유
+
+```
+ApplicationEventPublisher 한계
+  → 동일 JVM 내에서만 동작
+  → Kubernetes 다중 Pod 환경에서 이벤트 소실 위험
+  → Pod 재시작 시 발행된 이벤트 소실 → 알림 발송 누락
+ 
+Kafka 장점
+  → 다중 Pod 환경에서도 안정적 이벤트 전달
+  → Pod 재시작 시에도 이벤트 보존 (offset 기반)
+  → loan - notification 도메인 물리적 분리
+  → notification 장애가 loan 처리에 영향 없음
+  → 알림 발송 실패 시 offset reset으로 재처리 가능
+```
+
+### MDC 전파
+
+Kafka Consumer는 별도 스레드에서 실행되므로 HTTP 요청의 MDC(requestId)가 자동 전파되지 않습니다. payload에 requestId를 포함시켜 Consumer 스레드에서 복원합니다.
+
+```java
+@KafkaListener(topics = "loan-limit-completed", groupId = "notification-group")
+public void consume(LoanLimitCompletedEvent event) {
+    String requestId = Optional.ofNullable(event.getRequestId())
+            .orElse(UUID.randomUUID().toString());
+    try {
+        MDC.put(REQUEST_ID_KEY, requestId);   // Consumer 스레드 MDC 설정
+        notificationService.sendNotification(...);
+    } finally {
+        MDC.clear();   // Consumer 스레드 재사용 시 오염 방지
+    }
+}
+```
+
+<br>
+
 ## 🔄 콜백 동시성 제어
 
 여러 금융사 콜백이 동시에 수신될 때 `LoanLimitInquiry` count 업데이트의 Lost Update를 방지합니다.
@@ -323,10 +416,6 @@ partner-api:
 | 금융사별 Circuit Breaker | 특정 금융사 장애 시 다른 금융사 영향 없이 격리 |
 | 암호화 키 DB 관리 | 배포 없이 키 교체 가능, @PostConstruct 초기화로 성능 확보 |
 | ExternalDataContext | 외부 조회 결과 파라미터 고정 (Nice DNR, KB시세 등 확장 시 파라미터 불변) |
+| Kafka 알림 연동 | 다중 Pod 환경에서 이벤트 소실 방지, loan-notification 도메인 물리적 분리 |
 
 <br>
-
-## 👨‍💻 Author
-
-**OK Capital Backend Developer**  
-실무 대출 비교 플랫폼(OK비교대출) 운영 경험을 바탕으로 설계한 개인 포트폴리오 프로젝트입니다.

@@ -21,6 +21,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,6 +43,7 @@ public class LoanLimitSenderService {
     private final LoReqtNoGenerator generator;
     private final Executor loanLimitExecutor;
     private final ApplicationEventPublisher eventPublisher;
+    private final KafkaTemplate<String, LoanLimitCompletedEvent> kafkaTemplate;
 
     /**
      * 여러 금융사에 대한 한도조회
@@ -183,15 +185,42 @@ public class LoanLimitSenderService {
             loanLimitInquiry.updateInquiryStatus(resultStatus);
 
             //알림 발송 - notification 도메인을 직접 알지 못함
+            this.publishCompletedEvent(loanLimitInquiry);
+            /*
             eventPublisher.publishEvent(
                     LoanLimitCompletedEvent.builder()
                             .userId(loanLimitInquiry.getUserId())
-                            //.loReqtNo(loanLimitInquiry.getLoReqtNo())
+                            .inquiryNo(loanLimitInquiry.getId())
                             .build()
             );
+
+             */
         } catch(Exception e) {
             log.error("한도조회 처리 중 오류. id={}", loanLimitInquiry.getId(), e);
             loanLimitInquiry.updateInquiryStatus(InquiryStatus.FAILED);
         }
+    }
+
+    /**
+     * ApplicationEventPublisher 대신 Kafka 발행
+     * @param loanLimitInquiry
+     */
+    private void publishCompletedEvent(LoanLimitInquiry loanLimitInquiry) {
+        LoanLimitCompletedEvent event = LoanLimitCompletedEvent.builder()
+                .userId(loanLimitInquiry.getUserId())
+                .name(loanLimitInquiry.getName())
+                .status(loanLimitInquiry.getStatus())
+                .build();
+
+        // inquiryNo를 partition key로 사용
+        // -> 동일 inquiry 이벤트는 항상 같은 파티션으로 전송
+        kafkaTemplate.send("loan-limit-completed", String.valueOf(loanLimitInquiry.getId()), event)
+                .whenComplete((result, ex) -> {
+                    if(ex != null)
+                        log.error("한도조회 완료 이벤트 발행 실패", ex);
+                    else
+                        log.info("한도조회 완료 이벤트 발생 성공. partition={}",
+                                result.getRecordMetadata().partition());
+                });
     }
 }

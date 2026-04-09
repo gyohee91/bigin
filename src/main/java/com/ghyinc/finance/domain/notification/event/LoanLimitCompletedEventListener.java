@@ -26,7 +26,7 @@ public class LoanLimitCompletedEventListener {
                         .userId(event.getUserId())
                         .channelType(ChannelType.SMS)
                         .sendType(SendType.IMMEDIATE)
-                        .recipient(event.getLoReqtNo())
+                        .recipient(event.getName())
                         .title("한도조회 완료")
                         .content(".....")
                         .build()

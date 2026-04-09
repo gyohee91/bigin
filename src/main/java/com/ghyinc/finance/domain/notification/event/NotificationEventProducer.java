@@ -8,11 +8,11 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 public class NotificationEventProducer {
-    private final KafkaTemplate<String, NotificationEvent> kafkaTemplate;
+    //private final KafkaTemplate<String, NotificationEvent> kafkaTemplate;
 
     public void publish(Notification notification) {
         NotificationEvent event = NotificationEvent.from(notification);
-        kafkaTemplate.send("notification.send", String.valueOf(notification.getId()), event);
+        //kafkaTemplate.send("notification.send", String.valueOf(notification.getId()), event);
     }
 
 }

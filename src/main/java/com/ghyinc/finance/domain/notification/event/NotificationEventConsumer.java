@@ -35,10 +35,10 @@ public class NotificationEventConsumer {
     private final NotificationSenderService notificationSenderService;
     private final NotificationRepository notificationRepository;
 
-    @KafkaListener(
-            topics = "notification.send",
-            groupId = "notification-group"
-    )
+    //@KafkaListener(
+    //        topics = "notification.send",
+    //        groupId = "notification-group"
+    //)
     public void consume(NotificationEvent event) {
         // payload에서 requestId 복원 -> Consumer 스레드 MDC에 설정
         String requestId = Optional.ofNullable(event.getRequestId())

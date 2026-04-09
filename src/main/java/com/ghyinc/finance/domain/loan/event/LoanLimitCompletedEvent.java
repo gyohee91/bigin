@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.event;
 
+import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -11,5 +12,6 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class LoanLimitCompletedEvent {
     private Long userId;
-    private String loReqtNo;
+    private String name;
+    private InquiryStatus status;
 }

@@ -24,9 +24,9 @@ spring:
         dialect: org.hibernate.dialect.H2Dialect
 
   # Kafka 자동설정 비활성화 (로컬 테스트 시 Kafka 없이 기동)
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration
+  #autoconfigure:
+  #  exclude:
+  #    - org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration
 
   kafka:
     bootstrap-servers: localhost:9092
@@ -38,7 +38,7 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        spring.json.trusted.packages: "com.ghyinc.finance.domain.notification.event"
+        spring.json.trusted.packages: "com.ghyinc.finance.domain.notification.event,com.ghyinc.finance.domain.loan.event"
 
 server:
   port: 8080
