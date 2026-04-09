@@ -332,7 +332,7 @@ public void consume(LoanLimitCompletedEvent event) {
 // LoanLimitProductResultRepository - 비관적 락으로 inquiry 조회
 @Lock(LockModeType.PESSIMISTIC_WRITE)
 @Query("SELECT p.inquiry FROM LoanLimitProductResult p WHERE p.loReqtNo = :loReqtNo")
-Optional<LoanLimitInquiry> findInquiryByLoReqtNoWithLock(@Param("loReqtNo") String loReqtNo);
+Optional<LoanLimitInquiry> findInquiryByLoReqtNoAndProduceCodeWithLock(@Param("loReqtNo") String loReqtNo, @Param("productCode") String productCode);
 ```
 
 ```

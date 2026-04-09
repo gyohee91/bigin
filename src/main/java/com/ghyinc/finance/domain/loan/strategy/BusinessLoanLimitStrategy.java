@@ -27,6 +27,11 @@ public class BusinessLoanLimitStrategy implements LoanLimitStrategy {
     }
 
     @Override
+    public void validate(LoanLimitRequest request) {
+
+    }
+
+    @Override
     public ExternalDataContext fetchExternalData(LoanLimitRequest request) {
         return ExternalDataContext.empty();
     }

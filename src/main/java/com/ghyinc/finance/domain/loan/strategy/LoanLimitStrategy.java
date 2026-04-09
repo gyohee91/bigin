@@ -34,6 +34,8 @@ public interface LoanLimitStrategy {
      */
     List<PartnerCode> getSupportedBanks();
 
+    void validate(LoanLimitRequest request);
+
     ExternalDataContext fetchExternalData(LoanLimitRequest request);
 
     /**
@@ -49,6 +51,16 @@ public interface LoanLimitStrategy {
      * @return
      */
     boolean requiresExternalData();
+
+    /**
+     * 외부 API 실패 시 진행 가능한 금융사 필터링
+     * @param activePartnerCodes
+     * @param context
+     * @return
+     */
+    default List<PartnerCode> filterAvailablePartners(List<PartnerCode> activePartnerCodes, ExternalDataContext context) {
+        return activePartnerCodes;  // 기본: 전체 진행
+    }
 
     /**
      * 어댑터 응답 후처리
