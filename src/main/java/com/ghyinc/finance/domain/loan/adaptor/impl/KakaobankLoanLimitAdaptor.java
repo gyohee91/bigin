@@ -33,7 +33,11 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
             @JsonProperty("cust_nm")
             String custNm,
             @JsonProperty("cust_input_info")
-            CustInputInfo custInputInfo
+            CustInputInfo custInputInfo,
+            @JsonProperty("vhc_no")
+            String vhcNo,
+            @JsonProperty("car_parts")
+            CarParts carParts
     ) {}
 
     @Builder
@@ -51,6 +55,17 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
             String ocupDvcd,
             @JsonProperty("cur_wrst_nm")
             String curWrstNm
+    ) {}
+
+    @Builder
+    private record CarParts(
+            String seq,
+            String formKind,
+            String resCarNo,
+            String seatingCapacity,
+            String resMotorType,
+            String resUseType,
+            String resCarModelType
     ) {}
 
     private record LimitResponse(
@@ -89,6 +104,18 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
                             CustInputInfo.builder()
                                     .ocupDvcd(requestParam.jobType().name())
                                     .curWrstNm(requestParam.jobName())
+                                    .build()
+                    )
+                    .vhcNo(requestParam.carNo())
+                    .carParts(
+                            CarParts.builder()
+                                    .seq(requestParam.autoInfo().seq())
+                                    .formKind(requestParam.autoInfo().formKind())
+                                    .resCarNo(requestParam.autoInfo().resCarNo())
+                                    .seatingCapacity(requestParam.autoInfo().seatingCapacity())
+                                    .resMotorType(requestParam.autoInfo().resMotorType())
+                                    .resUseType(requestParam.autoInfo().resUseType())
+                                    .resCarModelType(requestParam.autoInfo().resCarModelType())
                                     .build()
                     )
                     .build();

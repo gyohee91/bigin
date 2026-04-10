@@ -28,6 +28,9 @@ public class LoanLimitInquiry extends BaseTimeEntity {
     @Comment("고객명")
     private String name;
 
+    @Comment("CI")
+    private String ci;
+
     @Enumerated(EnumType.STRING)
     @Comment("직업 구분")
     private JobType jobType;

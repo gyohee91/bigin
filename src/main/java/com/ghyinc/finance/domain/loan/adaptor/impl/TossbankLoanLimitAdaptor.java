@@ -34,7 +34,19 @@ public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
             String name,
             String jobType,
             String rrn,
-            String corporateName
+            String corporateName,
+            String automobileNumber,
+            AutomobileInfo automobileInfo
+    ){}
+
+    private record AutomobileInfo(
+            String seq,
+            String formKind,
+            String resCarNo,
+            String seatingCapacity,
+            String resMotorType,
+            String resUseType,
+            String resCarModelType
     ){}
 
     @Builder
@@ -68,6 +80,7 @@ public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
                             .name(cryptoService.encrypt(requestParam.name()))
                             .jobType(requestParam.jobType().name())
                             .corporateName(requestParam.jobName())
+                            .automobileNumber(requestParam.carNo())
                             .build()
                     )
                     .requestProducts(

@@ -20,8 +20,10 @@ public class NiceDnrService {
         AutoInfo autoInfo = AutoInfo.builder()
                 .seq("1")
                 .formKind("갑")
+                .resCarNo("12가1234")
                 .resUseType("영업용")
                 .seatingCapacity("5")
+                .resMotorType("64FP")
                 .resCarModelType("승합대형")
                 .build();   //갑 정보 가져옴
 

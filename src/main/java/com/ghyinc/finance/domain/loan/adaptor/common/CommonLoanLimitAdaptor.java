@@ -1,5 +1,7 @@
 package com.ghyinc.finance.domain.loan.adaptor.common;
 
+import com.ghyinc.finance.domain.external.nice.dto.AutoInfo;
+import com.ghyinc.finance.domain.external.nice.dto.AutoSecondInfo;
 import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
@@ -30,7 +32,10 @@ public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
             List<RequestProduct> requestProducts,
             String rrn,
             String name,
-            String jobType
+            String jobType,
+            String carNo,
+            AutoInfo autoInfo,
+            AutoSecondInfo autoSecondInfo
     ) {}
 
     private record CommonLimitResponse(
@@ -56,6 +61,9 @@ public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
                     .requestProducts(requestParam.requestProducts())
                     .rrn(cryptoService.encrypt(requestParam.rrno()))
                     .name(cryptoService.encrypt(requestParam.name()))
+                    .carNo(requestParam.carNo())
+                    .autoInfo(requestParam.autoInfo())
+                    .autoSecondInfo(requestParam.autoSecondInfo())
                     .build();
 
             CommonLimitResponse result = apiClient.post(

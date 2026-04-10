@@ -27,6 +27,9 @@ public class LoanLimitRequest {
     @NotBlank(message = "주민번호는 필수입니다")
     private String rrno;
 
+    @Schema(description = "CI", example = "wEi9oYSuekQGxT9MV4rKHG4CO+Zrp+onhLIIuembI8jx/0PLF5Ne3oMBxvUFlN4UmsgjeNErZfmpCVUFH")
+    private String ci;
+
     @Schema(description = "직업 구분", example = "EMPLOYEE")
     @NotBlank(message = "직업 구분은 필수입니다")
     private JobType jobType;
