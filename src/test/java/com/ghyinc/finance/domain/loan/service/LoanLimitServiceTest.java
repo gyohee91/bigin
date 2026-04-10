@@ -87,7 +87,7 @@ class LoanLimitServiceTest {
         assertThat(response.isSuccess()).isEqualTo(true);
 
         then(loanLimitInquiryRepository).should().save(any(LoanLimitInquiry.class));
-        then(loanLimitSenderService).should().inquiry(anyLong(), anyList(), any(), any());
+        then(loanLimitSenderService).should().inquiry(anyLong(), anyList(), any());
     }
 
     @Test
@@ -112,7 +112,7 @@ class LoanLimitServiceTest {
         assertThatThrownBy(() -> loanLimitService.requestCompareLoan(request))
                 .isInstanceOf(InvalidRequestException.class)
                 .hasMessage("현재 조회 가능한 금융사가 없습니다");
-        then(loanLimitSenderService).should(never()).inquiry(anyLong(), anyList(), any(), any());
+        then(loanLimitSenderService).should(never()).inquiry(anyLong(), anyList(), any());
     }
 
     @Test

@@ -75,6 +75,7 @@ public class MorgageLoanLimitStrategy implements LoanLimitStrategy {
                 .rrno(request.getRrno())
                 .jobType(request.getJobType())
                 .jobName(request.getJobName())
+                .loanType(request.getLoanType())
                 .address(request.getAddress())
                 .respData(result.respData())
                 .build();

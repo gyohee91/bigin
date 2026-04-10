@@ -74,6 +74,7 @@ public class AutoLoanLimitStrategy implements LoanLimitStrategy{
                 .rrno(request.getRrno())
                 .jobType(request.getJobType())
                 .jobName(request.getJobName())
+                .loanType(request.getLoanType())
                 .carNo(request.getCarNo())
                 .autoInfo(result.autoInfo())
                 .autoSecondInfo(result.autoSecondInfo())

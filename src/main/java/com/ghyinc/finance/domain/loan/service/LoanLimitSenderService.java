@@ -60,8 +60,7 @@ public class LoanLimitSenderService {
     public void inquiry(
             long id,
             List<PartnerCode> partnerCodes,
-            LoanLimitAdaptorRequest adaptorRequest,
-            LoanLimitStrategy strategy
+            LoanLimitAdaptorRequest adaptorRequest
     ) {
         //새 트랜잭션에서 inquiry 조회 (호출 측 트랜잭션과 완전 분리)
         LoanLimitInquiry loanLimitInquiry = loanLimitInquiryRepository.findById(id)
@@ -89,7 +88,7 @@ public class LoanLimitSenderService {
             Map<PartnerCode, List<LoanLimitProductResult>> productResultMap = partnerCodes.stream()
                     .collect(Collectors.toMap(
                             partnerCode -> partnerCode,
-                            partnerCode -> productRepository.findActiveByPartnerCodeAndLoanType(partnerCode, strategy.getLoanType())
+                            partnerCode -> productRepository.findActiveByPartnerCodeAndLoanType(partnerCode, adaptorRequest.loanType())
                                     .stream()
                                     .map(product -> {
                                         LoanLimitProductResult productResult =

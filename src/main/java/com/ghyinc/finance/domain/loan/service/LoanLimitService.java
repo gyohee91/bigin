@@ -95,7 +95,7 @@ public class LoanLimitService {
 
         // 한도 조회(백그라운드 비동기 처리)
         // @Async 적용을 위해 별도 Bean(LoanLimitSenderService)으로 분리
-        loanLimitSenderService.inquiry(inquiry.getId(), activePartnerCodes, adaptorRequest, strategy);
+        loanLimitSenderService.inquiry(inquiry.getId(), activePartnerCodes, adaptorRequest);
 
         return LoanLimitResponse.from(inquiry);
     }
