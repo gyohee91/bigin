@@ -13,11 +13,14 @@ import com.ghyinc.finance.domain.loan.factory.LoanLimitAdaptorFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.domain.loan.repository.ProductRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Optional;
@@ -44,6 +47,15 @@ class LoanLimitSenderServiceTest {
 
     @Mock
     private LoanLimitAdaptorFactory adaptorFactory;
+
+    @BeforeEach
+    void setUp() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(4);
+        executor.setMaxPoolSize(4);
+        executor.initialize();
+        ReflectionTestUtils.setField(loanLimitSenderService, "loanLimitExecutor", executor);
+    }
 
     private LoanLimitInquiry buildInquiry() {
         return LoanLimitInquiry.builder()
@@ -90,7 +102,10 @@ class LoanLimitSenderServiceTest {
         loanLimitSenderService.inquiry(1L, List.of(PartnerCode.LINE_BANK), adaptorRequest);
 
         // then
-        assertThat(inquiry.getStatus()).isEqualTo(InquiryStatus.IN_PROGRESS);
+        assertThat(inquiry.getStatus()).isEqualTo(InquiryStatus.SUCCESS);
+        assertThat(inquiry.getResults()).hasSize(1);
+        assertThat(inquiry.getResults().get(0).getStatus())
+                .isEqualTo(InquiryStatus.SUCCESS);
 
     }
 }
