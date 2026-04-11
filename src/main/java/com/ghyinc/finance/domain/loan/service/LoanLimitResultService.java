@@ -49,7 +49,7 @@ public class LoanLimitResultService {
     }
 
     @Transactional
-    private void process(PartnerCode partnerCode, LoanLimitResultRequest request) {
+    public void process(PartnerCode partnerCode, LoanLimitResultRequest request) {
         request.getPreScrResultList().forEach(item -> {
             //loReqtNo와 productCode로 선저장된 ProductResult 조회
             LoanLimitProductResult productResult = loanLimitProductResultRepository.findByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
