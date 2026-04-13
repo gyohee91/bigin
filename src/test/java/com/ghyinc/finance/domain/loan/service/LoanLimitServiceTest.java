@@ -1,9 +1,12 @@
 package com.ghyinc.finance.domain.loan.service;
 
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
+import com.ghyinc.finance.domain.loan.dto.ExternalDataContext;
+import com.ghyinc.finance.domain.loan.dto.ExternalDataError;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResponse;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
+import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.JobType;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
@@ -22,6 +25,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -116,6 +120,102 @@ class LoanLimitServiceTest {
     }
 
     @Test
-    void requestCompareLoan() {
+    @DisplayName("진행 중인 한도조회 요청이 있으면 중복 요청 방지")
+    void requestCompareLoan_inProgressExists_throwsException() {
+        // given
+        LoanLimitRequest request = LoanLimitRequest.builder()
+                .userId(1L)
+                .name("윤교희")
+                .rrno("9102131234556")
+                .ci("wEi9oYSuekQGxT9MV4rKHG4CO+Zrp+onhLIIuembI8jx/0PLF5Ne3oMBxvUFlN4UmsgjeNErZfmpCVUFH")
+                .jobType(JobType.EMPLOYEE)
+                .jobName("오케이")
+                .loanType(LoanType.PERSONAL_CREDIT)
+                .build();
+        
+        LoanLimitStrategy strategy = mock(LoanLimitStrategy.class);
+        //given(strategyFactory.getStrategy(any())).willReturn(strategy);
+        given(loanLimitInquiryRepository.existsByUserIdAndLoanTypeAndStatus(1L, LoanType.PERSONAL_CREDIT, InquiryStatus.IN_PROGRESS))
+                .willReturn(true);
+
+        // when & then
+        assertThatThrownBy(() -> loanLimitService.requestCompareLoan(request))
+                .isInstanceOf(InvalidRequestException.class)
+                .hasMessage("진행 중인 한도조회가 있습니다.");
+        then(loanLimitInquiryRepository).should(never()).save(any());
     }
+
+    @Test
+    @DisplayName("오토담보 - Nice DNR 조회 성공 시 정상 처리")
+    void requestCompareLoan_auto_niceDnrSuccess() {
+        // given
+        LoanLimitRequest request = LoanLimitRequest.builder()
+                .userId(1L)
+                .name("윤교희")
+                .rrno("9102131234556")
+                .ci("wEi9oYSuekQGxT9MV4rKHG4CO+Zrp+onhLIIuembI8jx/0PLF5Ne3oMBxvUFlN4UmsgjeNErZfmpCVUFH")
+                .jobType(JobType.EMPLOYEE)
+                .jobName("오케이")
+                .loanType(LoanType.AUTO)
+                .build();
+        LoanLimitStrategy strategy = mock(LoanLimitStrategy.class);
+        given(strategyFactory.getStrategy(any())).willReturn(strategy);
+        given(strategy.requiresExternalData()).willReturn(true);
+        given(strategy.fetchExternalData(any())).willReturn(ExternalDataContext.empty());
+        given(strategy.getSupportedBanks()).willReturn(List.of(PartnerCode.LINE_BANK));
+        given(strategy.filterAvailablePartners(any(), any())).willReturn(List.of(PartnerCode.LINE_BANK));
+        given(strategy.toAdaptorRequest(any(), any())).willReturn(mock(LoanLimitAdaptorRequest.class));
+
+        given(loanLimitInquiryRepository.save(any(LoanLimitInquiry.class)))
+                .willAnswer(invocation -> {
+                    LoanLimitInquiry inquiry = invocation.getArgument(0);
+                    ReflectionTestUtils.setField(inquiry, "id", 1L);
+                    return inquiry;
+                });
+
+        // when
+        LoanLimitResponse response = loanLimitService.requestCompareLoan(request);
+
+        // then
+        assertThat(response.isSuccess()).isEqualTo(true);
+
+        then(loanLimitInquiryRepository).should().save(any(LoanLimitInquiry.class));
+        then(loanLimitSenderService).should().inquiry(anyLong(), anyList(), any());
+    }
+
+    @Test
+    @DisplayName("오토담보 - Nice DNR 조회 실패 시 진행 가능 금융사 없으면 예외")
+    void requestCompareLoan_auto_niceDnrFailed_throwException() {
+        // given
+        LoanLimitRequest request = LoanLimitRequest.builder()
+                .userId(1L)
+                .name("윤교희")
+                .rrno("9102131234556")
+                .ci("wEi9oYSuekQGxT9MV4rKHG4CO+Zrp+onhLIIuembI8jx/0PLF5Ne3oMBxvUFlN4UmsgjeNErZfmpCVUFH")
+                .jobType(JobType.EMPLOYEE)
+                .jobName("오케이")
+                .loanType(LoanType.AUTO)
+                .build();
+        LoanLimitStrategy strategy = mock(LoanLimitStrategy.class);
+        given(strategyFactory.getStrategy(any())).willReturn(strategy);
+        given(strategy.requiresExternalData()).willReturn(true);
+
+        ExternalDataContext externalDataContext = ExternalDataContext.builder()
+                .errors(Map.of("NICE_DNR",
+                        ExternalDataError.builder()
+                                .code("NICE_DNR_ERROR")
+                                .message("NICE DNR 조회 오류")
+                                .build())
+                )
+                .build();
+        given(strategy.fetchExternalData(any())).willReturn(externalDataContext);
+        given(strategy.getSupportedBanks()).willReturn(List.of(PartnerCode.LINE_BANK));
+        given(strategy.filterAvailablePartners(any(), any())).willReturn(List.of());
+
+        // when & then
+        assertThatThrownBy(() -> loanLimitService.requestCompareLoan(request))
+                .isInstanceOf(InvalidRequestException.class);
+        then(loanLimitSenderService).should(never()).inquiry(anyLong(), anyList(), any());
+    }
+
 }
