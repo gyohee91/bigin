@@ -1,11 +1,11 @@
 package com.ghyinc.finance.domain.notification.event;
 
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
-import com.ghyinc.finance.domain.loan.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.domain.notification.dto.NotificationSendRequest;
 import com.ghyinc.finance.domain.notification.enums.ChannelType;
 import com.ghyinc.finance.domain.notification.enums.SendType;
 import com.ghyinc.finance.domain.notification.service.NotificationService;
+import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import lombok.RequiredArgsConstructor;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;

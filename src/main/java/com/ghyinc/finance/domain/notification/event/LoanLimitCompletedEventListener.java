@@ -4,7 +4,7 @@ import com.ghyinc.finance.domain.notification.dto.NotificationSendRequest;
 import com.ghyinc.finance.domain.notification.enums.ChannelType;
 import com.ghyinc.finance.domain.notification.enums.SendType;
 import com.ghyinc.finance.domain.notification.service.NotificationService;
-import com.ghyinc.finance.domain.loan.event.LoanLimitCompletedEvent;
+import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
