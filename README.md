@@ -68,7 +68,7 @@ com.ghyinc.finance
 │   │   ├── service            # 비즈니스 로직
 │   │   │   ├── LoanLimitService.java
 │   │   │   ├── LoanLimitSenderService.java    # @Async 비동기 전송
-│   │   │   └── LoanLimitCallbackService.java  # 콜백 수신 처리
+│   │   │   └── LoanLimitResultService.java    # 콜백 수신 처리
 │   │   ├── adaptor            # 금융사별 API 변환
 │   │   │   ├── common         # 표준 Layout 금융사 공통
 │   │   │   ├── impl           # 비표준 금융사 개별 구현
@@ -97,6 +97,7 @@ com.ghyinc.finance
 │   ├── common                 # 공통 유틸 (채번, BaseEntity 등)
 │   ├── config                 # Spring 설정
 │   ├── crypto                 # 암복호화 (AES, RSA)
+│   ├── event                  # Kafka Event Publisher
 │   └── exception              # 전역 예외 처리
 ```
 
@@ -124,7 +125,7 @@ FE → POST /api/loan/limit/inquiry
          │
          ▼ Callback
   금융사 → POST /api/loan/limit/callback
-  LoanLimitCallbackService
+  LoanLimitResultService
   ├── loReqtNo + productCode로 선저장 데이터 조회 및 UPDATE
   ├── 비관적 락으로 count 동시성 제어
   └── 완료 시 알림 이벤트 발행
@@ -271,7 +272,7 @@ ExternalDataContext context = strategy.requiresExternalData()
 
 ```
 [loan 도메인]
-LoanLimitCallbackService
+LoanLimitResultService
   → KafkaTemplate.send("loan-limit-completed", inquiryNo, event)
  
         ↓ Kafka (loan-limit-completed 토픽)

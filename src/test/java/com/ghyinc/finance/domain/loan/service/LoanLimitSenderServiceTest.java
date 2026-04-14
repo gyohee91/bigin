@@ -13,6 +13,7 @@ import com.ghyinc.finance.domain.loan.factory.LoanLimitAdaptorFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.domain.loan.repository.ProductRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
+import com.ghyinc.finance.global.event.impl.KafkaLoanLimitEventPublisher;
 import com.ghyinc.finance.global.exception.ExternalApiFailException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -30,7 +31,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.*;
 import static org.mockito.Mockito.mock;
 
 @ExtendWith(MockitoExtension.class)
@@ -49,6 +50,9 @@ class LoanLimitSenderServiceTest {
 
     @Mock
     private LoanLimitAdaptorFactory adaptorFactory;
+
+    @Mock
+    private KafkaLoanLimitEventPublisher loanLimitEventPublisher;
 
     @BeforeEach
     void setUp() {
@@ -105,6 +109,7 @@ class LoanLimitSenderServiceTest {
         loanLimitSenderService.inquiry(1L, List.of(PartnerCode.LINE_BANK), adaptorRequest);
 
         // then
+        then(loanLimitEventPublisher).should().publishCompletedEvent(any());
         assertThat(inquiry.getStatus()).isEqualTo(InquiryStatus.SUCCESS);
         assertThat(inquiry.getResults()).hasSize(1);
         assertThat(inquiry.getResults().get(0).getStatus())
