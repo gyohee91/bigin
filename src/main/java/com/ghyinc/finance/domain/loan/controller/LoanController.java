@@ -87,6 +87,25 @@ public class LoanController {
         return ResponseEntity.ok(response);
     }
 
+    @Operation(summary = "한도조회 결과 조화 (FE 폴링)", description = "한도조회 진행 중 FE에서 일정 간격으로 해당 API 호출하여 한도결과 내역 조회")
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "처리 성공",
+                    content = @Content(schema = @Schema(implementation = LoanApplyResponse.class))
+            ),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "500", description = "서버 오류")
+    })
+    @GetMapping("/inquiry/{inquiryId}")
+    public ResponseEntity<ApiCommResponse<LoanLimitResponse>> getInquiryResult(
+            @PathVariable Long inquiryId
+    ) {
+        LoanLimitResponse response = loanLimitService.getInquiryResult(inquiryId);
+
+        return ResponseEntity.ok(ApiCommResponse.success("한도조회 요청 성공", response));
+    }
+
     @Operation(summary = "대출신청 API", description = "고객이 선택한 한도결과 건에 대한 대출신청 진행")
     @ApiResponses({
             @ApiResponse(

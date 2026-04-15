@@ -99,4 +99,12 @@ public class LoanLimitService {
 
         return LoanLimitResponse.from(inquiry);
     }
+
+    @Transactional(readOnly = true)
+    public LoanLimitResponse getInquiryResult(Long inquiryId) {
+        LoanLimitInquiry inquiry = loanLimitInquiryRepository.findByInquiryNoWithProductResults(inquiryId)
+                .orElseThrow(() -> new InvalidRequestException("존재하지 않는 조회이력입니다"));
+
+        return LoanLimitResponse.from(inquiry);
+    }
 }
