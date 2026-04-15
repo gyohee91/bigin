@@ -6,6 +6,14 @@ import lombok.*;
 import org.hibernate.annotations.Comment;
 
 @Entity
+@Table(
+        indexes = {
+                @Index(
+                        name = "idx_product_partner_code_loan_type",
+                        columnList = "partner_id, loan_type"
+                )
+        }
+)
 @Getter
 @Builder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)

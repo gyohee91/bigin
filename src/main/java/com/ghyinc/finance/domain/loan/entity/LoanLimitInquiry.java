@@ -12,6 +12,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Entity
+@Table(
+        indexes = {
+                @Index(
+                        name = "idx_inquiry_user_id_loan_type_status",
+                        columnList = "user_id, loan_type, status"
+                )
+        }
+)
 @Getter
 @Builder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
