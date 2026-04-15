@@ -29,6 +29,7 @@ public class PartnerApiProperties {
     @Setter
     public static class PartnerApiConfig {
         private String baseUrl;
+        private int port;
         private String path;
     }
 }

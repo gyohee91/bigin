@@ -158,6 +158,16 @@ public class DataInitializer implements ApplicationRunner {
                         )
                         .loanType(LoanType.BUSINESS)
                         .active(true)
+                        .build(),
+                PartnerLoanType.builder()
+                        .partner(
+                                initialPartner.stream()
+                                        .filter(partner -> Objects.equals(PartnerCode.SHINHAN_BANK, partner.getPartnerCode()))
+                                        .findFirst()
+                                        .orElse(null)
+                        )
+                        .loanType(LoanType.PERSONAL_CREDIT)
+                        .active(true)
                         .build()
         );
 
@@ -210,6 +220,18 @@ public class DataInitializer implements ApplicationRunner {
                         )
                         .productCode("FNQ005")
                         .productName("kiwi비상금")
+                        .active(true)
+                        .build(),
+                Product.builder()
+                        .loanType(LoanType.PERSONAL_CREDIT)
+                        .partner(
+                                initialPartner.stream()
+                                        .filter(partner -> Objects.equals(PartnerCode.SHINHAN_BANK, partner.getPartnerCode()))
+                                        .findFirst()
+                                        .orElse(null)
+                        )
+                        .productCode("0201001074")
+                        .productName("비상금신한론")
                         .active(true)
                         .build()
         );

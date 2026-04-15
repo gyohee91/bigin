@@ -19,8 +19,8 @@ public class LeaseLineApiClient implements ApiClient {
     private final ObjectMapper objectMapper;
     private final Map<PartnerCode, LeaseLineConnection> leaseLineConnections;
 
-    private static final String ENCODING = "EUC-KR";
-    private static final int HEADER_LENGTH = 20;
+    private static final String ENCODING = "EUC-KR";    // 금융권 전용선 표준 인코딩
+    private static final int HEADER_LENGTH = 20;        // 전문헤더 고정 길이
 
     @Override
     public <T> T post(PartnerCode partnerCode, String path, Object request, Class<T> responseType) {
@@ -31,8 +31,9 @@ public class LeaseLineApiClient implements ApiClient {
 
 
         try {
+            // 전문 직렬화 (고정길이, 전문헤더 등)
             byte[] requestBytes = this.serialize(request, path);
-            byte[] responseBytes = connection.send(requestBytes);
+            byte[] responseBytes = connection.send(partnerCode, requestBytes);
 
             return this.deserialize(responseBytes, responseType);
         } catch (JsonProcessingException | UnsupportedEncodingException e) {

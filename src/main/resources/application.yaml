@@ -38,7 +38,7 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        spring.json.trusted.packages: "com.ghyinc.finance.domain.notification.event,com.ghyinc.finance.domain.loan.event"
+        spring.json.trusted.packages: "*"
 
 server:
   port: 8080
@@ -148,3 +148,7 @@ loan-api:
     LINE_BANK:
       base-url: http://localhost:8090
       path: /send/sms
+    SHINHAN_BANK:
+      base-url: 127.0.0.1
+      port: 9001
+      path: /loan/inquiry

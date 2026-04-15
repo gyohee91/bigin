@@ -16,18 +16,18 @@ import java.net.Socket;
 public class LeaseLineConnection {
     private final String host;
     private final int port;
-    private final int timeoutMs;
-    private final PartnerCode partnerCode;
 
     // 소켓 연결 풀 (재사용)
     private Socket socket;
     private DataOutputStream outputStream;
     private DataInputStream inputStream;
 
-    public synchronized byte[] send(byte[] requestBytes) {
+    private static final int TIMEOUT = 500;
+
+    public synchronized byte[] send(PartnerCode partnerCode, byte[] requestBytes) {
 
         try {
-            this.connect();
+            this.connect(partnerCode);
 
             // 전문 전송
             outputStream.writeInt(requestBytes.length); // 전문 길이 헤더
@@ -42,17 +42,17 @@ public class LeaseLineConnection {
             return responseBytes;
         } catch (IOException e) {
             log.error("[{}] 전용선 통신 오류, host={}, port={}", partnerCode, host, port);
-            this.disconnect();
+            this.disconnect(partnerCode);
             throw new ExternalApiFailException("전용선_ERROR", "전용선 통신 오류: " + e.getMessage());
         }
     }
 
-    public void connect() throws IOException {
+    public void connect(PartnerCode partnerCode) throws IOException {
         if(socket == null || socket.isClosed() || !socket.isConnected()) {
             log.info("[{}] 전용선 연결 시도. host={}, port={}", partnerCode, host, port);
             socket = new Socket();
-            socket.connect(new InetSocketAddress(host, port), timeoutMs);
-            socket.setSoTimeout(timeoutMs);
+            socket.connect(new InetSocketAddress(host, port), TIMEOUT);
+            socket.setSoTimeout(TIMEOUT);
 
             outputStream = new DataOutputStream(socket.getOutputStream());
             inputStream = new DataInputStream(socket.getInputStream());
@@ -60,7 +60,7 @@ public class LeaseLineConnection {
         }
     }
 
-    private void disconnect() {
+    private void disconnect(PartnerCode partnerCode) {
         try {
             if(socket != null && !socket.isClosed()) {
                 socket.close();
