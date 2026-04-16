@@ -11,8 +11,10 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class LoanLimitCompletedEvent {
-    private Long loanLimitInquiryId;
+    private String inquiryNo;
     private Long userId;
     private String name;
     private InquiryStatus status;
+
+    private String requestId;
 }

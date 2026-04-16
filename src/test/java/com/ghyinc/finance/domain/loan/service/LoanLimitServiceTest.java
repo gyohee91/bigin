@@ -75,6 +75,7 @@ class LoanLimitServiceTest {
         given(strategy.requiresExternalData()).willReturn(false);
         given(strategy.getSupportedBanks()).willReturn(List.of(PartnerCode.KAKAO_BANK, PartnerCode.TOSS_BANK));
         given(strategy.filterAvailablePartners(any(), any())).willReturn(List.of(PartnerCode.KAKAO_BANK, PartnerCode.TOSS_BANK));
+        given(generator.generate("LL")).willReturn("LL20260416ANWOW");
         given(strategy.toAdaptorRequest(any(), any())).willReturn(mock(LoanLimitAdaptorRequest.class));
 
         given(loanLimitInquiryRepository.save(any(LoanLimitInquiry.class)))
@@ -164,6 +165,7 @@ class LoanLimitServiceTest {
         given(strategy.fetchExternalData(any())).willReturn(ExternalDataContext.empty());
         given(strategy.getSupportedBanks()).willReturn(List.of(PartnerCode.LINE_BANK));
         given(strategy.filterAvailablePartners(any(), any())).willReturn(List.of(PartnerCode.LINE_BANK));
+        given(generator.generate("LL")).willReturn("LL20260416ANWOW");
         given(strategy.toAdaptorRequest(any(), any())).willReturn(mock(LoanLimitAdaptorRequest.class));
 
         given(loanLimitInquiryRepository.save(any(LoanLimitInquiry.class)))
@@ -211,6 +213,7 @@ class LoanLimitServiceTest {
         given(strategy.fetchExternalData(any())).willReturn(externalDataContext);
         given(strategy.getSupportedBanks()).willReturn(List.of(PartnerCode.LINE_BANK));
         given(strategy.filterAvailablePartners(any(), any())).willReturn(List.of());
+        given(generator.generate("LL")).willReturn("LL20260416ANWOW");
 
         // when & then
         assertThatThrownBy(() -> loanLimitService.requestCompareLoan(request))

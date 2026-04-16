@@ -11,7 +11,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.*;
 
 class LoReqtNoGeneratorTest {
     private LoReqtNoGenerator generator;
@@ -23,7 +22,7 @@ class LoReqtNoGeneratorTest {
 
     @Test
     void generate() {
-        String loReqtNo = generator.generate();
+        String loReqtNo = generator.generate("LL");
         System.out.println(loReqtNo);
     }
 
@@ -38,7 +37,7 @@ class LoReqtNoGeneratorTest {
         for(int i = 0; i < threadCount; i ++) {
             executorService.submit(() -> {
                 try {
-                    results.add(generator.generate());
+                    results.add(generator.generate("LL"));
                 } finally {
                     latch.countDown();
                 }

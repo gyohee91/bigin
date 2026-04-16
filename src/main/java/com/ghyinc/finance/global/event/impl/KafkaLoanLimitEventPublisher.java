@@ -21,7 +21,7 @@ public class KafkaLoanLimitEventPublisher implements LoanLimitEventPublisher {
     public void publishCompletedEvent(LoanLimitCompletedEvent event) {
         // inquiryNo를 partition key로 사용
         // -> 동일 inquiry 이벤트는 항상 같은 파티션으로 전송
-        kafkaTemplate.send("loan-limit-completed", String.valueOf(event.getLoanLimitInquiryId()), event)
+        kafkaTemplate.send("loan-limit-completed", event.getInquiryNo(), event)
                 .whenComplete((result, ex) -> {
                     if(ex != null)
                         log.error("한도조회 완료 이벤트 발행 실패", ex);

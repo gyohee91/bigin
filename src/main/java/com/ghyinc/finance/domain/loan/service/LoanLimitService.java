@@ -11,6 +11,7 @@ import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.factory.LoanLimitStrategyFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
+import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
@@ -38,6 +39,8 @@ public class LoanLimitService {
     private final LoanLimitSenderService loanLimitSenderService;
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
     private final LoanLimitStrategyFactory strategyFactory;
+
+    private final LoReqtNoGenerator generator;
 
     @Transactional
     public LoanLimitResponse requestCompareLoan(LoanLimitRequest request) {
@@ -79,6 +82,7 @@ public class LoanLimitService {
 
         // LoanLimitInquiry INSERT
         LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
+                .inquiryNo(generator.generate("LL"))
                 .userId(request.getUserId())
                 .name(request.getName())
                 .ci(request.getCi())
@@ -101,9 +105,9 @@ public class LoanLimitService {
     }
 
     @Transactional(readOnly = true)
-    public LoanLimitResponse getInquiryResult(Long inquiryId) {
-        LoanLimitInquiry inquiry = loanLimitInquiryRepository.findByInquiryNoWithProductResults(inquiryId)
-                .orElseThrow(() -> new InvalidRequestException("존재하지 않는 조회이력입니다"));
+    public LoanLimitResponse getInquiryResult(String inquiryNo) {
+        LoanLimitInquiry inquiry = loanLimitInquiryRepository.findByInquiryNoWithProductResults(inquiryNo)
+                .orElseThrow(() -> new InvalidRequestException("존재하지 않는 조회이력입니다: " + inquiryNo));
 
         return LoanLimitResponse.from(inquiry);
     }

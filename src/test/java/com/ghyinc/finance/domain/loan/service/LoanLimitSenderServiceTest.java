@@ -90,7 +90,7 @@ class LoanLimitSenderServiceTest {
         Product product = this.buildProduct("P060100206");
         given(productRepository.findActiveByPartnerCodeAndLoanType(PartnerCode.LINE_BANK, LoanType.PERSONAL_CREDIT))
                 .willReturn(List.of(product));
-        given(generator.generate()).willReturn("LR20260410AAA");
+        given(generator.generate("LR")).willReturn("LR20260410AAA");
 
         LoanLimitAdaptor adaptor = mock(LoanLimitAdaptor.class);
         given(adaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
@@ -157,7 +157,7 @@ class LoanLimitSenderServiceTest {
         Product product2 = this.buildProduct("P060100205");
         given(productRepository.findActiveByPartnerCodeAndLoanType(eq(PartnerCode.LINE_BANK), any()))
                 .willReturn(List.of(product1, product2));
-        given(generator.generate()).willReturn("LR_AAA", "LR_BBB");
+        given(generator.generate("LR")).willReturn("LR_AAA", "LR_BBB");
 
         LoanLimitAdaptor adaptor = mock(LoanLimitAdaptor.class);
         given(adaptorFactory.getAdaptor(any())).willReturn(adaptor);

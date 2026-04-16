@@ -29,6 +29,10 @@ public class LoanLimitInquiry extends BaseTimeEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(nullable = false, unique = true)
+    @Comment("업무 식별번호")
+    private String inquiryNo;   // 외부 노출용 (FE 폴링, 콜백 연결, 이력 조회 KEY)
+
     @Column(nullable = false)
     @Comment("고객번호")
     private Long userId;

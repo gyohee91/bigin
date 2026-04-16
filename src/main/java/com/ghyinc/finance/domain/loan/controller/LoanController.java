@@ -99,9 +99,9 @@ public class LoanController {
     })
     @GetMapping("/inquiry/{inquiryId}")
     public ResponseEntity<ApiCommResponse<LoanLimitResponse>> getInquiryResult(
-            @PathVariable Long inquiryId
+            @PathVariable String inquiryNo
     ) {
-        LoanLimitResponse response = loanLimitService.getInquiryResult(inquiryId);
+        LoanLimitResponse response = loanLimitService.getInquiryResult(inquiryNo);
 
         return ResponseEntity.ok(ApiCommResponse.success("한도조회 요청 성공", response));
     }

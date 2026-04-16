@@ -8,16 +8,15 @@ import java.util.UUID;
 
 @Component
 public class LoReqtNoGenerator {
-    private static final String PREFIX = "LL";
     private static final DateTimeFormatter DATE_FORMATTER =
             DateTimeFormatter.ofPattern("yyyyMMdd");
 
-    public String generate() {
+    public String generate(String prefix) {
         String date = LocalDateTime.now().format(DATE_FORMATTER);
         String uuid = UUID.randomUUID().toString()
                 .replaceAll("-", "")
                 .substring(0, 8)
                 .toLowerCase();
-        return PREFIX.concat(date).concat(uuid);
+        return prefix.concat(date).concat(uuid);
     }
 }

@@ -20,6 +20,6 @@ public interface LoanLimitInquiryRepository extends JpaRepository<LoanLimitInqui
 
     @Query("SELECT DISTINCT t FROM LoanLimitInquiry t " +
             "   LEFT JOIN FETCH t.productResults " +
-            "WHERE t.id = :id ")
-    Optional<LoanLimitInquiry> findByInquiryNoWithProductResults(@Param("id") long id);
+            "WHERE t.inquiryNo = :inquiryNo ")
+    Optional<LoanLimitInquiry> findByInquiryNoWithProductResults(@Param("inquiryNo") String inquiryNo);
 }

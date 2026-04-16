@@ -21,6 +21,7 @@ import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
+import org.slf4j.MDC;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -44,6 +45,8 @@ public class LoanLimitSenderService {
     private final Executor loanLimitExecutor;
     private final SpringLoanLimitEventPublisher springLoanLimitEventPublisher;
     private final KafkaLoanLimitEventPublisher kafkalLoanLimitEventPublisher;
+
+    private static final String REQUEST_ID_KEY = "requestId";
 
     /**
      * 여러 금융사에 대한 한도조회
@@ -94,7 +97,7 @@ public class LoanLimitSenderService {
                                         LoanLimitProductResult productResult =
                                                 LoanLimitProductResult.builder()
                                                         .loanLimitInquiry(loanLimitInquiry)
-                                                        .loReqtNo(generator.generate()) //신청번호 채번
+                                                        .loReqtNo(generator.generate("LR")) //신청번호 채번
                                                         .partnerCode(partnerCode)
                                                         .productCode(product.getProductCode())
                                                         .status(PartnerInquiryStatus.PENDING)
@@ -185,10 +188,11 @@ public class LoanLimitSenderService {
 
             //알림 발송 - notification 도메인을 직접 알지 못함
             LoanLimitCompletedEvent event = LoanLimitCompletedEvent.builder()
-                    .loanLimitInquiryId(loanLimitInquiry.getId())
+                    .inquiryNo(loanLimitInquiry.getInquiryNo())
                     .userId(loanLimitInquiry.getUserId())
                     .name(loanLimitInquiry.getName())
                     .status(loanLimitInquiry.getStatus())
+                    .requestId(MDC.get(REQUEST_ID_KEY))
                     .build();
             kafkalLoanLimitEventPublisher.publishCompletedEvent(event);
             //springLoanLimitEventPublisher.publishCompletedEvent(event);

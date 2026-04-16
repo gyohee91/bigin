@@ -7,19 +7,33 @@ import com.ghyinc.finance.domain.notification.enums.SendType;
 import com.ghyinc.finance.domain.notification.service.NotificationService;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
+import java.util.UUID;
+
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class LoanLimitCompletedEventConsumer {
     private final NotificationService notificationService;
+
+    private static final String REQUEST_ID_KEY = "requestId";
 
     @KafkaListener(
             topics = "loan-limit-completed",
             groupId = "notification-group"
     )
     public void consume(LoanLimitCompletedEvent event) {
+        String requestId = Optional.ofNullable(event.getRequestId())
+                        .orElse(UUID.randomUUID().toString());
+
+        MDC.put(REQUEST_ID_KEY, requestId);
+        log.info("[Consumer] 한도조회 완료 이벤트 수신. inquiryNo={}", event.getInquiryNo());
+
         notificationService.sendNotification(
                 NotificationSendRequest.builder()
                         .channelType(ChannelType.SMS)
