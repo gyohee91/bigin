@@ -97,8 +97,9 @@ public class LoanController {
             @ApiResponse(responseCode = "400", description = "잘못된 요청"),
             @ApiResponse(responseCode = "500", description = "서버 오류")
     })
-    @GetMapping("/inquiry/{inquiryId}")
+    @GetMapping("/inquiry/{inquiryNo}")
     public ResponseEntity<ApiCommResponse<LoanLimitPollingResponse>> getInquiryResult(
+            @Parameter(description = "업무 식별번호", example = "LL20260416q2g09nhgap")
             @PathVariable String inquiryNo
     ) {
         LoanLimitPollingResponse response = loanLimitService.getInquiryResult(inquiryNo);
