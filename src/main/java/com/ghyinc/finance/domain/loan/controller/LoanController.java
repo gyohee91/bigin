@@ -39,14 +39,14 @@ public class LoanController {
             @ApiResponse(
                     responseCode = "200",
                     description = "한도조회 요청 성공",
-                    content = @Content(schema = @Schema(implementation = LoanLimitResponse.class))
+                    content = @Content(schema = @Schema(implementation = LoanLimitInquiryResponse.class))
             )
     )
     @PostMapping("/request-compare-loan")
-    public ResponseEntity<ApiCommResponse<LoanLimitResponse>> requestCompareLoan(
+    public ResponseEntity<ApiCommResponse<LoanLimitInquiryResponse>> requestCompareLoan(
             @Valid @RequestBody LoanLimitRequest request
     ) {
-        LoanLimitResponse response = loanLimitService.requestCompareLoan(request);
+        LoanLimitInquiryResponse response = loanLimitService.requestCompareLoan(request);
 
         return ResponseEntity.ok(ApiCommResponse.success("한도조회 요청 성공", response));
     }
@@ -98,10 +98,10 @@ public class LoanController {
             @ApiResponse(responseCode = "500", description = "서버 오류")
     })
     @GetMapping("/inquiry/{inquiryId}")
-    public ResponseEntity<ApiCommResponse<LoanLimitResponse>> getInquiryResult(
+    public ResponseEntity<ApiCommResponse<LoanLimitPollingResponse>> getInquiryResult(
             @PathVariable String inquiryNo
     ) {
-        LoanLimitResponse response = loanLimitService.getInquiryResult(inquiryNo);
+        LoanLimitPollingResponse response = loanLimitService.getInquiryResult(inquiryNo);
 
         return ResponseEntity.ok(ApiCommResponse.success("한도조회 요청 성공", response));
     }

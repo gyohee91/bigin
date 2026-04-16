@@ -98,4 +98,18 @@ public class LoanLimitInquiry extends BaseTimeEntity {
     public void incrementSuccessCount() {
         this.successProductCount++;
     }
+
+    /**
+     * 한도결과 수신 진행률 (0 ~ 100)
+     * @return
+     */
+    public int getProgressRate() {
+        if (totalProductCount == 0)
+            return 0;
+        return (int) ((successProductCount * 100.0) / totalProductCount);
+    }
+
+    public boolean isAllResultReceived() {
+        return successProductCount >= totalProductCount;
+    }
 }

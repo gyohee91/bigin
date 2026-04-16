@@ -1,10 +1,7 @@
 package com.ghyinc.finance.domain.loan.service;
 
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
-import com.ghyinc.finance.domain.loan.dto.ExternalDataContext;
-import com.ghyinc.finance.domain.loan.dto.ExternalDataError;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitResponse;
+import com.ghyinc.finance.domain.loan.dto.*;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.JobType;
@@ -86,10 +83,10 @@ class LoanLimitServiceTest {
                 });
 
         // when
-        LoanLimitResponse response = loanLimitService.requestCompareLoan(request);
+        LoanLimitInquiryResponse response = loanLimitService.requestCompareLoan(request);
 
         // then
-        assertThat(response.isSuccess()).isEqualTo(true);
+        assertThat(response.success()).isEqualTo(true);
 
         then(loanLimitInquiryRepository).should().save(any(LoanLimitInquiry.class));
         then(loanLimitSenderService).should().inquiry(anyLong(), anyList(), any());
@@ -176,10 +173,10 @@ class LoanLimitServiceTest {
                 });
 
         // when
-        LoanLimitResponse response = loanLimitService.requestCompareLoan(request);
+        LoanLimitInquiryResponse response = loanLimitService.requestCompareLoan(request);
 
         // then
-        assertThat(response.isSuccess()).isEqualTo(true);
+        assertThat(response.success()).isEqualTo(true);
 
         then(loanLimitInquiryRepository).should().save(any(LoanLimitInquiry.class));
         then(loanLimitSenderService).should().inquiry(anyLong(), anyList(), any());

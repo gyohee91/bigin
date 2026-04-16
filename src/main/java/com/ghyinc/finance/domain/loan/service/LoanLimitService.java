@@ -1,10 +1,7 @@
 package com.ghyinc.finance.domain.loan.service;
 
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
-import com.ghyinc.finance.domain.loan.dto.ExternalDataContext;
-import com.ghyinc.finance.domain.loan.dto.ExternalDataError;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitResponse;
+import com.ghyinc.finance.domain.loan.dto.*;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
@@ -43,7 +40,7 @@ public class LoanLimitService {
     private final LoReqtNoGenerator generator;
 
     @Transactional
-    public LoanLimitResponse requestCompareLoan(LoanLimitRequest request) {
+    public LoanLimitInquiryResponse requestCompareLoan(LoanLimitRequest request) {
         // 진행 중인 조회가 있으면 중복 요청 방지(당일 동일 유형 재조회 제한)
         boolean hasInProgress = loanLimitInquiryRepository.existsByUserIdAndLoanTypeAndStatus(
                 request.getUserId(),
@@ -101,14 +98,14 @@ public class LoanLimitService {
         // @Async 적용을 위해 별도 Bean(LoanLimitSenderService)으로 분리
         loanLimitSenderService.inquiry(inquiry.getId(), activePartnerCodes, adaptorRequest);
 
-        return LoanLimitResponse.from(inquiry);
+        return LoanLimitInquiryResponse.from(inquiry);
     }
 
     @Transactional(readOnly = true)
-    public LoanLimitResponse getInquiryResult(String inquiryNo) {
+    public LoanLimitPollingResponse getInquiryResult(String inquiryNo) {
         LoanLimitInquiry inquiry = loanLimitInquiryRepository.findByInquiryNoWithProductResults(inquiryNo)
                 .orElseThrow(() -> new InvalidRequestException("존재하지 않는 조회이력입니다: " + inquiryNo));
 
-        return LoanLimitResponse.from(inquiry);
+        return LoanLimitPollingResponse.from(inquiry);
     }
 }
