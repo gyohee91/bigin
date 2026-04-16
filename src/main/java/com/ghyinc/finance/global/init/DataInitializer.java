@@ -111,7 +111,7 @@ public class DataInitializer implements ApplicationRunner {
                         .partnerCode(PartnerCode.SHINHAN_BANK)
                         .partnerName(PartnerCode.SHINHAN_BANK.getPartnerName())
                         .partnerType(PartnerType.BANK)
-                        .active(true)
+                        .active(false)
                         .algorithm(CryptoAlgorithm.AES_256_CBC)
                         .cryptoKey("AAEGRJuHwTWvrYsaa0V7vAqk+wZuSa2l")
                         .build()

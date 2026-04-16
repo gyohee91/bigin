@@ -4,6 +4,10 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.exception.ExternalApiFailException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.retry.Retry;
+import io.github.resilience4j.retry.RetryRegistry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -16,6 +20,8 @@ import java.util.Map;
 @Component
 @RequiredArgsConstructor
 public class LeaseLineApiClient implements ApiClient {
+    private final CircuitBreakerRegistry circuitBreakerRegistry;
+    private final RetryRegistry retryRegistry;
     private final ObjectMapper objectMapper;
     private final Map<PartnerCode, LeaseLineConnection> leaseLineConnections;
 
@@ -24,21 +30,30 @@ public class LeaseLineApiClient implements ApiClient {
 
     @Override
     public <T> T post(PartnerCode partnerCode, String path, Object request, Class<T> responseType) {
-        LeaseLineConnection connection = leaseLineConnections.get(partnerCode);
-        if(connection == null) {
-            throw new ExternalApiFailException("전용선_ERROR", "전용선 연결 설정 없음: " + partnerCode);
-        }
+        // 금융사별 독립 Circuit Breaker 적용
+        CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker(partnerCode.name());
+        Retry retry = retryRegistry.retry(partnerCode.name());
 
+        // Circuit Breaker 안에 Retry 적용
+        // Retry -> Circuit Breaker 순으로 실행 (재시도 모두 실패해야 Circuit Breaker 실패로 기록)
+        return CircuitBreaker.decorateSupplier(circuitBreaker,
+                        Retry.decorateSupplier(retry, () -> {
+                            LeaseLineConnection connection = leaseLineConnections.get(partnerCode);
+                            if(connection == null) {
+                                throw new ExternalApiFailException("전용선_ERROR", "전용선 연결 설정 없음: " + partnerCode);
+                            }
 
-        try {
-            // 전문 직렬화 (고정길이, 전문헤더 등)
-            byte[] requestBytes = this.serialize(request, path);
-            byte[] responseBytes = connection.send(partnerCode, requestBytes);
+                            try {
+                                // 전문 직렬화 (고정길이, 전문헤더 등)
+                                byte[] requestBytes = this.serialize(request, path);
+                                byte[] responseBytes = connection.send(partnerCode, requestBytes);
+                                return this.deserialize(responseBytes, responseType);
 
-            return this.deserialize(responseBytes, responseType);
-        } catch (JsonProcessingException | UnsupportedEncodingException e) {
-            throw new ExternalApiFailException("전용선_ERROR", "전용선 오류: " + e.getMessage());
-        }
+                            } catch (JsonProcessingException | UnsupportedEncodingException e) {
+                                throw new ExternalApiFailException("전용선_ERROR", "전용선 오류: " + e.getMessage());
+                            }
+                        }))
+                .get();
     }
 
     /**
