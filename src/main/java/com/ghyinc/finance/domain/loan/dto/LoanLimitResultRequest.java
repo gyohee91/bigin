@@ -14,14 +14,14 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class LoanLimitResultRequest {
-    @JsonProperty("preScrResultList")
-    private List<PreScrResultList> preScrResultList;
+    @JsonProperty("loanApplyResults")
+    private List<LoanApplyResult> loanApplyResults;
 
     @Getter
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class PreScrResultList {
+    public static class LoanApplyResult {
         private String loReqtNo;
         private String productCode;
         private LoanLimitResultCode resultCode;

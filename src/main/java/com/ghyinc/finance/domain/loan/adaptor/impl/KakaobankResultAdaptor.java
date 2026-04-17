@@ -15,7 +15,6 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 @Slf4j
 @Component
@@ -61,8 +60,8 @@ public class KakaobankResultAdaptor implements LoanLimitResultAdaptor {
     public LoanLimitResultRequest convert(JsonNode body) {
         KakaobankResultRequest kakaobankRequest = objectMapper.convertValue(body, KakaobankResultRequest.class);
 
-        List<LoanLimitResultRequest.PreScrResultList> preScrResultLists = kakaobankRequest.products().stream()
-                .map(item -> LoanLimitResultRequest.PreScrResultList.builder()
+        List<LoanLimitResultRequest.LoanApplyResult> preScrResultLists = kakaobankRequest.products().stream()
+                .map(item -> LoanLimitResultRequest.LoanApplyResult.builder()
                         .loReqtNo(item.iqryDmanNo)
                         .productCode(item.alncGdsUnqCd)
                         .resultCode(RESULT_CODE_MAP.getOrDefault(item.rsltCd, LoanLimitResultCode.UNKNOWN_ERROR))
@@ -72,7 +71,7 @@ public class KakaobankResultAdaptor implements LoanLimitResultAdaptor {
                 .toList();
 
         return LoanLimitResultRequest.builder()
-                .preScrResultList(preScrResultLists)
+                .loanApplyResults(preScrResultLists)
                 .build();
     }
 

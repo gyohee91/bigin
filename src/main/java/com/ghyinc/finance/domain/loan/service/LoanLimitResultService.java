@@ -50,7 +50,7 @@ public class LoanLimitResultService {
 
     @Transactional
     public void process(PartnerCode partnerCode, LoanLimitResultRequest request) {
-        request.getPreScrResultList().forEach(item -> {
+        request.getLoanApplyResults().forEach(item -> {
             //loReqtNo와 productCode로 선저장된 ProductResult 조회
             LoanLimitProductResult productResult = loanLimitProductResultRepository.findByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
                     .orElseThrow(() -> new InvalidRequestException("존재하지 않는 식별번호&상품코드. loReqtNo: " + item.getLoReqtNo() + ", productCode: " + item.getProductCode()));

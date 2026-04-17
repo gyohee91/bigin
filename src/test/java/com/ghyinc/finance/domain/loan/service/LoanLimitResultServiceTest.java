@@ -50,8 +50,8 @@ class LoanLimitResultServiceTest {
         return loanLimitProductResult;
     }
 
-    private LoanLimitResultRequest.PreScrResultList buildSuccessItem(String loReqtNo, String productCode) {
-        return LoanLimitResultRequest.PreScrResultList.builder()
+    private LoanLimitResultRequest.LoanApplyResult buildSuccessItem(String loReqtNo, String productCode) {
+        return LoanLimitResultRequest.LoanApplyResult.builder()
                 .loReqtNo(loReqtNo)
                 .productCode(productCode)
                 .resultCode(LoanLimitResultCode.SUCCESS)
@@ -60,9 +60,9 @@ class LoanLimitResultServiceTest {
                 .build();
     }
 
-    private LoanLimitResultRequest buildRequest(List<LoanLimitResultRequest.PreScrResultList> items) {
+    private LoanLimitResultRequest buildRequest(List<LoanLimitResultRequest.LoanApplyResult> items) {
         return LoanLimitResultRequest.builder()
-                .preScrResultList(items)
+                .loanApplyResults(items)
                 .build();
     }
 
@@ -72,7 +72,7 @@ class LoanLimitResultServiceTest {
         // given
         LoanLimitInquiry inquiry = this.buildInquiry();
         LoanLimitProductResult productResult = this.buildProductResult(inquiry, "LR20260410AAA", "P060100206");
-        LoanLimitResultRequest.PreScrResultList preScrResultList = this.buildSuccessItem("LR20260410AAA", "P060100206");
+        LoanLimitResultRequest.LoanApplyResult preScrResultList = this.buildSuccessItem("LR20260410AAA", "P060100206");
 
         given(loanLimitProductResultRepository.findByLoReqtNoAndProductCode("LR20260410AAA", "P060100206"))
                 .willReturn(Optional.of(productResult));

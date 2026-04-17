@@ -92,6 +92,7 @@ public class LoanLimitService {
         loanLimitInquiryRepository.save(inquiry);
 
         // 어댑터 요청 DTO 변환 (Strategy)
+        // 대출 유형별 전략으로 금융사 전송용 요청 DTO 생성
         LoanLimitAdaptorRequest adaptorRequest = strategy.toAdaptorRequest(request, context);
 
         // 한도 조회(백그라운드 비동기 처리)
