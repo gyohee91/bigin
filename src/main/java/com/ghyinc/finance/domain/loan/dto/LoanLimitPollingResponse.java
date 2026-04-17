@@ -4,6 +4,8 @@ import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 
+import java.util.List;
+
 @Schema(description = "금리 한도조회 (Polling)")
 @Builder
 public record LoanLimitPollingResponse(
@@ -21,7 +23,10 @@ public record LoanLimitPollingResponse(
         int progressRate,
 
         @Schema(description = "전체 수신 완료 여부")
-        boolean allResultReceived
+        boolean allResultReceived,
+
+        @Schema(description = "한도 결과 목록")
+        List<LoanLimitProductResultResponse> productResults
 ) {
     public static LoanLimitPollingResponse from(LoanLimitInquiry inquiry) {
         return LoanLimitPollingResponse.builder()
@@ -30,6 +35,11 @@ public record LoanLimitPollingResponse(
                 .successProductCount(inquiry.getSuccessProductCount())
                 .progressRate(inquiry.getProgressRate())
                 .allResultReceived(inquiry.isAllResultReceived())
+                .productResults(
+                        inquiry.getProductResults().stream()
+                                .map(LoanLimitProductResultResponse::from)
+                                .toList()
+                )
                 .build();
     }
 }

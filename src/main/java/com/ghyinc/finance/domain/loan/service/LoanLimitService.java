@@ -43,15 +43,15 @@ public class LoanLimitService {
     public LoanLimitInquiryResponse requestCompareLoan(LoanLimitRequest request) {
         // 진행 중인 조회가 있으면 중복 요청 방지(당일 동일 유형 재조회 제한)
         boolean hasInProgress = loanLimitInquiryRepository.existsByUserIdAndLoanTypeAndStatus(
-                request.getUserId(),
-                request.getLoanType(),
+                request.userId(),
+                request.loanType(),
                 InquiryStatus.IN_PROGRESS
         );
         if(hasInProgress) {
             throw new InvalidRequestException("진행 중인 한도조회가 있습니다.");
         }
 
-        LoanLimitStrategy strategy = strategyFactory.getStrategy(request.getLoanType());
+        LoanLimitStrategy strategy = strategyFactory.getStrategy(request.loanType());
         // 유효성 검증 (각 상품 type 별)
         strategy.validate(request);
 
@@ -80,13 +80,13 @@ public class LoanLimitService {
         // LoanLimitInquiry INSERT
         LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
                 .inquiryNo(generator.generate("LL"))
-                .userId(request.getUserId())
-                .name(request.getName())
-                .ci(request.getCi())
-                .jobType(request.getJobType())
-                .jobName(request.getJobName())
-                .loanType(request.getLoanType())
-                .carNo(request.getCarNo())
+                .userId(request.userId())
+                .name(request.name())
+                .ci(request.ci())
+                .jobType(request.jobType())
+                .jobName(request.jobName())
+                .loanType(request.loanType())
+                .carNo(request.carNo())
                 .build();
 
         loanLimitInquiryRepository.save(inquiry);

@@ -39,7 +39,7 @@ public class AutoLoanLimitStrategy implements LoanLimitStrategy{
     @Override
     public void validate(LoanLimitRequest request) {
         // 차량번호 필수 검증
-        if(Objects.isNull(request.getCarNo()) || request.getCarNo().isBlank()) {
+        if(Objects.isNull(request.carNo()) || request.carNo().isBlank()) {
             throw new InvalidRequestException("오토담보 대출은 차량번호가 필수입니다");
         }
     }
@@ -47,12 +47,12 @@ public class AutoLoanLimitStrategy implements LoanLimitStrategy{
     @Override
     public ExternalDataContext fetchExternalData(LoanLimitRequest request) {
         try {
-            NiceDnrResult result = niceDnrService.inquireNiceDnr(request.getCarNo(), request.getName());
+            NiceDnrResult result = niceDnrService.inquireNiceDnr(request.carNo(), request.name());
             return ExternalDataContext.builder()
                     .niceDnrResult(result)
                     .build();
         } catch (ExternalApiFailException e) {
-            log.error("Nice DNR 조회 실패. carNo={}", request.getCarNo(), e);
+            log.error("Nice DNR 조회 실패. carNo={}", request.carNo(), e);
 
             // 예외를 던지지 않고 오류 정보만 context에 담아 return
             return ExternalDataContext.builder()
@@ -70,12 +70,12 @@ public class AutoLoanLimitStrategy implements LoanLimitStrategy{
     public LoanLimitAdaptorRequest toAdaptorRequest(LoanLimitRequest request, ExternalDataContext externalDataContext) {
         NiceDnrResult result = externalDataContext.niceDnrResult();
         return LoanLimitAdaptorRequest.builder()
-                .name(request.getName())
-                .rrno(request.getRrno())
-                .jobType(request.getJobType())
-                .jobName(request.getJobName())
-                .loanType(request.getLoanType())
-                .carNo(request.getCarNo())
+                .name(request.name())
+                .rrno(request.rrno())
+                .jobType(request.jobType())
+                .jobName(request.jobName())
+                .loanType(request.loanType())
+                .carNo(request.carNo())
                 .autoInfo(result.autoInfo())
                 .autoSecondInfo(result.autoSecondInfo())
                 .build();

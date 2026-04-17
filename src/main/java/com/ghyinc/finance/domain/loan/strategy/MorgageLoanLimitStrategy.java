@@ -40,7 +40,7 @@ public class MorgageLoanLimitStrategy implements LoanLimitStrategy {
     @Override
     public void validate(LoanLimitRequest request) {
         // 법정동코드 필수 검증
-        if(Objects.isNull(request.getKbIdentityCode()) || request.getKbIdentityCode().isBlank()) {
+        if(Objects.isNull(request.kbIdentityCode()) || request.kbIdentityCode().isBlank()) {
             throw new InvalidRequestException("주택담보대출은 법정동코드가 필수입니다");
         }
     }
@@ -48,12 +48,12 @@ public class MorgageLoanLimitStrategy implements LoanLimitStrategy {
     @Override
     public ExternalDataContext fetchExternalData(LoanLimitRequest request) {
         try {
-            KbAppraisalResult result = kbAppraisalService.inquireKbAppraisal(request.getAddress());
+            KbAppraisalResult result = kbAppraisalService.inquireKbAppraisal(request.address());
             return ExternalDataContext.builder()
                     .kbAppraisalResult(result)
                     .build();
         } catch (ExternalApiFailException e) {
-            log.error("KB 부동산 조회 실패. address={}", request.getAddress(), e);
+            log.error("KB 부동산 조회 실패. address={}", request.address(), e);
 
             // 예외를 던지지 않고 오류 정보만 context에 담아 return
             return ExternalDataContext.builder()
@@ -71,12 +71,12 @@ public class MorgageLoanLimitStrategy implements LoanLimitStrategy {
     public LoanLimitAdaptorRequest toAdaptorRequest(LoanLimitRequest request, ExternalDataContext externalDataContext) {
         KbAppraisalResult result = externalDataContext.kbAppraisalResult();
         return LoanLimitAdaptorRequest.builder()
-                .name(request.getName())
-                .rrno(request.getRrno())
-                .jobType(request.getJobType())
-                .jobName(request.getJobName())
-                .loanType(request.getLoanType())
-                .address(request.getAddress())
+                .name(request.name())
+                .rrno(request.rrno())
+                .jobType(request.jobType())
+                .jobName(request.jobName())
+                .loanType(request.loanType())
+                .address(request.address())
                 .respData(result.respData())
                 .build();
     }

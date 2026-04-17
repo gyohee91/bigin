@@ -39,11 +39,11 @@ public class PersonalLoanLimitStrategy implements LoanLimitStrategy {
     @Override
     public LoanLimitAdaptorRequest toAdaptorRequest(LoanLimitRequest request, ExternalDataContext externalDataContext) {
         return LoanLimitAdaptorRequest.builder()
-                .name(request.getName())
-                .rrno(request.getRrno())
-                .jobType(request.getJobType())
-                .jobName(request.getJobName())
-                .loanType(request.getLoanType())
+                .name(request.name())
+                .rrno(request.rrno())
+                .jobType(request.jobType())
+                .jobName(request.jobName())
+                .loanType(request.loanType())
                 .build();
     }
 
