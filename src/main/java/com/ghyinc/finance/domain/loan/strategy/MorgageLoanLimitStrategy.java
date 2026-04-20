@@ -9,6 +9,7 @@ import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.external.coocon.dto.KbAppraisalResult;
 import com.ghyinc.finance.domain.external.coocon.service.KbAppraisalService;
 import com.ghyinc.finance.domain.loan.repository.PartnerLoanTypeRepository;
+import com.ghyinc.finance.global.common.DateUtils;
 import com.ghyinc.finance.global.exception.ExternalApiFailException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -76,6 +77,8 @@ public class MorgageLoanLimitStrategy implements LoanLimitStrategy {
                 .jobType(request.jobType())
                 .jobName(request.jobName())
                 .loanType(request.loanType())
+                .agreePersonalCreditInfo(request.agreePersonalCreditInfo())
+                .agreePersonalCreditTime(DateUtils.toDateTimeString(request.agreePersonalCreditTime()))
                 .address(request.address())
                 .respData(result.respData())
                 .build();

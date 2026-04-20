@@ -87,6 +87,8 @@ public class LoanLimitService {
                 .jobName(request.jobName())
                 .loanType(request.loanType())
                 .carNo(request.carNo())
+                .agreePersonalCreditInfo(request.agreePersonalCreditInfo())
+                .agreePersonalCreditTime(request.agreePersonalCreditTime())
                 .build();
 
         loanLimitInquiryRepository.save(inquiry);
@@ -104,7 +106,7 @@ public class LoanLimitService {
 
     @Transactional(readOnly = true)
     public LoanLimitPollingResponse getInquiryResult(String inquiryNo) {
-        LoanLimitInquiry inquiry = loanLimitInquiryRepository.findByInquiryNoWithProductResults(inquiryNo)
+        var inquiry = loanLimitInquiryRepository.findByInquiryNoWithProductResults(inquiryNo)
                 .orElseThrow(() -> new InvalidRequestException("존재하지 않는 조회이력입니다: " + inquiryNo));
 
         return LoanLimitPollingResponse.from(inquiry);

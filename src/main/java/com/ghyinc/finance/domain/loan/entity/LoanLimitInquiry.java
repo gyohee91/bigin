@@ -8,6 +8,7 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.Comment;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -56,6 +57,12 @@ public class LoanLimitInquiry extends BaseTimeEntity {
 
     @Comment("차량번호")
     private String carNo;
+
+    @Comment("신용정보 수집 이용 제공 동의 여부")
+    private boolean agreePersonalCreditInfo;
+
+    @Comment("신용정보 수집 이용 제공 동의 시간")
+    private LocalDateTime agreePersonalCreditTime;
 
     @Enumerated(EnumType.STRING)
     @Comment("응답 결과")

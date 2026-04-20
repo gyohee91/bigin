@@ -8,6 +8,7 @@ import com.ghyinc.finance.domain.external.nice.dto.AutoSecondInfo;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
 import lombok.Builder;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Builder(toBuilder = true)
@@ -20,6 +21,8 @@ public record LoanLimitAdaptorRequest(
         LoanType loanType,
         String carNo,
         String address,
+        boolean agreePersonalCreditInfo,
+        String agreePersonalCreditTime,
         AutoInfo autoInfo,
         AutoSecondInfo autoSecondInfo,
         RespData respData

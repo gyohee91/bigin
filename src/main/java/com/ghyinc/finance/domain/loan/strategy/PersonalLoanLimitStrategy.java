@@ -6,6 +6,7 @@ import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.repository.PartnerLoanTypeRepository;
+import com.ghyinc.finance.global.common.DateUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -44,6 +45,8 @@ public class PersonalLoanLimitStrategy implements LoanLimitStrategy {
                 .jobType(request.jobType())
                 .jobName(request.jobName())
                 .loanType(request.loanType())
+                .agreePersonalCreditInfo(request.agreePersonalCreditInfo())
+                .agreePersonalCreditTime(DateUtils.toDateTimeString(request.agreePersonalCreditTime()))
                 .build();
     }
 

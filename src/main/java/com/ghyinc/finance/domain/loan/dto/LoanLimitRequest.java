@@ -7,6 +7,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Builder;
 
+import java.time.LocalDateTime;
+
 @Schema(description = "금리 한도조회(요청)")
 @Builder
 public record LoanLimitRequest(
@@ -42,6 +44,12 @@ public record LoanLimitRequest(
         String kbIdentityCode,
 
         @Schema(description = "주소", example = "수원시 영통구 영통로90번길 4-27 ...")
-        String address
+        String address,
+
+        @Schema(description = "신용정보 수집 이용 제공 동의 여부", example = "true")
+        boolean agreePersonalCreditInfo,
+
+        @Schema(description = "신용정보 수집 이용 제공 동의 시간", example = "2026-04-16T13:57:53")
+        LocalDateTime agreePersonalCreditTime
 ) {
 }

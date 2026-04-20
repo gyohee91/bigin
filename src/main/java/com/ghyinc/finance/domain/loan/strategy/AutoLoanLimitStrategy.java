@@ -9,6 +9,7 @@ import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.external.nice.dto.NiceDnrResult;
 import com.ghyinc.finance.domain.external.nice.service.NiceDnrService;
 import com.ghyinc.finance.domain.loan.repository.PartnerLoanTypeRepository;
+import com.ghyinc.finance.global.common.DateUtils;
 import com.ghyinc.finance.global.exception.ExternalApiFailException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -76,6 +77,8 @@ public class AutoLoanLimitStrategy implements LoanLimitStrategy{
                 .jobName(request.jobName())
                 .loanType(request.loanType())
                 .carNo(request.carNo())
+                .agreePersonalCreditInfo(request.agreePersonalCreditInfo())
+                .agreePersonalCreditTime(DateUtils.toDateTimeString(request.agreePersonalCreditTime()))
                 .autoInfo(result.autoInfo())
                 .autoSecondInfo(result.autoSecondInfo())
                 .build();

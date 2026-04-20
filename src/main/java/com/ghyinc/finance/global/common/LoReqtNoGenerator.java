@@ -3,16 +3,16 @@ package com.ghyinc.finance.global.common;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.UUID;
 
+/**
+ * 한도조회 상품별 신청번호 채번
+ */
 @Component
 public class LoReqtNoGenerator {
-    private static final DateTimeFormatter DATE_FORMATTER =
-            DateTimeFormatter.ofPattern("yyyyMMdd");
 
     public String generate(String prefix) {
-        String date = LocalDateTime.now().format(DATE_FORMATTER);
+        String date = DateUtils.toDateString(LocalDateTime.now());
         String uuid = UUID.randomUUID().toString()
                 .replaceAll("-", "")
                 .substring(0, 8)

@@ -129,7 +129,7 @@ public class LoanLimitSenderService {
 
             //금융사별 병렬 API 호출
             //partnerCode별 requestProducts 구성 후 병렬 호출
-            List<CompletableFuture<LoanLimitAdaptorResponse>> futures = partnerCodes.stream()
+            var futures = partnerCodes.stream()
                     .map(partnerCode -> {
                         //requestProducts를 포함한 요청 DTO 재구성
                         LoanLimitAdaptorRequest adaptorRequests = adaptorRequest.toBuilder()

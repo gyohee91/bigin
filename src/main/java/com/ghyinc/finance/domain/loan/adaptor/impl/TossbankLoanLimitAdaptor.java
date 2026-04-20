@@ -31,6 +31,8 @@ public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
 
     @Builder
     private record Data(
+            boolean agreePersonalCreditInfo,
+            String agreeTermsTime,
             String name,
             String jobType,
             String rrn,
