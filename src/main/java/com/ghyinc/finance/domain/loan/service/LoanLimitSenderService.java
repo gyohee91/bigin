@@ -199,7 +199,7 @@ public class LoanLimitSenderService {
             if(!Objects.equals(InquiryStatus.FAILED, resultStatus)) {
                 // Outbox INSERT (비즈니스 트랜잭션과 원자적)
                 OutboxEvent outboxEvent = OutboxEvent.builder()
-                        .aggregateType("loanLimitInquiry")
+                        .aggregateType("LoanLimitInquiry")
                         .aggregateId(loanLimitInquiry.getInquiryNo())
                         .eventType("LOAN_LIMIT_COMPLETED")
                         .payload(objectMapper.writeValueAsString(
