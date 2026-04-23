@@ -1,10 +1,11 @@
 package com.ghyinc.finance.global.outbox.event;
 
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-
-@Getter
-@AllArgsConstructor
-public class OutboxCreatedEvent {
-    private Long id;
-}
+/**
+ * Spring 내부 이벤트
+ * Spring의 ApplicationEvent를 수신
+ *
+ * @param id
+ */
+public record OutboxCreatedEvent(
+        Long id
+) {}

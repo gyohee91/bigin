@@ -197,6 +197,7 @@ public class LoanLimitSenderService {
 
             // 알림 발송 - notification 도메인을 직접 알지 못함
             if(!Objects.equals(InquiryStatus.FAILED, resultStatus)) {
+                // Outbox INSERT (비즈니스 트랜잭션과 원자적)
                 OutboxEvent outboxEvent = OutboxEvent.builder()
                         .aggregateType("loanLimitInquiry")
                         .aggregateId(loanLimitInquiry.getInquiryNo())
