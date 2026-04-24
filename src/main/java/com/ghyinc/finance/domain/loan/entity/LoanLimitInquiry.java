@@ -51,6 +51,9 @@ public class LoanLimitInquiry extends BaseTimeEntity {
     @Comment("직장명")
     private String jobName;
 
+    @Comment("입사년월(개업년월)")
+    private String joinDate;
+
     @Enumerated(EnumType.STRING)
     @Comment("대출 유형")
     private LoanType loanType;

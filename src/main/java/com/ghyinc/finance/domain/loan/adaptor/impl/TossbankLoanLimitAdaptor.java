@@ -35,6 +35,7 @@ public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
             String agreeTermsTime,
             String name,
             String jobType,
+            String joinDate,
             String rrn,
             String corporateName,
             String automobileNumber,
@@ -81,6 +82,7 @@ public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
                             .rrn(cryptoService.encrypt(requestParam.rrno()))
                             .name(cryptoService.encrypt(requestParam.name()))
                             .jobType(requestParam.jobType().name())
+                            .joinDate(requestParam.joinDate())
                             .corporateName(requestParam.jobName())
                             .automobileNumber(requestParam.carNo())
                             .build()

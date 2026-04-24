@@ -6,6 +6,7 @@ import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.dto.RequestProduct;
+import com.ghyinc.finance.domain.loan.enums.JobType;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.client.ApiClient;
 import com.ghyinc.finance.global.client.ApiClientFactory;
@@ -32,7 +33,9 @@ public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
             List<RequestProduct> requestProducts,
             String rrn,
             String name,
-            String jobType,
+            JobType jobType,
+            String jobName,
+            String joinDate,
             String carNo,
             AutoInfo autoInfo,
             AutoSecondInfo autoSecondInfo
@@ -61,6 +64,9 @@ public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
                     .requestProducts(requestParam.requestProducts())
                     .rrn(cryptoService.encrypt(requestParam.rrno()))
                     .name(cryptoService.encrypt(requestParam.name()))
+                    .jobType(requestParam.jobType())
+                    .jobName(requestParam.jobName())
+                    .joinDate(requestParam.joinDate())
                     .carNo(requestParam.carNo())
                     .autoInfo(requestParam.autoInfo())
                     .autoSecondInfo(requestParam.autoSecondInfo())

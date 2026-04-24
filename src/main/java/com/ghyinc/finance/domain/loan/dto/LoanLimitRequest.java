@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.dto;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.ghyinc.finance.domain.loan.enums.JobType;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -32,6 +33,10 @@ public record LoanLimitRequest(
 
         @Schema(description = "직장명", example = "오케이저축은행")
         String jobName,
+
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyyMM", timezone = "Asia/Seoul")
+        @Schema(description = "입사년월(개업년월)", example = "202604")
+        String joinDate,
 
         @Schema(description = "차량번호", example = "12가1234")
         String carNo,

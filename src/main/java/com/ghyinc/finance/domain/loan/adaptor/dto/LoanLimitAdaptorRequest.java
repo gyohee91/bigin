@@ -18,6 +18,7 @@ public record LoanLimitAdaptorRequest(
         String rrno,
         JobType jobType,
         String jobName,
+        String joinDate,
         LoanType loanType,
         String carNo,
         String address,

@@ -44,6 +44,7 @@ public class PersonalLoanLimitStrategy implements LoanLimitStrategy {
                 .rrno(request.rrno())
                 .jobType(request.jobType())
                 .jobName(request.jobName())
+                .joinDate(request.joinDate())
                 .loanType(request.loanType())
                 .agreePersonalCreditInfo(request.agreePersonalCreditInfo())
                 .agreePersonalCreditTime(DateUtils.toDateTimeString(request.agreePersonalCreditTime()))

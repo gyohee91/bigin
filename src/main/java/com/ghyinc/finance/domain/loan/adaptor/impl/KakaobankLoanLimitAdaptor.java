@@ -1,6 +1,7 @@
 package com.ghyinc.finance.domain.loan.adaptor.impl;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.ghyinc.finance.domain.external.nice.dto.AutoInfo;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
@@ -15,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Objects;
 
 @Slf4j
 @Component
@@ -44,7 +46,6 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
     private record AlncGdsInfo(
             @JsonProperty("iqry_dman_no")
             String iqryDmanNo,
-
             @JsonProperty("alnc_gds_unq_cd")
             String alncGdsUnqCd
     ) {}
@@ -54,8 +55,18 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
             @JsonProperty("ocup_dvcd")
             String ocupDvcd,
             @JsonProperty("cur_wrst_nm")
-            String curWrstNm
-    ) {}
+            String curWrstNm,
+            @JsonProperty("cur_wrst_encm")
+            String curWrstEncm
+    ) {
+        public static CustInputInfo from(LoanLimitAdaptorRequest requestParam) {
+            return CustInputInfo.builder()
+                    .ocupDvcd(requestParam.jobType().name())
+                    .curWrstNm(requestParam.jobName())
+                    .curWrstEncm(requestParam.joinDate())
+                    .build();
+        }
+    }
 
     @Builder
     private record CarParts(
@@ -66,7 +77,23 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
             String resMotorType,
             String resUseType,
             String resCarModelType
-    ) {}
+    ) {
+        public static CarParts from(AutoInfo autoInfo) {
+            if(Objects.isNull(autoInfo)) {
+                return null;
+            }
+
+            return CarParts.builder()
+                    .seq(autoInfo.seq())
+                    .formKind(autoInfo.formKind())
+                    .resCarNo(autoInfo.resCarNo())
+                    .seatingCapacity(autoInfo.seatingCapacity())
+                    .resMotorType(autoInfo.resMotorType())
+                    .resUseType(autoInfo.resUseType())
+                    .resCarModelType(autoInfo.resCarModelType())
+                    .build();
+        }
+    }
 
     private record LimitResponse(
             String resultCode
@@ -100,24 +127,9 @@ public class KakaobankLoanLimitAdaptor implements LoanLimitAdaptor {
                     )
                     .rsdtNo(cryptoService.encrypt(requestParam.rrno()))
                     .custNm(cryptoService.encrypt(requestParam.name()))
-                    .custInputInfo(
-                            CustInputInfo.builder()
-                                    .ocupDvcd(requestParam.jobType().name())
-                                    .curWrstNm(requestParam.jobName())
-                                    .build()
-                    )
+                    .custInputInfo(CustInputInfo.from(requestParam))
                     .vhcNo(requestParam.carNo())
-                    .carParts(
-                            CarParts.builder()
-                                    .seq(requestParam.autoInfo().seq())
-                                    .formKind(requestParam.autoInfo().formKind())
-                                    .resCarNo(requestParam.autoInfo().resCarNo())
-                                    .seatingCapacity(requestParam.autoInfo().seatingCapacity())
-                                    .resMotorType(requestParam.autoInfo().resMotorType())
-                                    .resUseType(requestParam.autoInfo().resUseType())
-                                    .resCarModelType(requestParam.autoInfo().resCarModelType())
-                                    .build()
-                    )
+                    .carParts(CarParts.from(requestParam.autoInfo()))
                     .build();
 
             LimitResponse result = apiClient.post(
