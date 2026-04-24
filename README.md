@@ -9,7 +9,7 @@
 
 ### 실무 배경
 
-현재 재직 중인 회사에서 **40개 이상의 금융사와 연동하는 대출 비교 플랫폼** 을 개발·운영하고 있습니다.
+현재 재직 중인 회사에서 **50개 이상의 금융사와 연동하는 대출 비교 플랫폼** 을 개발·운영하고 있습니다.
 
 실무에서는 아래와 같은 제약이 있었습니다.
 
@@ -31,14 +31,14 @@
 
 ### 실무 vs 개인 프로젝트 비교
 
-| 구분           | 실무         | 개인 프로젝트 (Bigin)                      |
-|--------------|--------------------|--------------------------------------|
-| Language     | Java 8             | Java 17                              |
-| Framework    | Spring Boot 2.7    | Spring Boot 3.5                      |
-| Architecture | Layered Architecture | Domain-driven Package Structure      |
-| DB           | Oracle DB          | H2 DB (In-memory)                    |
-| 메시지큐         | ActiveMQ           | Kafka                                |
-| API 통신       | RestTemplate       | RestClient                           |
+| 구분           | 실무         | 개인 프로젝트 (Bigin)                 |
+|--------------|--------------------|---------------------------------|
+| Language     | Java 8             | Java 17                         |
+| Framework    | Spring Boot 2.7    | Spring Boot 3.5                 |
+| Architecture | Layered Architecture | Domain-driven Package Structure |
+| DB           | Oracle DB          | H2 DB (In-memory)               |
+| 메시지큐         | ActiveMQ           | Kafka <br/>(Outbox Pattern 적용)       |
+| API 통신       | RestTemplate       | RestClient                      |
 
 ### 개인 프로젝트 상세 스택
 
@@ -83,7 +83,6 @@ com.ghyinc.finance
 │   │   │   ├── NotificationService.java
 │   │   │   └── NotificationSenderService.java
 │   │   ├── event
-│   │   │   ├── NotificationEventProducer.java       # Kafka Producer
 │   │   │   ├── NotificationEventConsumer.java       # Kafka Consumer (발송 처리)
 │   │   │   └── LoanLimitCompletedEventConsumer.java # loan-limit-completed 토픽 수신
 │   │   ├── entity
@@ -98,7 +97,19 @@ com.ghyinc.finance
 │   ├── config                 # Spring 설정
 │   ├── crypto                 # 암복호화 (AES, RSA)
 │   ├── event                  # Kafka Event Publisher
-│   └── exception              # 전역 예외 처리
+│   ├── exception              # 전역 예외 처리
+│   ├── outbox                 # Outbox 패턴 (트랜잭션 보장)
+│   │   ├── entity
+│   │   │   ├── OutboxEvent.java
+│   │   │   └── OutboxStatus.java
+│   │   ├── event
+│   │   │   └── OutboxCreatedEvent.java
+│   │   ├── repository
+│   │   │   └── OutboxEventRepository.java
+│   │   ├── service
+│   │   │   └── OutboxEventService.java      # @TransactionalEventListener
+│   │   └── scheduler
+│   │       └── OutboxEventBatchPublisher.java # @Scheduled 재시도
 ```
 
 <br>
@@ -129,12 +140,19 @@ FE → POST /api/loan/limit/inquiry
   ├── loReqtNo + productCode로 선저장 데이터 조회 및 UPDATE
   ├── 비관적 락으로 count 동시성 제어
   └── 완료 시 알림 이벤트 발행
-           │
-         ▼ Kafka
+      ├── OutboxEvent INSERT (같은 트랜잭션 - 원자적 보장)
+      └── ApplicationEventPublisher.publishEvent(OutboxCreatedEvent)
+         │
+         ▼ @TransactionalEventListener(AFTER_COMMIT)
+  OutboxEventService.publishAfterCommit()
+  ├── Kafka 발행 성공 → OutboxEvent PUBLISHED UPDATE
+  └── Kafka 발행 실패 → OutboxEvent PENDING 유지 (배치 재시도)
+         │
+         ▼ Kafka (loan-limit-completed)
   LoanLimitCompletedEventConsumer (notification 도메인)
   └── NotificationService → notification.send 토픽 발행
          │
-         ▼ Kafka
+         ▼ Kafka (notification.send)
   NotificationEventConsumer
   └── 실제 Push/SMS 발송
 ```
@@ -144,6 +162,7 @@ FE → POST /api/loan/limit/inquiry
 ```
 loan-limit-completed   loan → notification 도메인 간 이벤트 전달
                         한도조회 완료 시 발행 (inquiryNo가 partition key)
+                        OutboxEventService가 발행 (Outbox Pattern)
  
 notification.send      notification 도메인 내부 비동기 발송 처리
                         Notification INSERT 후 실제 발송 분리
@@ -326,6 +345,64 @@ public void consume(LoanLimitCompletedEvent event) {
 
 <br>
 
+## 📦 Outbox 패턴 - 트랜잭션 보장
+
+Kafka 발행과 DB 트랜잭션의 원자성을 보장하기 위해 Outbox 패턴을 적용했습니다.
+
+### 도입 배경
+
+```
+Outbox 패턴 미적용 시 문제
+  → DB UPDATE 성공 + Kafka 발행 실패
+      → DB에는 SUCCESS로 기록
+      → 알림 발송 누락
+ 
+  → DB UPDATE 성공 + Kafka 발행 성공 + 트랜잭션 롤백
+      → DB 롤백
+      → Kafka 메시지는 이미 발행됨
+      → 알림 중복 발송
+```
+
+### Outbox 패턴 흐름
+
+```
+비즈니스 트랜잭션
+  ├── DB UPDATE                          ─┐
+  └── OutboxEvent INSERT (PENDING)        ├─ 같은 트랜잭션 (원자적)
+                                         ─┘
+        ↓ 트랜잭션 커밋 후
+ 
+@TransactionalEventListener(AFTER_COMMIT)
+OutboxEventService.publishAfterCommit()
+  ├── Kafka 즉시 발행 시도
+  ├── 성공 → OutboxEvent PUBLISHED UPDATE
+  └── 실패 → OutboxEvent PENDING 유지
+ 
+        ↓ 1분마다 (보조 안전망)
+ 
+@Scheduled OutboxEventBatchPublisher
+  └── 5분 이상 PENDING 건 재시도 → PUBLISHED or FAILED
+```
+
+### OutboxEvent 토픽 분기
+
+```java
+String topic = switch (outboxEvent.getAggregateType()) {
+    case "LoanLimitInquiry" -> "loan-limit-completed";
+    case "Notification"     -> "notification.send";
+    default -> throw new InvalidRequestException(...);
+};
+```
+
+### 적용 범위
+
+```
+loan 도메인      LoanLimitCallbackService → 한도조회 완료 이벤트
+notification     NotificationService     → 알림 발송 이벤트
+```
+
+<br>
+
 ## 🔄 콜백 동시성 제어
 
 여러 금융사 콜백이 동시에 수신될 때 `LoanLimitInquiry` count 업데이트의 Lost Update를 방지합니다.
@@ -404,6 +481,7 @@ partner-api:
 - AesCryptoServiceTest       # AES 암복호화
 - RsaCryptoServiceTest       # RSA 암복호화
 - InquiryNoGeneratorTest     # 채번 중복 없음 검증
+- OutboxEventServiceTest     # Outbox 즉시 발행 / 실패 시 PENDING 유지
 ```
 
 <br>
