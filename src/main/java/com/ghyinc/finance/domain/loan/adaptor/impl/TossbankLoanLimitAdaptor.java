@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.adaptor.impl;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
@@ -23,8 +24,15 @@ public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
     private final CryptoFactory cryptoFactory;
     private final PartnerApiProperties partnerApiProperties;
 
+    private final ObjectMapper objectMapper;
+
     @Builder
     private record TossbankLimitRequest(
+            String encrytedData
+    ) {}
+
+    @Builder
+    private record LimitRequestPlainText(
             Data data,
             List<RequestProduct> requestProducts
     ) {}
@@ -58,7 +66,7 @@ public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
             String loanProductId
     ) {}
 
-    private record LimitResponse(
+    private record TossbankLimitResponse(
             String resultCode
     ) {}
 
@@ -77,10 +85,10 @@ public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
         String path = partnerApiProperties.getConfig(partnerCode).getPath();
 
         try {
-            TossbankLimitRequest request = TossbankLimitRequest.builder()
+            LimitRequestPlainText limitRequestPlainText = LimitRequestPlainText.builder()
                     .data(Data.builder()
-                            .rrn(cryptoService.encrypt(requestParam.rrno()))
-                            .name(cryptoService.encrypt(requestParam.name()))
+                            .rrn(requestParam.rrno())
+                            .name(requestParam.name())
                             .jobType(requestParam.jobType().name())
                             .joinDate(requestParam.joinDate())
                             .corporateName(requestParam.jobName())
@@ -98,12 +106,18 @@ public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
                     )
                     .build();
 
+            // Tossbank는 json 전체 암호화
+            String plainText = objectMapper.writeValueAsString(limitRequestPlainText);
+            TossbankLimitRequest request = TossbankLimitRequest.builder()
+                    .encrytedData(cryptoService.encrypt(plainText))
+                    .build();
+
             //External API
-            LimitResponse result = apiClient.post(
+            TossbankLimitResponse result = apiClient.post(
                     partnerCode,
                     path,
                     request,
-                    LimitResponse.class
+                    TossbankLimitResponse.class
             );
 
             long resTimeMs = System.currentTimeMillis() - startTime;
