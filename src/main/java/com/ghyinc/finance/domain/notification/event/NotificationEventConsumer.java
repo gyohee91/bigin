@@ -1,5 +1,8 @@
 package com.ghyinc.finance.domain.notification.event;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.notification.dto.ExternalApiResponse;
 import com.ghyinc.finance.domain.notification.entity.Notification;
 import com.ghyinc.finance.domain.notification.repository.NotificationRepository;
@@ -35,16 +38,21 @@ public class NotificationEventConsumer {
     private final NotificationSenderService notificationSenderService;
     private final NotificationRepository notificationRepository;
 
+    private final ObjectMapper objectMapper;
+
     @KafkaListener(
             topics = "notification.send",
             groupId = "notification-group"
     )
-    public void consume(NotificationEvent event) {
-        // payload에서 requestId 복원 -> Consumer 스레드 MDC에 설정
-        String requestId = Optional.ofNullable(event.getRequestId())
-                .orElse(UUID.randomUUID().toString());  //Producer에서 누락된 경우
+    public void consume(String payload) {
 
         try {
+            NotificationEvent event = objectMapper.readValue(payload, NotificationEvent.class);
+
+            // payload에서 requestId 복원 -> Consumer 스레드 MDC에 설정
+            String requestId = Optional.ofNullable(event.getRequestId())
+                    .orElse(UUID.randomUUID().toString());  //Producer에서 누락된 경우
+
             MDC.put(REQUEST_ID_KEY, requestId);
 
             log.info("[Consumer] 메시지 수신 - id: {}", event.getId());
@@ -65,6 +73,8 @@ public class NotificationEventConsumer {
             else {
                 notification.markAsFailed(response.getResultCode());
             }
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         } finally {
             MDC.clear();    //Consumer 스레드 재사용 시 이전 requestId 오염 방지
         }

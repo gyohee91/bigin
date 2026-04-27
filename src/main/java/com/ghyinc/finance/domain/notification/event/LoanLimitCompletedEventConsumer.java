@@ -1,5 +1,7 @@
 package com.ghyinc.finance.domain.notification.event;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.notification.dto.NotificationSendRequest;
 import com.ghyinc.finance.domain.notification.enums.ChannelType;
@@ -21,28 +23,38 @@ import java.util.UUID;
 public class LoanLimitCompletedEventConsumer {
     private final NotificationService notificationService;
 
+    private final ObjectMapper objectMapper;
+
     private static final String REQUEST_ID_KEY = "requestId";
 
     @KafkaListener(
             topics = "loan-limit-completed",
             groupId = "notification-group"
     )
-    public void consume(LoanLimitCompletedEvent event) {
-        String requestId = Optional.ofNullable(event.getRequestId())
-                        .orElse(UUID.randomUUID().toString());
+    public void consume(String payload) {
 
-        MDC.put(REQUEST_ID_KEY, requestId);
-        log.info("[Consumer] 한도조회 완료 이벤트 수신. inquiryNo={}", event.getInquiryNo());
+        try {
+            LoanLimitCompletedEvent event = objectMapper.readValue(payload, LoanLimitCompletedEvent.class);
 
-        notificationService.sendNotification(
-                NotificationSendRequest.builder()
-                        .channelType(ChannelType.SMS)
-                        .sendType(SendType.IMMEDIATE)
-                        .recipient(event.getName())
-                        .title("한도조회 완료")
-                        .content(this.buildContent(event.getStatus()))
-                        .build()
-        );
+            String requestId = Optional.ofNullable(event.getRequestId())
+                    .orElse(UUID.randomUUID().toString());
+
+            MDC.put(REQUEST_ID_KEY, requestId);
+            log.info("[Consumer] 한도조회 완료 이벤트 수신. inquiryNo={}", event.getInquiryNo());
+
+            notificationService.sendNotification(
+                    NotificationSendRequest.builder()
+                            .channelType(ChannelType.SMS)
+                            .sendType(SendType.IMMEDIATE)
+                            .recipient(event.getName())
+                            .title("한도조회 완료")
+                            .content(this.buildContent(event.getStatus()))
+                            .build()
+            );
+
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private String buildContent(InquiryStatus status) {

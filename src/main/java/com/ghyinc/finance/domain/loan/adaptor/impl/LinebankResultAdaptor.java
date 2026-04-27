@@ -24,7 +24,6 @@ public class LinebankResultAdaptor implements LoanLimitResultAdaptor {
             "NFLA02", LoanLimitResultCode.DUPLICATE_REQUEST,
             "NFLA05", LoanLimitResultCode.INVALID_PRODUCT,
             "NFLA95", LoanLimitResultCode.PARTNER_SYSTEM_ERROR,
-            "NFLA99", LoanLimitResultCode.TIMEOUT,
             "NFLA99", LoanLimitResultCode.UNKNOWN_ERROR
     );
 
