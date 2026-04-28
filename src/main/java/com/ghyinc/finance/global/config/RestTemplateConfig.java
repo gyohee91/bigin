@@ -1,7 +1,6 @@
 package com.ghyinc.finance.global.config;
 
-import com.ghyinc.finance.global.interceptor.RestTemplateLoggingInterceptor;
-import com.ghyinc.finance.global.interceptor.RestTemplateRetryInterceptor;
+import com.ghyinc.finance.global.interceptor.LoggingRequestInterceptor;
 import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
@@ -28,7 +27,7 @@ public class RestTemplateConfig {
 
         return builder
                 .requestFactory(this::bufferingClientHttpRequestFactory)
-                .additionalInterceptors(new RestTemplateLoggingInterceptor())
+                .additionalInterceptors(new LoggingRequestInterceptor())
                 //RetryInterceptor 제거 - Resilience4j로 대체
                 //.additionalInterceptors(new RestTemplateRetryInterceptor(retryTemplate))
                 .build();
