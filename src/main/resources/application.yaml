@@ -155,3 +155,8 @@ loan-api:
       base-url: 127.0.0.1
       port: 9001
       path: /loan/inquiry
+
+nice-api:
+  dnr:
+    base-url: http://localhost:8090
+    path: /send/sms

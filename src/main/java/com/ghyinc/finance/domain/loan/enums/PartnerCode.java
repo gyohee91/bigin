@@ -12,7 +12,7 @@ public enum PartnerCode {
     KB_CAPITAL("KB캐피탈", true, ConnectionType.REST),
     K_BANK("K뱅크", true, ConnectionType.REST),
     SHINHAN_BANK("신한은행", true, ConnectionType.LEASE_LINE),
-    LINE_BANK("라인뱅크", true, ConnectionType.REST)
+    LINE_BANK("라인뱅크", false, ConnectionType.REST)
     ;
 
     private final String partnerName;

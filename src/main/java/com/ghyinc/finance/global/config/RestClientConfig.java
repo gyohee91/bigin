@@ -1,5 +1,6 @@
 package com.ghyinc.finance.global.config;
 
+import com.ghyinc.finance.domain.external.nice.config.NiceApiProperties;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.interceptor.LoggingRequestInterceptor;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ import java.util.stream.Collectors;
 @EnableConfigurationProperties(PartnerApiProperties.class)
 public class RestClientConfig {
     private final PartnerApiProperties partnerApiProperties;
+    private final NiceApiProperties niceApiProperties;
 
     /**
      * 금융사별 전용 RestClient Map
@@ -30,13 +32,22 @@ public class RestClientConfig {
         return partnerApiProperties.getPartners().entrySet().stream()
                 .collect(Collectors.toMap(
                         Map.Entry::getKey,
-                        entry -> this.buildRestClient(entry.getKey(), entry.getValue())
-                ));
+                        entry -> {
+                            PartnerApiProperties.PartnerApiConfig config = entry.getValue();
+                            return this.buildRestClient(config.getBaseUrl());
+                        })
+                );
     }
 
-    private RestClient buildRestClient(PartnerCode partnerCode, PartnerApiProperties.PartnerApiConfig config) {
+    @Bean(name = "niceDnrRestClient")
+    public RestClient niceDnrRestClient() {
+        NiceApiProperties.NiceApiConfig config = niceApiProperties.getDnr();
+        return this.buildRestClient(config.getBaseUrl());
+    }
+
+    private RestClient buildRestClient(String baseUrl) {
         return RestClient.builder()
-                .baseUrl(config.getBaseUrl())
+                .baseUrl(baseUrl)
                 .defaultHeader("Content-Type", MediaType.APPLICATION_JSON_VALUE)
                 .defaultHeader("Accept", MediaType.APPLICATION_JSON_VALUE)
                 .requestInterceptor(new LoggingRequestInterceptor())
