@@ -7,6 +7,7 @@ import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.factory.LoanLimitStrategyFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
+import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepository;
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +36,7 @@ import java.util.stream.Collectors;
 public class LoanLimitService {
     private final LoanLimitSenderService loanLimitSenderService;
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
+    private final LoanLimitProductResultRepository loanLimitProductResultRepository;
     private final LoanLimitStrategyFactory strategyFactory;
 
     private final LoReqtNoGenerator generator;
@@ -107,9 +109,11 @@ public class LoanLimitService {
 
     @Transactional(readOnly = true)
     public LoanLimitPollingResponse getInquiryResult(String inquiryNo) {
-        var inquiry = loanLimitInquiryRepository.findByInquiryNoWithProductResults(inquiryNo)
+        LoanLimitInquiry inquiry = loanLimitInquiryRepository.findByInquiryNo(inquiryNo)
                 .orElseThrow(() -> new InvalidRequestException("존재하지 않는 조회이력입니다: " + inquiryNo));
 
-        return LoanLimitPollingResponse.from(inquiry);
+        List<LoanLimitProductResultDto> productResults = loanLimitProductResultRepository.findProductResultsByInquiryId(inquiry.getId());
+
+        return LoanLimitPollingResponse.from(inquiry, productResults);
     }
 }

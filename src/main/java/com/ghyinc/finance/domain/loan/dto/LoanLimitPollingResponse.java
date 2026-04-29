@@ -26,20 +26,16 @@ public record LoanLimitPollingResponse(
         boolean allResultReceived,
 
         @Schema(description = "한도 결과 목록")
-        List<LoanLimitProductResultResponse> productResults
+        List<LoanLimitProductResultDto> productResults
 ) {
-    public static LoanLimitPollingResponse from(LoanLimitInquiry inquiry) {
+    public static LoanLimitPollingResponse from(LoanLimitInquiry inquiry, List<LoanLimitProductResultDto> productResults) {
         return LoanLimitPollingResponse.builder()
                 .inquiryNo(inquiry.getInquiryNo())
                 .totalProductCount(inquiry.getTotalProductCount())
                 .successProductCount(inquiry.getSuccessProductCount())
                 .progressRate(inquiry.getProgressRate())
                 .allResultReceived(inquiry.isAllResultReceived())
-                .productResults(
-                        inquiry.getProductResults().stream()
-                                .map(LoanLimitProductResultResponse::from)
-                                .toList()
-                )
+                .productResults(productResults)
                 .build();
     }
 }
