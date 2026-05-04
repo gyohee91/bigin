@@ -28,15 +28,18 @@ public interface LoanLimitProductResultRepository extends JpaRepository<LoanLimi
             @Param("productCode") String productCode
     );
 
-    @Query("SELECT new com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto(" +
-            "   t.loReqtNo, " +
-            "   t.partnerCode, " +
-            "   t.productCode, " +
-            "   t.resultCode, " +
-            "   t.amount, " +
-            "   t.interestRate " +
-            ") " +
-            "FROM LoanLimitProductResult t " +
-            "WHERE t.loanLimitInquiry.id = :inquiryId")
+    @Query("""
+            SELECT new com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto(
+               t.loReqtNo,
+               t.partnerCode,
+               t.productCode,
+               t.resultCode,
+               t.amount,
+               t.interestRate
+            )
+            FROM LoanLimitProductResult t
+            WHERE t.loanLimitInquiry.id = :inquiryId
+            ORDER BY t.amount DESC NULLS LAST
+            """)
     Page<LoanLimitProductResultDto> findProductResultsByInquiryId(@Param("inquiryId") Long inquiryId, Pageable pageable);
 }
