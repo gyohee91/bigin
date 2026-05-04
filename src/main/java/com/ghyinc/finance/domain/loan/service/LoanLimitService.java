@@ -13,6 +13,8 @@ import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -108,11 +110,11 @@ public class LoanLimitService {
     }
 
     @Transactional(readOnly = true)
-    public LoanLimitPollingResponse getInquiryResult(String inquiryNo) {
+    public LoanLimitPollingResponse getInquiryResult(String inquiryNo, Pageable pageable) {
         LoanLimitInquiry inquiry = loanLimitInquiryRepository.findByInquiryNo(inquiryNo)
                 .orElseThrow(() -> new InvalidRequestException("존재하지 않는 조회이력입니다: " + inquiryNo));
 
-        List<LoanLimitProductResultDto> productResults = loanLimitProductResultRepository.findProductResultsByInquiryId(inquiry.getId());
+        Page<LoanLimitProductResultDto> productResults = loanLimitProductResultRepository.findProductResultsByInquiryId(inquiry.getId(), pageable);
 
         return LoanLimitPollingResponse.from(inquiry, productResults);
     }

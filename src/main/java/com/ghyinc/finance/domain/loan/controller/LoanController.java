@@ -17,6 +17,8 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -100,9 +102,12 @@ public class LoanController {
     @GetMapping("/inquiry/{inquiryNo}")
     public ResponseEntity<ApiCommResponse<LoanLimitPollingResponse>> getInquiryResult(
             @Parameter(description = "업무 식별번호", example = "LL20260416q2g09nhgap")
-            @PathVariable String inquiryNo
+            @PathVariable String inquiryNo,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
     ) {
-        LoanLimitPollingResponse response = loanLimitService.getInquiryResult(inquiryNo);
+        Pageable pageable = PageRequest.of(page, size);
+        LoanLimitPollingResponse response = loanLimitService.getInquiryResult(inquiryNo, pageable);
 
         return ResponseEntity.ok(ApiCommResponse.success("한도조회 요청 성공", response));
     }
