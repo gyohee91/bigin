@@ -37,6 +37,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -63,9 +64,6 @@ public class LoanLimitSenderService {
      * <p> 각 은행 API 호출은 독립적이므로 CompletableFuture로 병렬 처리
      * 한 금융사의 실패가 다른 금융사 조회에 영향을 주지 않음.
      * 전용 스레드 풀을 사용하여 외부 I/O가 공통 스레드 풀을 점유하지 않도록 격리
-     * @param partnerCodes
-     * @param adaptorRequest
-     * @return
      */
     @Async("loanLimitExecutor")
     @Transactional
@@ -148,6 +146,7 @@ public class LoanLimitSenderService {
                         LoanLimitAdaptor adaptor = adaptorFactory.getAdaptor(partnerCode);
                         return CompletableFuture
                                 .supplyAsync(() -> adaptor.inquireLimit(partnerCode, adaptorRequests), loanLimitExecutor)
+                                .orTimeout(5, TimeUnit.SECONDS)
                                 .exceptionally(ex -> {
                                     //Circuit Breaker OPEN 시
                                     if(ex.getCause() instanceof CallNotPermittedException) {
