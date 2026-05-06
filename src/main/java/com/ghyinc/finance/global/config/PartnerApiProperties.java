@@ -31,5 +31,7 @@ public class PartnerApiProperties {
         private String baseUrl;
         private int port;
         private String path;
+        private int connectTimeoutMs = 3000;    // 기본값 3초
+        private int readTimeoutMs = 5000;       // 기본값 5초
     }
 }

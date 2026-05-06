@@ -29,5 +29,7 @@ public class NiceApiProperties {
     public static class NiceApiConfig {
         private String baseUrl;
         private String path;
+        private int connectTimeoutMs;
+        private int readTimeoutMs;
     }
 }

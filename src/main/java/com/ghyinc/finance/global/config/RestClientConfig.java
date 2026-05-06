@@ -8,6 +8,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 import java.util.Map;
@@ -34,7 +35,11 @@ public class RestClientConfig {
                         Map.Entry::getKey,
                         entry -> {
                             PartnerApiProperties.PartnerApiConfig config = entry.getValue();
-                            return this.buildRestClient(config.getBaseUrl());
+                            return this.buildRestClient(
+                                    config.getBaseUrl(),
+                                    config.getConnectTimeoutMs(),
+                                    config.getReadTimeoutMs()
+                            );
                         })
                 );
     }
@@ -42,12 +47,17 @@ public class RestClientConfig {
     @Bean(name = "niceDnrRestClient")
     public RestClient niceDnrRestClient() {
         NiceApiProperties.NiceApiConfig config = niceApiProperties.getDnr();
-        return this.buildRestClient(config.getBaseUrl());
+        return this.buildRestClient(config.getBaseUrl(), config.getConnectTimeoutMs(), config.getReadTimeoutMs());
     }
 
-    private RestClient buildRestClient(String baseUrl) {
+    private RestClient buildRestClient(String baseUrl, int connectTimeoutMs, int readTimeoutMs) {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(connectTimeoutMs);
+        factory.setReadTimeout(readTimeoutMs);
+
         return RestClient.builder()
                 .baseUrl(baseUrl)
+                .requestFactory(factory)
                 .defaultHeader("Content-Type", MediaType.APPLICATION_JSON_VALUE)
                 .defaultHeader("Accept", MediaType.APPLICATION_JSON_VALUE)
                 .requestInterceptor(new LoggingRequestInterceptor())

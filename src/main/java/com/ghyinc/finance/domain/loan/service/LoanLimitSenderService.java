@@ -146,7 +146,7 @@ public class LoanLimitSenderService {
                         LoanLimitAdaptor adaptor = adaptorFactory.getAdaptor(partnerCode);
                         return CompletableFuture
                                 .supplyAsync(() -> adaptor.inquireLimit(partnerCode, adaptorRequests), loanLimitExecutor)
-                                .orTimeout(5, TimeUnit.SECONDS)
+                                .orTimeout(6, TimeUnit.SECONDS)
                                 .exceptionally(ex -> {
                                     //Circuit Breaker OPEN 시
                                     if(ex.getCause() instanceof CallNotPermittedException) {
