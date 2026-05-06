@@ -582,6 +582,9 @@ partner-api:
 | LoanLimitResult 분리 | 상품 수가 많아도 금융사당 1건만 INSERT/UPDATE |
 | 통신방식별 ApiClient 분리 | REST/전용선 금융사 혼재 대응, OCP 준수 |
 | 금융사별 Circuit Breaker | 특정 금융사 장애 시 다른 금융사 영향 없이 격리 |
+| Adaptor에서 CB Fallback 처리 | @CircuitBreaker 어노테이션 방식은 금융사별 독립 인스턴스 지정 불가, 수동 catch로 명시적 Fallback 처리 |
+| Partial Failure 패턴 | 특정 금융사 CB OPEN 시 Fallback 응답 반환, 나머지 금융사 정상 진행 |
+| 타임아웃 계층 분리 | readTimeout(CB 실패 기록) + orTimeout(스레드 강제 해제) 역할 분리 |
 | 암호화 키 DB 관리 | 배포 없이 키 교체 가능, @PostConstruct 초기화로 성능 확보 |
 | ExternalDataContext | 외부 조회 결과 파라미터 고정 (Nice DNR, KB시세 등 확장 시 파라미터 불변) |
 | Kafka 알림 연동 | 다중 Pod 환경에서 이벤트 소실 방지, loan-notification 도메인 물리적 분리 |
