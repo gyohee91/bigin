@@ -81,7 +81,7 @@ springdoc:
 
 resilience4j:
   circuitbreaker:
-    instances:
+    configs:
       default:
 
         # Sliding Window 설정
@@ -91,11 +91,11 @@ resilience4j:
 
         # CLOSE -> OPEN 전환 조건
         failure-rate-threshold: 50        # 실패율 50% 이상이면 OPEN
+        slow-call-duration-threshold: 5s  # 5초 이상이면 느린 호출
         slow-call-rate-threshold: 50      # 느린 호출 50% 이상이면 OPEN
-        slow-call-duration-threshold: 3s  # 3초 이상이면 느린 호출
 
         # OPEN 상태 유지 시간
-        wait-duration-in-open-state: 30s  # OPEN 상태 30초 유지
+        wait-duration-in-open-state: 60s  # OPEN 상태 60초 유지
 
         # HALF_OPEN 상태 설정
         permitted-number-of-calls-in-half-open-state: 3   # 3개 요청 테스트
@@ -106,6 +106,7 @@ resilience4j:
 
         # 기록할 예외
         record-exceptions:
+          - com.ghyinc.finance.global.exception.ExternalApiFailException
           - org.springframework.web.client.ResourceAccessException
           - org.springframework.web.client.HttpServerErrorException
           - java.net.ConnectException
@@ -115,6 +116,15 @@ resilience4j:
         ignore-exceptions:
           - org.springframework.web.client.HttpClientErrorException.BadRequest
           - org.springframework.web.client.HttpClientErrorException.Unauthorized
+
+    instances:
+      KAKAO_BANK:
+        base-config: default
+      TOSS_BANK:
+        base-config: default
+      LINE_BANK:
+        base-config: default
+
 
   # Retry 설정
   retry:
@@ -142,21 +152,33 @@ loan-api:
     KAKAO_BANK:
       base-url: http://localhost:8090
       path: /send/sms
+      connect-timeout-ms: 3000
+      read-timeout-ms: 5000
     TOSS_BANK:
       base-url: http://localhost:8090
       path: /send/sms
+      connect-timeout-ms: 3000
+      read-timeout-ms: 5000
     KB_CAPITAL:
       base-url: http://localhost:8090
       path: /send/sms
+      connect-timeout-ms: 3000
+      read-timeout-ms: 5000
     LINE_BANK:
       base-url: http://localhost:8090
       path: /send/sms
+      connect-timeout-ms: 3000
+      read-timeout-ms: 5000
     SHINHAN_BANK:
       base-url: 127.0.0.1
       port: 9001
       path: /loan/inquiry
+      connect-timeout-ms: 3000
+      read-timeout-ms: 10000
 
 nice-api:
   dnr:
     base-url: http://localhost:8090
     path: /send/sms
+    connect-timeout-ms: 3000
+    read-timeout-ms: 5000
