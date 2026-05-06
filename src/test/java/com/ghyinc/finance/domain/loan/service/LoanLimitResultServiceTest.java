@@ -1,5 +1,9 @@
 package com.ghyinc.finance.domain.loan.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptor;
+import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptorFactory;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResultRequest;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
@@ -16,13 +20,18 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
 
 @ExtendWith(MockitoExtension.class)
 class LoanLimitResultServiceTest {
 
     @InjectMocks
     private LoanLimitResultService loanLimitResultService;
+
+    @Mock
+    private LoanLimitResultAdaptorFactory resultAdaptorFactory;
 
     @Mock
     private LoanLimitProductResultRepository loanLimitProductResultRepository;
@@ -60,7 +69,15 @@ class LoanLimitResultServiceTest {
                 .build();
     }
 
-    private LoanLimitResultRequest buildRequest(List<LoanLimitResultRequest.LoanApplyResult> items) {
+    private JsonNode buildRequest(List<LoanLimitResultRequest.LoanApplyResult> items) {
+        ObjectMapper objectMapper = new ObjectMapper();
+        LoanLimitResultRequest request = LoanLimitResultRequest.builder()
+                .loanApplyResults(items)
+                .build();
+        return objectMapper.valueToTree(request);
+    }
+
+    private LoanLimitResultRequest buildRequestDto(List<LoanLimitResultRequest.LoanApplyResult> items) {
         return LoanLimitResultRequest.builder()
                 .loanApplyResults(items)
                 .build();
@@ -74,13 +91,16 @@ class LoanLimitResultServiceTest {
         LoanLimitProductResult productResult = this.buildProductResult(inquiry, "LR20260410AAA", "P060100206");
         LoanLimitResultRequest.LoanApplyResult preScrResultList = this.buildSuccessItem("LR20260410AAA", "P060100206");
 
+        LoanLimitResultAdaptor adaptor = mock(LoanLimitResultAdaptor.class);
+        given(resultAdaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
+        given(adaptor.convert(any())).willReturn(this.buildRequestDto(List.of(preScrResultList)));
         given(loanLimitProductResultRepository.findByLoReqtNoAndProductCode("LR20260410AAA", "P060100206"))
                 .willReturn(Optional.of(productResult));
         given(loanLimitProductResultRepository.findInquiryByLoReqtNoAndProduceCodeWithLock("LR20260410AAA", "P060100206"))
                 .willReturn(Optional.of(inquiry));
 
         // when
-        loanLimitResultService.process(PartnerCode.LINE_BANK, this.buildRequest(List.of(preScrResultList)));
+        loanLimitResultService.responseCompareLoanResult("LINE_BANK", this.buildRequest(List.of(preScrResultList)));
 
         // then
         assertThat(productResult.getStatus()).isEqualTo(PartnerInquiryStatus.SUCCESS);
