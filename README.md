@@ -222,6 +222,29 @@ LoanApplication (대출신청 1건)
   └── loReqtNo → LoanLimitProductResult 연결
 ```
 
+### Aggregate Root 패턴
+
+`LoanLimitInquiry`를 Aggregate Root로 하여 `LoanLimitResult`, `LoanLimitProductResult`의 생성과 상태 변경을 Aggregate Root를 통해서만 수행합니다.
+
+```
+[한도조회 Aggregate]
+ 
+LoanLimitInquiry (Aggregate Root)
+  ├── List<LoanLimitResult>        (금융사당 1건)
+  └── List<LoanLimitProductResult> (상품당 1건)
+```
+
+```java
+// 외부에서 직접 생성 금지 → Aggregate Root를 통해서만 추가
+inquiry.addResult(result);                  // LoanLimitResult 추가
+inquiry.addProductResult(productResult);    // LoanLimitProductResult 추가
+ 
+// 도메인 로직도 Aggregate Root에서 실행
+inquiry.updateInquiryStatus(InquiryStatus.IN_PROGRESS);
+inquiry.initProductCount(totalCount);
+inquiry.incrementSuccessCount();  // count 증가 + 상태 자동 결정
+```
+
 <br>
 
 ## 🔒 장애 격리 - Resilience4j
