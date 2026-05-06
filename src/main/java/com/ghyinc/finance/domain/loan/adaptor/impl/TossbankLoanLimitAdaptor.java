@@ -9,6 +9,7 @@ import com.ghyinc.finance.global.client.ApiClientFactory;
 import com.ghyinc.finance.global.config.PartnerApiProperties;
 import com.ghyinc.finance.global.crypto.CryptoFactory;
 import com.ghyinc.finance.global.crypto.CryptoService;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -137,7 +138,19 @@ public class TossbankLoanLimitAdaptor implements LoanLimitAdaptor {
                     PartnerCode.TOSS_BANK,
                     resTimeMs
             );
-        } catch (Exception e) {
+        }
+        catch (CallNotPermittedException e) {
+            // Circuit Breaker OPEN Fallback
+            // -> 해당 금융사 격리, 나머지 금융사 정상 진행 (Partial Success)
+            long resTimeMs = System.currentTimeMillis() - startTime;
+            log.warn("[{}] Circuit Breaker OPEN -> Fallback 실행", PartnerCode.TOSS_BANK);
+            return LoanLimitAdaptorResponse.fail(
+                    PartnerCode.TOSS_BANK,
+                    "CB_OPEN",
+                    resTimeMs
+            );
+        }
+        catch (Exception e) {
             long resTimeMs = System.currentTimeMillis() - startTime;
             log.error("[{}] 한도조회 오류 발생", PartnerCode.TOSS_BANK, e);
             return LoanLimitAdaptorResponse.fail(PartnerCode.TOSS_BANK, e.getMessage(), resTimeMs);

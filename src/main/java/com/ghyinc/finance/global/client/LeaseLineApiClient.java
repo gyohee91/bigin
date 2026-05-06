@@ -39,11 +39,8 @@ public class LeaseLineApiClient implements ApiClient {
 
         // Circuit Breaker 안에 Retry 적용
         // Retry -> Circuit Breaker 순으로 실행 (재시도 모두 실패해야 Circuit Breaker 실패로 기록)
-        Supplier<T> supplier = CircuitBreaker.decorateSupplier(
-                circuitBreaker,
-                Retry.decorateSupplier(
-                        retry,
-                        () -> {
+        return CircuitBreaker.decorateSupplier(circuitBreaker,
+                        Retry.decorateSupplier(retry, () -> {
                             LeaseLineConnection connection = leaseLineConnections.get(partnerCode);
                             if(connection == null) {
                                 throw new ExternalApiFailException("전용선_ERROR", "전용선 연결 설정 없음: " + partnerCode);
@@ -58,19 +55,7 @@ public class LeaseLineApiClient implements ApiClient {
                             } catch (JsonProcessingException | UnsupportedEncodingException e) {
                                 throw new ExternalApiFailException("전용선_ERROR", "전용선 오류: " + e.getMessage());
                             }
-                        }
-                )
-        );
-
-        // Fallback 적용
-        return Try.ofSupplier(supplier)
-                .recover(CallNotPermittedException.class,
-                        ex -> {
-                            throw new ExternalApiFailException("CB_OPEN", partnerCode + " Circuit Breaker OPEN");
-                        })
-                .recover(ExternalApiFailException.class, ex -> {
-                    throw ex;
-                })
+                        }))
                 .get();
     }
 

@@ -2,12 +2,10 @@ package com.ghyinc.finance.global.client;
 
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.exception.ExternalApiFailException;
-import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryRegistry;
-import io.vavr.control.Try;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatusCode;
@@ -15,7 +13,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 import java.util.Map;
-import java.util.function.Supplier;
 
 /**
  * REST 방식
@@ -37,35 +34,24 @@ public class RestApiClient implements ApiClient {
 
         // Circuit Breaker 안에 Retry 적용
         // Retry -> Circuit Breaker 순으로 실행 (재시도가 모두 실패해야 Circuit Breaker 실패로 기록)
-        Supplier<T> supplier = CircuitBreaker.decorateSupplier(
-                circuitBreaker,
-                Retry.decorateSupplier(
-                        retry,
-                        () -> partnerRestClients.get(partnerCode)
-                                .post()
-                                .uri(path)
-                                .header("X-Partner-Code", partnerCode.name())
-                                .body(request)
-                                .retrieve()
-                                .onStatus(HttpStatusCode::is4xxClientError, (req, res) -> {
-                                    throw new ExternalApiFailException("한도조회_ERROR", partnerCode + " 4xx 오류");
-                                })
-                                .onStatus(HttpStatusCode::is5xxServerError, (req, res) -> {
-                                    throw new ExternalApiFailException("한도조회_ERROR", partnerCode + " 5xx 오류");
-                                })
-                                .body(responseType)
-                )
-        );
+        return CircuitBreaker.decorateSupplier(circuitBreaker,
+                        Retry.decorateSupplier(retry, () -> {
+                            log.info("[{}] Circuit Breaker 상태: {}", partnerCode, circuitBreaker.getState());
 
-        // Fallback 적용
-        return Try.ofSupplier(supplier)
-                .recover(CallNotPermittedException.class,
-                        ex -> {
-                    throw new ExternalApiFailException("CB_OPEN", partnerCode + " Circuit Breaker OPEN");
-                })
-                .recover(ExternalApiFailException.class, ex -> {
-                    throw ex;
-                })
+                            return partnerRestClients.get(partnerCode)
+                                    .post()
+                                    .uri(path)
+                                    .header("X-Partner-Code", partnerCode.name())
+                                    .body(request)
+                                    .retrieve()
+                                    .onStatus(HttpStatusCode::is4xxClientError, (req, res) -> {
+                                        throw new ExternalApiFailException("한도조회_ERROR", partnerCode + " 4xx 오류");
+                                    })
+                                    .onStatus(HttpStatusCode::is5xxServerError, (req, res) -> {
+                                        throw new ExternalApiFailException("한도조회_ERROR", partnerCode + " 5xx 오류");
+                                    })
+                                    .body(responseType);
+                        }))
                 .get();
     }
 }

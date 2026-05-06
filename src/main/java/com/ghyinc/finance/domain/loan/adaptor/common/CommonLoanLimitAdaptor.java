@@ -13,6 +13,7 @@ import com.ghyinc.finance.global.client.ApiClientFactory;
 import com.ghyinc.finance.global.config.PartnerApiProperties;
 import com.ghyinc.finance.global.crypto.CryptoFactory;
 import com.ghyinc.finance.global.crypto.CryptoService;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -94,6 +95,17 @@ public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
 
             return LoanLimitAdaptorResponse.success(
                     partnerCode,
+                    resTimeMs
+            );
+        }
+        catch (CallNotPermittedException e) {
+            // Circuit Breaker OPEN Fallback
+            // -> 해당 금융사 격리, 나머지 금융사 정상 진행 (Partial Success)
+            long resTimeMs = System.currentTimeMillis() - startTime;
+            log.warn("[{}] Circuit Breaker OPEN -> Fallback 실행", partnerCode);
+            return LoanLimitAdaptorResponse.fail(
+                    partnerCode,
+                    "CB_OPEN",
                     resTimeMs
             );
         }

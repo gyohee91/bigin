@@ -8,6 +8,7 @@ import com.ghyinc.finance.global.client.ApiClientFactory;
 import com.ghyinc.finance.global.config.PartnerApiProperties;
 import com.ghyinc.finance.global.crypto.CryptoFactory;
 import com.ghyinc.finance.global.crypto.CryptoService;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -70,55 +71,78 @@ public class LinebankLoanLimitAdaptor implements LoanLimitAdaptor {
         CryptoService cryptoService = cryptoFactory.getCryptoService(partnerCode);
         String path = partnerApiProperties.getConfig(partnerCode).getPath();
 
-        PreScreeningRequest preScreeningRequest = PreScreeningRequest.builder()
-                .data(Data.builder()
-                        .name(cryptoService.encrypt(requestParam.name()))
-                        .rrn(cryptoService.encrypt(requestParam.rrno()))
-                        .ci(null)
-                        .jobType(requestParam.jobType().name())
-                        .joinDate(requestParam.joinDate())
-                        .carNo(requestParam.carNo())
-                        .build()
-                )
-                .requestProducts(
-                        requestParam.requestProducts().stream()
-                                .map(requestProduct -> RequestProduct.builder()
-                                        .ticketId(requestProduct.loReqtNo())
-                                        .loanProductId(requestProduct.productCode())
-                                        .build()
-                                )
-                                .toList()
-                )
-                .build();
+        try {
+            PreScreeningRequest preScreeningRequest = PreScreeningRequest.builder()
+                    .data(Data.builder()
+                            .name(cryptoService.encrypt(requestParam.name()))
+                            .rrn(cryptoService.encrypt(requestParam.rrno()))
+                            .ci(null)
+                            .jobType(requestParam.jobType().name())
+                            .joinDate(requestParam.joinDate())
+                            .carNo(requestParam.carNo())
+                            .build()
+                    )
+                    .requestProducts(
+                            requestParam.requestProducts().stream()
+                                    .map(requestProduct -> RequestProduct.builder()
+                                            .ticketId(requestProduct.loReqtNo())
+                                            .loanProductId(requestProduct.productCode())
+                                            .build()
+                                    )
+                                    .toList()
+                    )
+                    .build();
 
-        LinebankLimitRequest request = LinebankLimitRequest.builder()
-                .preScreeningRequest(preScreeningRequest)
-                .build();
+            LinebankLimitRequest request = LinebankLimitRequest.builder()
+                    .preScreeningRequest(preScreeningRequest)
+                    .build();
 
-        // External API
-        LinebankLimitResponse result = apiClient.post(
-                partnerCode,
-                path,
-                request,
-                LinebankLimitResponse.class
-        );
+            // External API
+            LinebankLimitResponse result = apiClient.post(
+                    partnerCode,
+                    path,
+                    request,
+                    LinebankLimitResponse.class
+            );
 
-        long resTimeMs = System.currentTimeMillis() - startTime;
+            long resTimeMs = System.currentTimeMillis() - startTime;
 
-        if(!"SUCCESS".equals(result.resultCode())) {
-            log.warn("[{}] 한도조회 실패. resultCode={}", PartnerCode.LINE_BANK, result.resultCode());
-            return LoanLimitAdaptorResponse.fail(
+            if (!"SUCCESS".equals(result.resultCode())) {
+                log.warn("[{}] 한도조회 실패. resultCode={}", PartnerCode.LINE_BANK, result.resultCode());
+                return LoanLimitAdaptorResponse.fail(
+                        PartnerCode.LINE_BANK,
+                        result.resultCode(),
+                        resTimeMs
+                );
+            }
+
+            log.info("[{}] 한도조회 성공, resTimeMs={}", PartnerCode.LINE_BANK, resTimeMs);
+
+            return LoanLimitAdaptorResponse.success(
                     PartnerCode.LINE_BANK,
-                    result.resultCode(),
+                    resTimeMs
+            );
+
+        }
+        catch (CallNotPermittedException e) {
+            // Circuit Breaker OPEN Fallback
+            // -> 해당 금융사 격리, 나머지 금융사 정상 진행 (Partial Success)
+            long resTimeMs = System.currentTimeMillis() - startTime;
+            log.warn("[{}] Circuit Breaker OPEN -> Fallback 실행", PartnerCode.LINE_BANK);
+            return LoanLimitAdaptorResponse.fail(
+                    partnerCode,
+                    "CB_OPEN",
                     resTimeMs
             );
         }
-
-        log.info("[{}] 한도조회 성공, resTimeMs={}", PartnerCode.LINE_BANK, resTimeMs);
-
-        return LoanLimitAdaptorResponse.success(
-                PartnerCode.LINE_BANK,
-                resTimeMs
-        );
+        catch (Exception e) {
+            long resTimeMs = System.currentTimeMillis() - startTime;
+            log.error("[{}] 한도조회 오류 발생", PartnerCode.LINE_BANK, e);
+            return LoanLimitAdaptorResponse.fail(
+                    PartnerCode.LINE_BANK,
+                    e.getMessage(),
+                    resTimeMs
+            );
+        }
     }
 }
