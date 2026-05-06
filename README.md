@@ -228,14 +228,25 @@ LoanApplication (대출신청 1건)
 
 금융사별 독립적인 Circuit Breaker 인스턴스로 특정 금융사 장애 시 격리합니다.
 
+### Circuit Breaker 설정
+
 ```yaml
 resilience4j:
   circuitbreaker:
     configs:
       default:
-        sliding-window-size: 20
-        failure-rate-threshold: 50
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10          # 최근 10건 기준
+        minimum-number-of-calls: 5       # 최소 5건 이후 통계
+        failure-rate-threshold: 50       # 실패율 50% 이상 시 OPEN
+        slow-call-duration-threshold: 5s # 5초 이상 응답은 느린 호출로 기록
+        slow-call-rate-threshold: 50     # 느린 호출 50% 이상 시 OPEN
         wait-duration-in-open-state: 60s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - com.ghyinc.finance.global.exception.ExternalApiFailException
+          - org.springframework.web.client.ResourceAccessException
     instances:
       KAKAO_BANK:
         base-config: default
@@ -244,10 +255,87 @@ resilience4j:
         slow-call-duration-threshold: 10s  # 전용선 응답 지연 고려
 ```
 
+### Circuit Breaker 상태 전환
+
 ```
 CLOSED  → 정상 (모든 요청 통과)
 OPEN    → 장애 (즉시 CallNotPermittedException, 해당 금융사만 격리)
 HALF_OPEN → 복구 시도 (제한적 요청으로 복구 여부 확인)
+```
+
+### Fallback - Partial Failure 패턴
+
+Circuit Breaker OPEN 시 `CallNotPermittedException`을 Adaptor에서 직접 캐치하여 즉시 실패 응답을 반환합니다. 특정 금융사 장애가 전체 한도조회를 중단시키지 않고 나머지 금융사는 정상 진행합니다.
+
+```java
+// LoanLimitAdaptor - CB OPEN 시 Fallback 처리
+@Override
+public LoanLimitAdaptorResponse inquireLimit(PartnerCode partnerCode,
+                                              LoanLimitAdaptorRequest request) {
+    try {
+        // Circuit Breaker + Retry 적용된 API 호출
+        CommonLimitResponse result = apiClient.post(...);
+        return LoanLimitAdaptorResponse.success(partnerCode, resTimeMs);
+ 
+    } catch (CallNotPermittedException e) {
+        // Fallback: CB OPEN 시 즉시 실패 응답 반환
+        // → 실제 API 호출 없이 해당 금융사 격리
+        // → 나머지 금융사는 정상 진행 (Partial Success)
+        log.warn("[{}] Circuit Breaker OPEN → Fallback 실행", partnerCode);
+        return LoanLimitAdaptorResponse.fail(partnerCode, "CB_OPEN", resTimeMs);
+ 
+    } catch (Exception e) {
+        log.error("[{}] 한도조회 오류", partnerCode, e);
+        return LoanLimitAdaptorResponse.fail(partnerCode, e.getMessage(), resTimeMs);
+    }
+}
+```
+
+### Fallback 적용 후 최종 상태 결정
+
+```
+금융사 3개 중 1개 CB OPEN 시
+  KAKAO_BANK → Fallback (즉시 실패)   → SEND_FAILED
+  TOSS_BANK  → 정상 전송              → SEND_SUCCESS
+  KB_BANK    → 정상 전송              → SEND_SUCCESS
+ 
+Inquiry 최종 상태
+  성공 2 / 전체 3 → PARTIAL_SUCCESS
+  → FE에 조회 가능한 금융사 결과만 반환
+  → 장애 금융사 결과 누락 명시
+```
+
+### 타임아웃 계층 설계
+
+```
+connectTimeout (3초)   → 서버 연결 실패 → ResourceAccessException → CB 실패 기록
+readTimeout    (5초)   → 응답 미수신   → SocketTimeoutException  → CB 실패 기록
+orTimeout      (6초)   → CompletableFuture 강제 종료 (최후 안전망)
+ 
+connectTimeout < readTimeout = slow-call-duration-threshold < orTimeout
+     3초       <     5초     =              5초             <    6초
+```
+
+### Retry 설정
+
+```yaml
+resilience4j:
+  retry:
+    configs:
+      default:
+        max-attempts: 3          # 최초 1회 + 재시도 2회
+        wait-duration: 1s        # 재시도 간격
+        retry-exceptions:
+          - com.ghyinc.finance.global.exception.ExternalApiFailException
+          - org.springframework.web.client.ResourceAccessException
+        ignore-exceptions:
+          - io.github.resilience4j.circuitbreaker.CallNotPermittedException
+```
+
+```
+Retry → Circuit Breaker 순으로 실행
+  → maxAttempts(3) 모두 실패 후 CB 실패로 기록
+  → CB OPEN 시 Retry 없이 즉시 Fallback 실행 (ignoreExceptions)
 ```
 
 <br>
