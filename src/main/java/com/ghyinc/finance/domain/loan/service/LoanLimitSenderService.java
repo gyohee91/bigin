@@ -50,7 +50,7 @@ public class LoanLimitSenderService {
     private final OutboxEventRepository outboxEventRepository;
 
     private final LoReqtNoGenerator generator;
-    private final Executor loanLimitExecutor;
+    private final Executor partnerApiExecutor;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final SpringLoanLimitEventPublisher springLoanLimitEventPublisher;
     private final KafkaLoanLimitEventPublisher kafkalLoanLimitEventPublisher;
@@ -145,10 +145,10 @@ public class LoanLimitSenderService {
 
                         LoanLimitAdaptor adaptor = adaptorFactory.getAdaptor(partnerCode);
                         return CompletableFuture
-                                .supplyAsync(() -> adaptor.inquireLimit(partnerCode, adaptorRequests), loanLimitExecutor)
+                                .supplyAsync(() -> adaptor.inquireLimit(partnerCode, adaptorRequests), partnerApiExecutor)
                                 .orTimeout(6, TimeUnit.SECONDS)
                                 .exceptionally(ex -> {
-                                    //Circuit Breaker OPEN 시
+                                    // Circuit Breaker OPEN 시
                                     if(ex.getCause() instanceof CallNotPermittedException) {
                                         log.warn("[{}] Circuit Breaker OPEN - 해당 금융사 격리", partnerCode, ex);
                                         return LoanLimitAdaptorResponse.fail(partnerCode, ex.getMessage(), 0L);
