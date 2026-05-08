@@ -7,7 +7,7 @@ plugins {
 
 group = 'com.ghyinc.finance'
 version = '0.0.1-SNAPSHOT'
-description = 'Notification API Service'
+description = 'LoanLimit API Service'
 
 java {
 	toolchain {
@@ -37,35 +37,39 @@ dependencies {
     // WebClient for external API calls
     implementation 'org.springframework.boot:spring-boot-starter-webflux'
 
-    //Lombok
+    // Lombok
 	compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
 
-    //DB
+    // DB
 	runtimeOnly 'com.h2database:h2'
 
-    //Retryable
+    // Retryable
     implementation 'org.springframework.retry:spring-retry'
     implementation 'org.springframework:spring-aspects'
 
-    //Resilience4j Circuit Breaker
+    // Resilience4j Circuit Breaker
     implementation 'org.springframework.boot:spring-boot-starter-aop'
     implementation 'io.github.resilience4j:resilience4j-spring-boot3:2.2.0'
     implementation 'io.github.resilience4j:resilience4j-all:2.2.0'
     implementation 'io.vavr:vavr:0.10.4'
 
-    //Kafka
+    // Kafka
     implementation 'org.springframework.kafka:spring-kafka'
     implementation 'org.apache.kafka:kafka-clients'
 
-    //Swagger (SpringDoc OpenAPI)
+    // Swagger (SpringDoc OpenAPI)
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.7.0'
 
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'io.micrometer:micrometer-registry-prometheus'
     implementation 'io.micrometer:micrometer-core'
 
-    //Test
+    // Scheduler Lock
+    implementation 'net.javacrumbs.shedlock:shedlock-spring:6.6.0'
+    implementation 'net.javacrumbs.shedlock:shedlock-provider-jdbc-template:6.6.0'
+
+    // Test
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
