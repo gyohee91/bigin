@@ -22,6 +22,10 @@ spring:
       hibernate:
         format_sql: true
         dialect: org.hibernate.dialect.H2Dialect
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
 
   lifecycle:
     timeout-per-shutdown-phase: 30s
