@@ -6,9 +6,9 @@ import com.ghyinc.finance.global.outbox.repository.OutboxEventRepository;
 import com.ghyinc.finance.global.outbox.service.OutboxEventService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -26,6 +26,11 @@ public class OutboxEventBatchPublisher {
      * -> 즉시 발행 실패 or 비즈니스 트랜잭션 실패 건 처리
      */
     @Scheduled(fixedDelay = 60_000)
+    @SchedulerLock(
+            name = "OutboxEventBatchPublisher_retryPendingEvents",
+            lockAtLeastFor = "50s",     // 최소 50초 Lock 유지 (중복 실행 방지)
+            lockAtMostFor = "55s"       // 최대 55초 후 Lock 해제
+    )
     public void retryPendingEvents() {
         List<OutboxEvent> retryTargets = outboxEventRepository.findRetryTargets(
                 OutboxStatus.PENDING,
