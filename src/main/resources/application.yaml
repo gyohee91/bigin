@@ -95,7 +95,7 @@ resilience4j:
 
         # CLOSE -> OPEN 전환 조건
         failure-rate-threshold: 50        # 실패율 50% 이상이면 OPEN
-        slow-call-duration-threshold: 5s  # 5초 이상이면 느린 호출
+        slow-call-duration-threshold: 15s  # 15초 이상이면 느린 호출
         slow-call-rate-threshold: 50      # 느린 호출 50% 이상이면 OPEN
 
         # OPEN 상태 유지 시간
@@ -156,29 +156,29 @@ loan-api:
     KAKAO_BANK:
       base-url: http://localhost:8090
       path: /send/sms
-      connect-timeout-ms: 3000
-      read-timeout-ms: 5000
+      connect-timeout-ms: 5000
+      read-timeout-ms: 15000
     TOSS_BANK:
       base-url: http://localhost:8090
       path: /send/sms
-      connect-timeout-ms: 3000
-      read-timeout-ms: 5000
+      connect-timeout-ms: 5000
+      read-timeout-ms: 15000
     KB_CAPITAL:
       base-url: http://localhost:8090
       path: /send/sms
-      connect-timeout-ms: 3000
-      read-timeout-ms: 5000
+      connect-timeout-ms: 5000
+      read-timeout-ms: 15000
     LINE_BANK:
       base-url: http://localhost:8090
       path: /send/sms
-      connect-timeout-ms: 3000
-      read-timeout-ms: 5000
+      connect-timeout-ms: 5000
+      read-timeout-ms: 15000
     SHINHAN_BANK:
       base-url: 127.0.0.1
       port: 9001
       path: /loan/inquiry
       connect-timeout-ms: 3000
-      read-timeout-ms: 10000
+      read-timeout-ms: 20000
 
 nice-api:
   dnr:
