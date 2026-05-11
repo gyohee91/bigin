@@ -37,6 +37,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -152,6 +153,12 @@ public class LoanLimitSenderService {
                                     if(ex.getCause() instanceof CallNotPermittedException) {
                                         log.warn("[{}] Circuit Breaker OPEN - 해당 금융사 격리", partnerCode, ex);
                                         return LoanLimitAdaptorResponse.fail(partnerCode, ex.getMessage(), 0L);
+                                    }
+
+                                    if (ex.getCause() instanceof RejectedExecutionException) {
+                                        log.error("[{}] partnerApiExecutor 큐 초과", partnerCode);
+                                        return LoanLimitAdaptorResponse.fail(
+                                                partnerCode, "THREAD_POOL_EXHAUSTED", 0L);
                                     }
 
                                     log.error("[{}] 비동기 한도조회 중 에러 발생", partnerCode, ex);
