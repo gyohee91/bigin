@@ -331,12 +331,12 @@ Inquiry 최종 상태
 ### 타임아웃 계층 설계
 
 ```
-connectTimeout (3초)   → 서버 연결 실패 → ResourceAccessException → CB 실패 기록
-readTimeout    (5초)   → 응답 미수신   → SocketTimeoutException  → CB 실패 기록
-orTimeout      (6초)   → CompletableFuture 강제 종료 (최후 안전망)
+connectTimeout (5초)   → 서버 연결 실패 → ResourceAccessException → CB 실패 기록
+readTimeout    (15초)   → 응답 미수신   → SocketTimeoutException  → CB 실패 기록
+orTimeout      (18초)   → CompletableFuture 강제 종료 (최후 안전망)
  
 connectTimeout < readTimeout = slow-call-duration-threshold < orTimeout
-     3초       <     5초     =              5초             <    6초
+     5초       <  10~15초     =              15초            <    18초
 ```
 
 ### Retry 설정
@@ -365,7 +365,7 @@ Retry → Circuit Breaker 순으로 실행
 
 ## 🔐 암복호화
 
-금융사별 암호화 알고리즘과 키를 DB로 관리하며 `@PostConstruct`로 서버 기동 시 초기화합니다.
+금융사별 암호화 알고리즘과 키를 DB 관리합니다. `CryptoFactory`가 `PartnerCode`를 기준으로 적합한 `CryptoService` 구현체를 선택합니다.
 
 | 금융사 | 알고리즘 |
 |---|---|
@@ -599,17 +599,17 @@ partner-api:
 
 ## 📝 주요 설계 결정
 
-| 결정 | 이유 |
-|---|---|
-| 상품별 loReqtNo 선저장 | 콜백 loReqtNo 유효성 검증, 타임아웃 처리, 대출신청 연결 |
-| LoanLimitResult 분리 | 상품 수가 많아도 금융사당 1건만 INSERT/UPDATE |
-| 통신방식별 ApiClient 분리 | REST/전용선 금융사 혼재 대응, OCP 준수 |
-| 금융사별 Circuit Breaker | 특정 금융사 장애 시 다른 금융사 영향 없이 격리 |
+| 결정 | 이유                                                                      |
+|---|-------------------------------------------------------------------------|
+| 상품별 loReqtNo 선저장 | 콜백 loReqtNo 유효성 검증, 타임아웃 처리, 대출신청 연결                                    |
+| LoanLimitResult 분리 | 상품 수가 많아도 금융사당 1건만 INSERT/UPDATE                                        |
+| 통신방식별 ApiClient 분리 | REST/전용선 금융사 혼재 대응, OCP 준수                                              |
+| 금융사별 Circuit Breaker | 특정 금융사 장애 시 다른 금융사 영향 없이 격리                                             |
 | Adaptor에서 CB Fallback 처리 | @CircuitBreaker 어노테이션 방식은 금융사별 독립 인스턴스 지정 불가, 수동 catch로 명시적 Fallback 처리 |
-| Partial Failure 패턴 | 특정 금융사 CB OPEN 시 Fallback 응답 반환, 나머지 금융사 정상 진행 |
-| 타임아웃 계층 분리 | readTimeout(CB 실패 기록) + orTimeout(스레드 강제 해제) 역할 분리 |
-| 암호화 키 DB 관리 | 배포 없이 키 교체 가능, @PostConstruct 초기화로 성능 확보 |
-| ExternalDataContext | 외부 조회 결과 파라미터 고정 (Nice DNR, KB시세 등 확장 시 파라미터 불변) |
-| Kafka 알림 연동 | 다중 Pod 환경에서 이벤트 소실 방지, loan-notification 도메인 물리적 분리 |
+| Partial Failure 패턴 | 특정 금융사 CB OPEN 시 Fallback 응답 반환, 나머지 금융사 정상 진행                          |
+| 타임아웃 계층 분리 | readTimeout(CB 실패 기록) + orTimeout(스레드 강제 해제) 역할 분리                      |
+| 암호화 키 DB 관리 | DB에서 알고리즘/키 관리, 배포 없이 키 교체 가능, CryptoFactory의 supports()로 구현체 자동 선택     |
+| ExternalDataContext | 외부 조회 결과 파라미터 고정 (Nice DNR, KB시세 등 확장 시 파라미터 불변)                        |
+| Kafka 알림 연동 | 다중 Pod 환경에서 이벤트 소실 방지, loan-notification 도메인 물리적 분리                     |
 
 <br>
