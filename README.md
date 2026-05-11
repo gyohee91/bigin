@@ -267,9 +267,18 @@ resilience4j:
         wait-duration-in-open-state: 60s
         permitted-number-of-calls-in-half-open-state: 3
         automatic-transition-from-open-to-half-open-enabled: true
+        # 기록할 예외
         record-exceptions:
           - com.ghyinc.finance.global.exception.ExternalApiFailException
           - org.springframework.web.client.ResourceAccessException
+          - org.springframework.web.client.HttpServerErrorException
+          - java.net.ConnectException
+          - java.net.SocketTimeoutException
+
+        # 무시할 예외 (Circuit Breaker에 영향 안 줌)
+        ignore-exceptions:
+          - org.springframework.web.client.HttpClientErrorException.BadRequest
+          - org.springframework.web.client.HttpClientErrorException.Unauthorized
     instances:
       KAKAO_BANK:
         base-config: default
@@ -331,12 +340,12 @@ Inquiry 최종 상태
 ### 타임아웃 계층 설계
 
 ```
-connectTimeout (5초)   → 서버 연결 실패 → ResourceAccessException → CB 실패 기록
-readTimeout    (15초)   → 응답 미수신   → SocketTimeoutException  → CB 실패 기록
-orTimeout      (18초)   → CompletableFuture 강제 종료 (최후 안전망)
+connectTimeout (3초)   → 서버 연결 실패 → ResourceAccessException → CB 실패 기록
+readTimeout    (7초)   → 응답 미수신   → SocketTimeoutException  → CB 실패 기록
+orTimeout      (8초)   → CompletableFuture 강제 종료 (최후 안전망)
  
 connectTimeout < readTimeout = slow-call-duration-threshold < orTimeout
-     5초       <  10~15초     =              15초            <    18초
+     3초       <  7초        =              7초             <    8초
 ```
 
 ### Retry 설정
@@ -349,7 +358,9 @@ resilience4j:
         max-attempts: 3          # 최초 1회 + 재시도 2회
         wait-duration: 1s        # 재시도 간격
         retry-exceptions:
-          - com.ghyinc.finance.global.exception.ExternalApiFailException
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.client.HttpServerErrorException
           - org.springframework.web.client.ResourceAccessException
         ignore-exceptions:
           - io.github.resilience4j.circuitbreaker.CallNotPermittedException
