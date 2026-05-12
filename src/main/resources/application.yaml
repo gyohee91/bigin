@@ -111,16 +111,14 @@ resilience4j:
 
         # 기록할 예외
         record-exceptions:
-          - com.ghyinc.finance.global.exception.ExternalApiFailException
-          - org.springframework.web.client.ResourceAccessException
           - org.springframework.web.client.HttpServerErrorException
+          - org.springframework.web.client.ResourceAccessException
           - java.net.ConnectException
           - java.net.SocketTimeoutException
 
         # 무시할 예외 (Circuit Breaker에 영향 안 줌)
         ignore-exceptions:
-          - org.springframework.web.client.HttpClientErrorException.BadRequest
-          - org.springframework.web.client.HttpClientErrorException.Unauthorized
+          - org.springframework.web.client.HttpClientErrorException
 
     instances:
       KAKAO_BANK:
@@ -142,10 +140,11 @@ resilience4j:
         max-wait-duration: 10s
         # ✅ 여기에 추가!
         retry-exceptions:
-          - java.io.IOException
-          - java.util.concurrent.TimeoutException
           - org.springframework.web.client.HttpServerErrorException
           - org.springframework.web.client.ResourceAccessException
+          - java.net.ConnectException
+          - java.net.SocketTimeoutException
+          - java.io.IOException
 
 # Notification Sender Server Configuration
 notification:
