@@ -132,13 +132,7 @@ FE → POST /api/loan/limit/inquiry
   LoanLimitSenderService
   ├── LoanLimitResult INSERT       (금융사당 1건)
   ├── LoanLimitProductResult INSERT (상품당 1건, PENDING 선저장)
-  └── 금융사별 API 병렬 전송 (CompletableFuture)
-         │
-         ▼ Callback
-  금융사 → POST /api/loan/limit/callback
-  LoanLimitResultService
-  ├── loReqtNo + productCode로 선저장 데이터 조회 및 UPDATE
-  ├── 비관적 락으로 count 동시성 제어
+  ├── 금융사별 API 병렬 전송 (CompletableFuture)
   └── 완료 시 알림 이벤트 발행
       ├── OutboxEvent INSERT (같은 트랜잭션 - 원자적 보장)
       └── ApplicationEventPublisher.publishEvent(OutboxCreatedEvent)
@@ -155,6 +149,12 @@ FE → POST /api/loan/limit/inquiry
          ▼ Kafka (notification.send)
   NotificationEventConsumer
   └── 실제 Push/SMS 발송
+         
+  Callback
+  금융사 → POST /api/loan/limit/callback
+  LoanLimitResultService
+  ├── loReqtNo + productCode로 선저장 데이터 조회 및 UPDATE
+  └── 비관적 락으로 count 동시성 제어
 ```
 
 ### 2. Kafka 토픽 구성
