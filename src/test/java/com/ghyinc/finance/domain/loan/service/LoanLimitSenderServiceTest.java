@@ -61,9 +61,6 @@ class LoanLimitSenderServiceTest {
     private LoanLimitAdaptorFactory adaptorFactory;
 
     @Mock
-    private KafkaLoanLimitEventPublisher loanLimitEventPublisher;
-
-    @Mock
     private OutboxEventRepository outboxEventRepository;
 
     @Mock
