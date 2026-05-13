@@ -78,7 +78,7 @@ class LoanLimitSenderServiceTest {
         executor.setCorePoolSize(4);
         executor.setMaxPoolSize(4);
         executor.initialize();
-        ReflectionTestUtils.setField(loanLimitSenderService, "loanLimitExecutor", executor);
+        ReflectionTestUtils.setField(loanLimitSenderService, "partnerApiExecutor", executor);
     }
 
     private LoanLimitInquiry buildInquiry() {
