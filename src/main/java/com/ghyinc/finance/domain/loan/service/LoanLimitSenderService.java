@@ -30,7 +30,8 @@ import org.slf4j.MDC;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.util.List;
 import java.util.Map;
@@ -66,8 +67,8 @@ public class LoanLimitSenderService {
      * 한 금융사의 실패가 다른 금융사 조회에 영향을 주지 않음.
      * 전용 스레드 풀을 사용하여 외부 I/O가 공통 스레드 풀을 점유하지 않도록 격리
      */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async("loanLimitExecutor")
-    @Transactional
     public void inquiry(
             long id,
             List<PartnerCode> partnerCodes,
