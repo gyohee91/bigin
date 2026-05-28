@@ -37,7 +37,6 @@
 | Framework    | Spring Boot 2.7    | Spring Boot 3.5                 |
 | Architecture | Layered Architecture | Domain-driven Package Structure |
 | DB           | Oracle DB          | H2 DB (In-memory)               |
-| 메시지큐         | ActiveMQ           | Kafka <br/>(Outbox Pattern 적용)       |
 | API 통신       | RestTemplate       | RestClient                      |
 
 ### 개인 프로젝트 상세 스택
@@ -431,22 +430,6 @@ NotificationEventConsumer
   → 발송 결과 UPDATE
 ```
 
-### ApplicationEventPublisher 대신 Kafka를 선택한 이유
-
-```
-ApplicationEventPublisher 한계
-  → 동일 JVM 내에서만 동작
-  → Kubernetes 다중 Pod 환경에서 이벤트 소실 위험
-  → Pod 재시작 시 발행된 이벤트 소실 → 알림 발송 누락
- 
-Kafka 장점
-  → 다중 Pod 환경에서도 안정적 이벤트 전달
-  → Pod 재시작 시에도 이벤트 보존 (offset 기반)
-  → loan - notification 도메인 물리적 분리
-  → notification 장애가 loan 처리에 영향 없음
-  → 알림 발송 실패 시 offset reset으로 재처리 가능
-```
-
 ### MDC 전파
 
 Kafka Consumer는 별도 스레드에서 실행되므로 HTTP 요청의 MDC(requestId)가 자동 전파되지 않습니다. payload에 requestId를 포함시켜 Consumer 스레드에서 복원합니다.
@@ -621,6 +604,6 @@ partner-api:
 | 타임아웃 계층 분리 | readTimeout(CB 실패 기록) + orTimeout(스레드 강제 해제) 역할 분리                      |
 | 암호화 키 DB 관리 | DB에서 알고리즘/키 관리, 배포 없이 키 교체 가능, CryptoFactory의 supports()로 구현체 자동 선택     |
 | ExternalDataContext | 외부 조회 결과 파라미터 고정 (Nice DNR, KB시세 등 확장 시 파라미터 불변)                        |
-| Kafka 알림 연동 | 다중 Pod 환경에서 이벤트 소실 방지, loan-notification 도메인 물리적 분리                     |
+| Kafka 알림 연동 | 다중 인스턴스 환경에서 이벤트 소실 방지, loan-notification 도메인 물리적 분리                     |
 
 <br>
