@@ -191,6 +191,46 @@ class LoanLimitSenderServiceTest {
     }
 
     @Test
+    @DisplayName("일부 금융사 전송 성공 - Inquiry PARTIAL_SUCCESS")
+    void inquiry_partialSecondSuccess_inquiryPartialSuccess() {
+        // given
+        LoanLimitInquiry loanLimitInquiry = this.buildInquiry();
+        given(loanLimitInquiryRepository.findById(1L)).willReturn(Optional.of(loanLimitInquiry));
+        Product kakaoProduct = this.buildProduct("TA");
+        Product tossProduct = this.buildProduct("FNQ005");
+
+        given(productRepository.findActiveByPartnerCodeAndLoanType(eq(PartnerCode.KAKAO_BANK), any()))
+                .willReturn(List.of(kakaoProduct));
+        given(productRepository.findActiveByPartnerCodeAndLoanType(eq(PartnerCode.TOSS_BANK), any()))
+                .willReturn(List.of(tossProduct));
+        given(generator.generate("LR")).willReturn("LR20260410AAA", "LR20260410BBB");
+
+        LoanLimitAdaptor kakaoAdaptor = mock(LoanLimitAdaptor.class);
+        LoanLimitAdaptor tossAdaptor = mock(LoanLimitAdaptor.class);
+        given(adaptorFactory.getAdaptor(PartnerCode.KAKAO_BANK)).willReturn(kakaoAdaptor);
+        given(adaptorFactory.getAdaptor(PartnerCode.TOSS_BANK)).willReturn(tossAdaptor);
+        given(kakaoAdaptor.inquireLimit(eq(PartnerCode.KAKAO_BANK), any()))
+                .willReturn(LoanLimitAdaptorResponse.success(PartnerCode.KAKAO_BANK, 100L));
+        given(tossAdaptor.inquireLimit(eq(PartnerCode.TOSS_BANK), any()))
+                .willThrow(new ExternalApiFailException("한도조회_ERROR", "TOSS_BANK 5xx 오류"));
+
+        LoanLimitAdaptorRequest adaptorRequest = LoanLimitAdaptorRequest.builder()
+                .name("윤교희")
+                .rrno("9102131234567")
+                .jobType(JobType.EMPLOYEE)
+                .jobName("오케이")
+                .loanType(LoanType.PERSONAL_CREDIT)
+                .build();
+
+        // when
+        loanLimitSenderService.inquiry(1L, List.of(PartnerCode.KAKAO_BANK, PartnerCode.TOSS_BANK), adaptorRequest);
+
+        // then
+        assertThat(loanLimitInquiry.getStatus()).isEqualTo(InquiryStatus.PARTIAL_SUCCESS);
+        assertThat(loanLimitInquiry.getResults()).hasSize(2);
+    }
+
+    @Test
     @DisplayName("상품별 신청번호 채번 후 ProductResult에 선저장 - 총 상품 수만큼 INSERT")
     void inquiry_productResultPreSaved_withLoReqtNo() {
         // given

@@ -16,6 +16,7 @@ import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.domain.loan.repository.ProductRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
+import com.ghyinc.finance.global.event.LoanLimitInquiryCreatedEvent;
 import com.ghyinc.finance.global.event.impl.KafkaLoanLimitEventPublisher;
 import com.ghyinc.finance.global.event.impl.SpringLoanLimitEventPublisher;
 import com.ghyinc.finance.global.outbox.entity.OutboxEvent;
@@ -30,6 +31,7 @@ import org.slf4j.MDC;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
@@ -60,6 +62,12 @@ public class LoanLimitSenderService {
 
     private static final String REQUEST_ID_KEY = "requestId";
 
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async("loanLimitExecutor")
+    public void handleInquiryCreated(LoanLimitInquiryCreatedEvent event) {
+        this.inquiry(event.id(), event.activePartnerCodes(), event.adaptorRequest());
+    }
+
     /**
      * 여러 금융사에 대한 한도조회
      *
@@ -67,8 +75,7 @@ public class LoanLimitSenderService {
      * 한 금융사의 실패가 다른 금융사 조회에 영향을 주지 않음.
      * 전용 스레드 풀을 사용하여 외부 I/O가 공통 스레드 풀을 점유하지 않도록 격리
      */
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
-    @Async("loanLimitExecutor")
+    @Transactional
     public void inquiry(
             long id,
             List<PartnerCode> partnerCodes,
