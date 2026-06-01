@@ -1,7 +1,10 @@
 package com.ghyinc.finance.domain.loan.service;
 
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
-import com.ghyinc.finance.domain.loan.dto.*;
+import com.ghyinc.finance.domain.loan.dto.ExternalDataContext;
+import com.ghyinc.finance.domain.loan.dto.ExternalDataError;
+import com.ghyinc.finance.domain.loan.dto.LoanLimitInquiryResponse;
+import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.JobType;
@@ -9,16 +12,18 @@ import com.ghyinc.finance.domain.loan.enums.LoanType;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.factory.LoanLimitStrategyFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
-import com.ghyinc.finance.domain.loan.repository.PartnerRepository;
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
+import com.ghyinc.finance.global.event.LoanLimitInquiryCreatedEvent;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
@@ -26,7 +31,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.mock;
@@ -45,13 +50,10 @@ class LoanLimitServiceTest {
     private LoReqtNoGenerator generator;
 
     @Mock
-    private PartnerRepository partnerRepository;
-
-    @Mock
     private LoanLimitInquiryRepository loanLimitInquiryRepository;
-
+    
     @Mock
-    private LoanLimitSenderService loanLimitSenderService;
+    private ApplicationEventPublisher applicationEventPublisher;
 
     @Test
     @DisplayName("한도조회 요청 정상처리 - 202 Accepted 즉시 응답")
@@ -85,11 +87,20 @@ class LoanLimitServiceTest {
         // when
         LoanLimitInquiryResponse response = loanLimitService.requestCompareLoan(request);
 
-        // then
+        // then - Inquiry INSERT 검증
         assertThat(response.success()).isEqualTo(true);
-
         then(loanLimitInquiryRepository).should().save(any(LoanLimitInquiry.class));
-        then(loanLimitSenderService).should().inquiry(anyLong(), anyList(), any());
+
+        // then - senderService 직접 호출 대신 이벤트 발행 검증
+        ArgumentCaptor<LoanLimitInquiryCreatedEvent> eventCaptor =
+                ArgumentCaptor.forClass(LoanLimitInquiryCreatedEvent.class);
+        then(applicationEventPublisher).should().publishEvent(eventCaptor.capture());
+
+        LoanLimitInquiryCreatedEvent capturedEvent = eventCaptor.getValue();
+        assertThat(capturedEvent.id()).isEqualTo(1L);
+        assertThat(capturedEvent.activePartnerCodes())
+                .containsExactly(PartnerCode.KAKAO_BANK, PartnerCode.TOSS_BANK);
+        //then(loanLimitSenderService).should().inquiry(anyLong(), anyList(), any());
     }
 
     @Test
@@ -109,12 +120,17 @@ class LoanLimitServiceTest {
         given(strategyFactory.getStrategy(LoanType.PERSONAL_CREDIT)).willReturn(strategy);
         given(strategy.requiresExternalData()).willReturn(false);
         given(strategy.getSupportedBanks()).willReturn(List.of());
+        //given(strategy.filterAvailablePartners(any(), any())).willReturn(List.of());
 
         // when & then
         assertThatThrownBy(() -> loanLimitService.requestCompareLoan(request))
                 .isInstanceOf(InvalidRequestException.class)
                 .hasMessage("현재 조회 가능한 금융사가 없습니다");
-        then(loanLimitSenderService).should(never()).inquiry(anyLong(), anyList(), any());
+
+        // Inquiry INSERT, 이벤트 발행 모두 없어야함
+        then(loanLimitInquiryRepository).should(never()).save(any());
+        then(applicationEventPublisher).should(never()).publishEvent(any());
+        //then(loanLimitSenderService).should(never()).inquiry(anyLong(), anyList(), any());
     }
 
     @Test
@@ -131,8 +147,6 @@ class LoanLimitServiceTest {
                 .loanType(LoanType.PERSONAL_CREDIT)
                 .build();
         
-        LoanLimitStrategy strategy = mock(LoanLimitStrategy.class);
-        //given(strategyFactory.getStrategy(any())).willReturn(strategy);
         given(loanLimitInquiryRepository.existsByUserIdAndLoanTypeAndStatus(1L, LoanType.PERSONAL_CREDIT, InquiryStatus.IN_PROGRESS))
                 .willReturn(true);
 
@@ -140,7 +154,9 @@ class LoanLimitServiceTest {
         assertThatThrownBy(() -> loanLimitService.requestCompareLoan(request))
                 .isInstanceOf(InvalidRequestException.class)
                 .hasMessage("진행 중인 한도조회가 있습니다.");
+
         then(loanLimitInquiryRepository).should(never()).save(any());
+        then(applicationEventPublisher).should(never()).publishEvent(any());
     }
 
     @Test
@@ -157,7 +173,7 @@ class LoanLimitServiceTest {
                 .loanType(LoanType.AUTO)
                 .build();
         LoanLimitStrategy strategy = mock(LoanLimitStrategy.class);
-        given(strategyFactory.getStrategy(any())).willReturn(strategy);
+        given(strategyFactory.getStrategy(LoanType.AUTO)).willReturn(strategy);
         given(strategy.requiresExternalData()).willReturn(true);
         given(strategy.fetchExternalData(any())).willReturn(ExternalDataContext.empty());
         given(strategy.getSupportedBanks()).willReturn(List.of(PartnerCode.LINE_BANK));
@@ -177,9 +193,16 @@ class LoanLimitServiceTest {
 
         // then
         assertThat(response.success()).isEqualTo(true);
+        then(strategy).should().fetchExternalData(any());
 
-        then(loanLimitInquiryRepository).should().save(any(LoanLimitInquiry.class));
-        then(loanLimitSenderService).should().inquiry(anyLong(), anyList(), any());
+        // 이벤트 발행 검증
+        ArgumentCaptor<LoanLimitInquiryCreatedEvent> eventCaptor =
+                ArgumentCaptor.forClass(LoanLimitInquiryCreatedEvent.class);
+        then(applicationEventPublisher).should().publishEvent(eventCaptor.capture());
+
+        assertThat(eventCaptor.getValue().id()).isEqualTo(1L);
+        assertThat(eventCaptor.getValue().activePartnerCodes())
+                .containsExactly(PartnerCode.LINE_BANK);
     }
 
     @Test
@@ -196,7 +219,7 @@ class LoanLimitServiceTest {
                 .loanType(LoanType.AUTO)
                 .build();
         LoanLimitStrategy strategy = mock(LoanLimitStrategy.class);
-        given(strategyFactory.getStrategy(any())).willReturn(strategy);
+        given(strategyFactory.getStrategy(LoanType.AUTO)).willReturn(strategy);
         given(strategy.requiresExternalData()).willReturn(true);
 
         ExternalDataContext externalDataContext = ExternalDataContext.builder()
@@ -210,12 +233,12 @@ class LoanLimitServiceTest {
         given(strategy.fetchExternalData(any())).willReturn(externalDataContext);
         given(strategy.getSupportedBanks()).willReturn(List.of(PartnerCode.LINE_BANK));
         given(strategy.filterAvailablePartners(any(), any())).willReturn(List.of());
-        given(generator.generate("LL")).willReturn("LL20260416ANWOW");
+        //given(generator.generate("LL")).willReturn("LL20260416ANWOW");
 
         // when & then
         assertThatThrownBy(() -> loanLimitService.requestCompareLoan(request))
                 .isInstanceOf(InvalidRequestException.class);
-        then(loanLimitSenderService).should(never()).inquiry(anyLong(), anyList(), any());
+        then(applicationEventPublisher).should(never()).publishEvent(any());
     }
 
 }
