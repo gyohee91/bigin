@@ -124,7 +124,9 @@ public class LoanLimitService {
         LoanLimitInquiry inquiry = loanLimitInquiryRepository.findByInquiryNo(inquiryNo)
                 .orElseThrow(() -> new InvalidRequestException("존재하지 않는 조회이력입니다: " + inquiryNo));
 
-        Page<LoanLimitProductResultDto> productResults = loanLimitProductResultRepository.findProductResultsByInquiryId(inquiry.getId(), pageable);
+        Page<LoanLimitProductResultDto> productResults = inquiry.isAllResultReceived()
+                ? loanLimitProductResultRepository.findProductResultsByInquiryId(inquiry.getId(), pageable)
+                : Page.empty(pageable);
 
         return LoanLimitPollingResponse.from(inquiry, productResults);
     }

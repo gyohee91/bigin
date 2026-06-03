@@ -1,17 +1,12 @@
 package com.ghyinc.finance.domain.loan.service;
 
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
-import com.ghyinc.finance.domain.loan.dto.ExternalDataContext;
-import com.ghyinc.finance.domain.loan.dto.ExternalDataError;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitInquiryResponse;
-import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
+import com.ghyinc.finance.domain.loan.dto.*;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
-import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
-import com.ghyinc.finance.domain.loan.enums.JobType;
-import com.ghyinc.finance.domain.loan.enums.LoanType;
-import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.domain.loan.enums.*;
 import com.ghyinc.finance.domain.loan.factory.LoanLimitStrategyFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
+import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepository;
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitInquiryCreatedEvent;
@@ -24,14 +19,19 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.mock;
@@ -51,6 +51,9 @@ class LoanLimitServiceTest {
 
     @Mock
     private LoanLimitInquiryRepository loanLimitInquiryRepository;
+
+    @Mock
+    private LoanLimitProductResultRepository loanLimitProductResultRepository;
     
     @Mock
     private ApplicationEventPublisher applicationEventPublisher;
@@ -241,4 +244,92 @@ class LoanLimitServiceTest {
         then(applicationEventPublisher).should(never()).publishEvent(any());
     }
 
+    @Test
+    @DisplayName("폴링 - 진행 중 (콜백 미완료) -> productResults 빈 리스트 반환")
+    void getInquiryResult_inProgress_emptyProductResults() {
+        // given
+        LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
+                .inquiryNo("LL20260410A3F2C891")
+                .userId(1L)
+                .loanType(LoanType.PERSONAL_CREDIT)
+                .build();
+
+        // totalProductCount=3, successProductCount=1 -> 미완료
+        ReflectionTestUtils.setField(inquiry, "totalProductCount", 3);
+        ReflectionTestUtils.setField(inquiry, "successProductCount", 1);
+        ReflectionTestUtils.setField(inquiry, "status", InquiryStatus.IN_PROGRESS);
+
+        given(loanLimitInquiryRepository.findByInquiryNo("LL20260410A3F2C891"))
+                .willReturn(Optional.of(inquiry));
+
+        Pageable pageable = PageRequest.of(0, 20);
+
+        // when
+        LoanLimitPollingResponse response =
+                loanLimitService.getInquiryResult("LL20260410A3F2C891", pageable);
+
+        // then
+        assertThat(response.productResults()).isEmpty();
+        assertThat(response.progressRate()).isEqualTo(33);
+        assertThat(response.allResultReceived()).isFalse();
+        assertThat(response.productResults()).isEmpty();
+
+        // 진행 중 -> ProductResult 조회 안됨
+        then(loanLimitProductResultRepository).should(never())
+                .findProductResultsByInquiryId(any(), any());
+    }
+
+    @Test
+    @DisplayName("폴링 - 완료 (콜백 전체 수신) -> productResults 반환")
+    void getInquiryResult_completed_returnsProductResults() {
+        // given
+        LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
+                .inquiryNo("LL20260410A3F2C891")
+                .userId(1L)
+                .loanType(LoanType.PERSONAL_CREDIT)
+                .build();
+        ReflectionTestUtils.setField(inquiry, "totalProductCount", 2);
+        ReflectionTestUtils.setField(inquiry, "successProductCount", 2);
+        ReflectionTestUtils.setField(inquiry, "status", InquiryStatus.IN_PROGRESS);
+
+        given(loanLimitInquiryRepository.findByInquiryNo("LL20260410A3F2C891"))
+                .willReturn(Optional.of(inquiry));
+
+        List<LoanLimitProductResultDto> dtos = List.of(
+                new LoanLimitProductResultDto("LR20260410AAA", PartnerCode.KAKAO_BANK, "TA", LoanLimitResultCode.SUCCESS, 30_000_000L, 3.5),
+                new LoanLimitProductResultDto("LR20260410BBB", PartnerCode.LINE_BANK, "TA", LoanLimitResultCode.SUCCESS, 20_000_000L, 4.5)
+        );
+
+        Pageable pageable = PageRequest.of(0, 20);
+        given(loanLimitProductResultRepository.findProductResultsByInquiryId(any(), eq(pageable)))
+                .willReturn(new PageImpl<>(dtos, pageable, dtos.size()));
+
+        // when
+        LoanLimitPollingResponse response = loanLimitService.getInquiryResult("LL20260410A3F2C891", pageable);
+
+        // then
+        assertThat(response.progressRate()).isEqualTo(100);
+        assertThat(response.allResultReceived()).isTrue();
+        assertThat(response.productResults()).hasSize(2);
+        assertThat(response.productResults().get(0).loReqtNo()).isEqualTo("LR20260410AAA");
+    }
+
+    @Test
+    @DisplayName("폴링 - 존재하지 않는 inquiryNo -> InvalidRequestException")
+    void getInquiryResult_notFound_throwsException() {
+        // given
+        given(loanLimitInquiryRepository.findByInquiryNo("INVALID"))
+                .willReturn(Optional.empty());
+
+        Pageable pageable = PageRequest.of(0, 20);
+
+        // when & then
+        assertThatThrownBy(() ->
+                loanLimitService.getInquiryResult("INVALID", pageable))
+                .isInstanceOf(InvalidRequestException.class)
+                .hasMessage("존재하지 않는 조회이력입니다: INVALID");
+
+        then(loanLimitProductResultRepository).should(never())
+                .findProductResultsByInquiryId(any(), any());
+    }
 }
