@@ -24,21 +24,36 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * 파트너 Entity
+ * 한도조회 요청 서비스
  *
- * <p>PartnerCode(Enum)는 코드 레벨 식별자로 Adaptor Factory 키 역할 담당
- * Partner(Entity)는 운영 중 변경이 필요한 메타데이터를 DB로 관리
+ * <p>FE로부터 한도조회 요청을 수신하여 유효성 검증, 금융사 선정, Inquiry 저장을
+ * 수행하고 202 Accepted를 즉시 반환한다. 실제 금융사 API 전송은
+ * {@link LoanLimitSenderService}가 비동기로 처리한다.</p>
  *
+ * <h3>도메인 설계 원칙</h3>
+ * <ul>
+ *     <li>{@code PartnerCode(Enum)}: Adaptor 분기 및 컴파일 타임 타임 안정성 담당</li>
+ *     <li>{@code Partner(Entity)}: 노출명, 활성화 여부 등 운영 중 변경 가능한 메타데이터를 DB로 관리</li>
+ * </ul>
+ *
+ * <h3>비동기 처리 흐름</h3>
  * <pre>
- * PartnerCode(Enum): Adaptor 분기, 컴파일 타임 타입 안정성
- * Partner(Entity): 노출명, 활성화여부 등
+ *     FE → requestCompareLoan() → 202 Accepted
+ *                              ↓ Spring 이벤트 발행
+ *                      LoanLimitInquiryCreatedEvent
+ *                              ↓ @TransactionalEventListener(AFTER_COMMIT)
+ *                      LoanLimitSenderService.handleInquiryCreated()
+ *                              ↓ @Async("loanLimitExecutor")
+ *                      금융사 API 병렬 전송
  * </pre>
+ *
+ * @see LoanLimitSenderService
+ * @see LoanLimitStrategy
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class LoanLimitService {
-    private final LoanLimitSenderService loanLimitSenderService;
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
     private final LoanLimitProductResultRepository loanLimitProductResultRepository;
     private final LoanLimitStrategyFactory strategyFactory;
@@ -46,6 +61,32 @@ public class LoanLimitService {
     private final LoReqtNoGenerator generator;
     private final ApplicationEventPublisher applicationEventPublisher;
 
+    /**
+     * 비교대출 한도조회 요청을 처리한다.
+     *
+     * <p>요청 수신 즉시 Inquiry를 저장하고 202 Accepted를 반환한다.
+     *      실제 금융사 API 전송은 트랜잭션 커밋 후 {@code LoanLimitInquiryCreatedEvent}
+     *      를 통해 비동기로 위임한다</p>
+     *
+     * <h3>처리 순서</h3>
+     * <ol>
+     *     <li>진행 중 중복 요청 방지 (동일 userId + loanType)</li>
+     *     <li>대출 유형별 Strategy 선택 및 입력값 유효성 검증</li>
+     *     <li>외부 데이터 조회 (Nice DNR, KB시세 등 - Strategy 위임)</li>
+     *     <li>활성화된 금융사 선정 및 외부 데이터 오류 시 금융사 필터링</li>
+     *     <li>LoanLimitInquiry INSERT 후 Spring 이벤트 발행</li>
+     * </ol>
+     *
+     * <h3>금융사 선정 이중 구조</h3>
+     * <ul>
+     *     <li>{@code getSupportedBanks()}: Strategy 레벨에서 대출 유형별 지원 금융사 고정 관리</li>
+     *     <li>{@code filterAvailablePartners()}: 외부 데이터 조회 실패 시 해당 금융사 동적 제외</li>
+     * </ul>
+     *
+     * @param request 한도조회 요청 DTO
+     * @return 202 Accepted 응답 (inquiryNo 포함)
+     * @throws InvalidRequestException 진행 중인 조회 존재, 조회 가능 금융사 없음
+     */
     @Transactional
     public LoanLimitInquiryResponse requestCompareLoan(LoanLimitRequest request) {
         // 진행 중인 조회가 있으면 중복 요청 방지(당일 동일 유형 재조회 제한)
@@ -84,7 +125,7 @@ public class LoanLimitService {
             );
         }
 
-        // LoanLimitInquiry INSERT
+        // LoanLimitInquiry INSERT: 조회 식별번호(inquiryNo) 채번 후 저장
         LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
                 .inquiryNo(generator.generate("LL"))
                 .userId(request.userId())
@@ -105,9 +146,8 @@ public class LoanLimitService {
         // 대출 유형별 전략으로 금융사 전송용 요청 DTO 생성
         LoanLimitAdaptorRequest adaptorRequest = strategy.toAdaptorRequest(request, context);
 
-        // 한도 조회(백그라운드 비동기 처리)
-        // @Async 적용을 위해 별도 Bean(LoanLimitSenderService)으로 분리
-        //loanLimitSenderService.inquiry(inquiry.getId(), activePartnerCodes, adaptorRequest);
+        // 트랜잭션 커밋 후 비동기 전송을 위해 Spring 이벤트를 발행한다.
+        // AFTER_COMMIT 이후 처리를 보장하기 위해 직접 호출 대신 이벤트를 사용한다
         applicationEventPublisher.publishEvent(
                 LoanLimitInquiryCreatedEvent.builder()
                         .id(inquiry.getId())

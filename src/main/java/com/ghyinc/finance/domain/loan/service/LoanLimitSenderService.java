@@ -44,6 +44,24 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+/**
+ * 한도조회 비동기 전송 서비스
+ *
+ * <p>금융사별 한도조회 API를 병렬로 전송하고 전송 결과를 기반으로 Inquiry 상태를
+ *      결정한다. 전송 완료 후 알림 발송을 위한 Outbox 이벤트를 저장한다</p>
+ *
+ * <h3>비동기 처리 구조</h3>
+ * <ul>
+ *     <li>{@code handleInquiryCreated()}:
+ *          {@code @TransactionEventListener(AFTER_COMMIT)}으로
+ *          부모 트랜잭션 보장 후 {@code loanLimitExecutor} 스레드에서 실행</li>
+ *     <li>{@code inquiry()}: 금융사별 API를 {@code partnerApiExecutor} 스레드 풀에서 병렬 전송.
+ *          스레드 풀 분리로 {@code loanLimitExecutor} DeadLock 방지</li>
+ * </ul>
+ *
+ * @see LoanLimitService
+ * @see com.ghyinc.finance.global.outbox.service.OutboxEventService
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -62,6 +80,19 @@ public class LoanLimitSenderService {
 
     private static final String REQUEST_ID_KEY = "requestId";
 
+    /**
+     * {@link LoanLimitInquiryCreatedEvent} 수신 후 한도조회 비동기 전송을 시작한다.
+     *
+     * <p>{@code @TransactionalEventListener(AFTER_COMMIT)}을 통해 부모 트랜잭션
+     * (Inquiry INSERT)이 커밋된 이후에만 실행을 보장한다. 커밋 전 실행 시 금융사
+     * API 응답(콜백)이 먼저 도착해도 Inquiry를 조회할 수 없는 Race Condition이
+     * 발생할 수 있기 때문이다.</p>
+     *
+     * <p>{@code @Async("loanLimitExecutor")}로 HTTP 요청 스레드를 즉시 해제하여
+     * FE에 202 Accepted를 반환한다.</p>
+     *
+     * @param event inquiryId, 금융사 목록, 어댑터 요청 DTO를 포함한 이벤트
+     */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async("loanLimitExecutor")
     public void handleInquiryCreated(LoanLimitInquiryCreatedEvent event) {
@@ -69,11 +100,21 @@ public class LoanLimitSenderService {
     }
 
     /**
-     * 여러 금융사에 대한 한도조회
+     * 복수 금융사에 대한 한도조회 요청을 병렬로 처리한다.
      *
-     * <p> 각 은행 API 호출은 독립적이므로 CompletableFuture로 병렬 처리
-     * 한 금융사의 실패가 다른 금융사 조회에 영향을 주지 않음.
-     * 전용 스레드 풀을 사용하여 외부 I/O가 공통 스레드 풀을 점유하지 않도록 격리
+     * <h3>처리 순서</h3>
+     * <ol>
+     *     <li>LoanLimitResult 선저장 (금융사당 1건)</li>
+     *     <li>Product 조회 → 신청번호 채번 → LoanLimitProductResult 선저장 (상품당 1건)</li>
+     *     <li>금융사별 RequestProduct 구성 후 {@code partnerApiExecutor}에서 병렬 전송</li>
+     *     <li>전송 결과 집계 → Result/ProductResult 상태 UPDATE</li>
+     *     <li>Inquiry 최종 상태 결정 (SUCCESS / PARTIAL_SUCCESS / FAILED)</li>
+     *     <li>Outbox INSERT → Spring 이벤트 발행 (알림 발송 트리거)</li>
+     * </ol>
+     *
+     * @param id                LoanLimitInquiry PK
+     * @param partnerCodes      한도조회 대상 금융사 목록
+     * @param adaptorRequest    금융사 전송용 공통 요청 DTO
      */
     @Transactional
     public void inquiry(
@@ -144,10 +185,10 @@ public class LoanLimitSenderService {
 
 
             // 금융사별 병렬 API 호출
-            // partnerCode별 requestProducts 구성 후 병렬 호출
+            // partnerApiExecutor(I/O 전용 스레드 풀)에서 실행하여 loanLimitExecutor 스레드를 해제한다
             var futures = partnerCodes.stream()
                     .map(partnerCode -> {
-                        //requestProducts를 포함한 요청 DTO 재구성
+                        // 금융사별 상품 목록(requestProducts)를 포함한 요청 DTO 재구성
                         LoanLimitAdaptorRequest adaptorRequests = adaptorRequest.toBuilder()
                                 .requestProducts(requestProductMap.get(partnerCode))
                                 .build();
@@ -157,12 +198,14 @@ public class LoanLimitSenderService {
                                 .supplyAsync(() -> adaptor.inquireLimit(partnerCode, adaptorRequests), partnerApiExecutor)
                                 .orTimeout(8, TimeUnit.SECONDS)
                                 .exceptionally(ex -> {
-                                    // Circuit Breaker OPEN 시
+                                    // Circuit Breaker OPEN: Fallback으로 즉시 실패 반환
+                                    // 해당 금융사는 격리되며 나머지 금융사는 정상 진행
                                     if(ex.getCause() instanceof CallNotPermittedException) {
                                         log.warn("[{}] Circuit Breaker OPEN - 해당 금융사 격리", partnerCode, ex);
                                         return LoanLimitAdaptorResponse.fail(partnerCode, ex.getMessage(), 0L);
                                     }
 
+                                    // partnerApiExecutor 큐 초과 시 즉시 실패 처리
                                     if (ex.getCause() instanceof RejectedExecutionException) {
                                         log.error("[{}] partnerApiExecutor 큐 초과", partnerCode);
                                         return LoanLimitAdaptorResponse.fail(
@@ -175,11 +218,13 @@ public class LoanLimitSenderService {
                     })
                     .toList();
 
+            // 모든 금융사 응답을 수집한다. (join()은 각 Future의 orTimeout 내에서 대기)
             List<LoanLimitAdaptorResponse> adaptorResponses = futures.stream()
                     .map(CompletableFuture::join)
                     .toList();
 
-            // 어댑터 응답을 후처리하고 Entity로 변환하여 저장
+            // 전송 결과에 따라 Result / ProductResult 상태 UPDATE
+            // 성공: SEND_SUCCESS, 실패: SEND_FAILED (콜백 대기 여부 결정)
             adaptorResponses.forEach(adaptorResponse -> {
                 LoanLimitResult result = resultMap.get(adaptorResponse.partnerCode());
 
@@ -200,7 +245,8 @@ public class LoanLimitSenderService {
 
             });
 
-            // 최종 상태 결정
+            // 성공 금융사 수에 따라 Inquiry 최종 상태 결정
+            // 전체 성공: SUCCESS, 전체 실패: FAILED, 일부 성공: PARTIAL_SUCCESS
             long successCount = adaptorResponses.stream()
                     .filter(LoanLimitAdaptorResponse::success).count();
             InquiryStatus resultStatus = successCount == adaptorResponses.size()
@@ -222,6 +268,7 @@ public class LoanLimitSenderService {
                                         .userId(loanLimitInquiry.getUserId())
                                         .name(loanLimitInquiry.getName())
                                         .status(loanLimitInquiry.getStatus())
+                                        // MDC requestId를 payload에 포함하여 Kafka Consumer 스레드에서 복원
                                         .requestId(MDC.get(REQUEST_ID_KEY))
                                         .build()
                         ))
@@ -239,6 +286,7 @@ public class LoanLimitSenderService {
             }
 
         } catch(Exception e) {
+            // 예상치 못한 예외 발생 시 Inquiry를 FAILED로 처리한다.
             log.error("한도조회 처리 중 오류. id={}", loanLimitInquiry.getId(), e);
             loanLimitInquiry.updateInquiryStatus(InquiryStatus.FAILED);
         }
