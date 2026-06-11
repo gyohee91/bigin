@@ -16,7 +16,6 @@ import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.domain.loan.repository.ProductRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
-import com.ghyinc.finance.global.event.LoanLimitInquiryCreatedEvent;
 import com.ghyinc.finance.global.event.impl.KafkaLoanLimitEventPublisher;
 import com.ghyinc.finance.global.event.impl.SpringLoanLimitEventPublisher;
 import com.ghyinc.finance.global.outbox.entity.OutboxEvent;
@@ -29,11 +28,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.slf4j.MDC;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.event.TransactionPhase;
-import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.util.List;
 import java.util.Map;
@@ -79,25 +75,6 @@ public class LoanLimitSenderService {
     private final ObjectMapper objectMapper;
 
     private static final String REQUEST_ID_KEY = "requestId";
-
-    /**
-     * {@link LoanLimitInquiryCreatedEvent} 수신 후 한도조회 비동기 전송을 시작한다.
-     *
-     * <p>{@code @TransactionalEventListener(AFTER_COMMIT)}을 통해 부모 트랜잭션
-     * (Inquiry INSERT)이 커밋된 이후에만 실행을 보장한다. 커밋 전 실행 시 금융사
-     * API 응답(콜백)이 먼저 도착해도 Inquiry를 조회할 수 없는 Race Condition이
-     * 발생할 수 있기 때문이다.</p>
-     *
-     * <p>{@code @Async("loanLimitExecutor")}로 HTTP 요청 스레드를 즉시 해제하여
-     * FE에 202 Accepted를 반환한다.</p>
-     *
-     * @param event inquiryId, 금융사 목록, 어댑터 요청 DTO를 포함한 이벤트
-     */
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
-    @Async("loanLimitExecutor")
-    public void handleInquiryCreated(LoanLimitInquiryCreatedEvent event) {
-        this.inquiry(event.id(), event.activePartnerCodes(), event.adaptorRequest());
-    }
 
     /**
      * 복수 금융사에 대한 한도조회 요청을 병렬로 처리한다.
