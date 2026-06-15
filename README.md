@@ -1,4 +1,4 @@
-![CI](https://github.com/gyohee91/bigin/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/gyohee91/bigin/actions/workflows/ci.yaml/badge.svg)
 
 # 🏦 파트너사 제휴 한도조회 플랫폼
 
