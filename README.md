@@ -1,3 +1,5 @@
+![CI](https://github.com/gyohee91/bigin/actions/workflows/ci.yml/badge.svg)
+
 # 🏦 파트너사 제휴 한도조회 플랫폼
 
 > 실무 대출 비교 플랫폼 운영 경험을 바탕으로 설계한 개인 핀테크 포트폴리오 프로젝트.
