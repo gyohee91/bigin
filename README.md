@@ -579,17 +579,21 @@ partner-api:
 ```bash
 # 전체 테스트 실행
 ./gradlew test
-
-# 주요 테스트 대상
-- LoanLimitServiceTest       # 한도조회 요청 비즈니스 로직
-- LoanLimitSenderServiceTest # 비동기 전송 및 상태 처리
-- LoanLimitCallbackServiceTest # 콜백 수신 및 중복 방어
-- LoanLimitStrategyTest      # 대출유형별 전략 검증
-- AesCryptoServiceTest       # AES 암복호화
-- RsaCryptoServiceTest       # RSA 암복호화
-- InquiryNoGeneratorTest     # 채번 중복 없음 검증
-- OutboxEventServiceTest     # Outbox 즉시 발행 / 실패 시 PENDING 유지
 ```
+
+주요 테스트 대상은 다음과 같습니다.
+
+| 테스트 클래스 | 검증 항목 |
+|---|---|
+| LoanLimitServiceTest | 한도조회 요청 비즈니스 로직 |
+| LoanLimitSenderServiceTest | 비동기 전송 및 상태 처리 |
+| LoanLimitCallbackServiceTest | 콜백 수신 및 Outbox INSERT 검증 |
+| LoanLimitStrategyTest | 대출유형별 전략 검증 |
+| OutboxEventServiceTest | Outbox 즉시 발행 / 실패 시 PENDING 유지 |
+| AesCryptoServiceTest | AES 암복호화 |
+| RsaCryptoServiceTest | RSA 암복호화 |
+| RestApiClientTest | CB 상태 전환 (CLOSED→OPEN→HALF_OPEN→CLOSED) |
+| InquiryNoGeneratorTest | 채번 중복 없음 검증 |
 
 <br>
 

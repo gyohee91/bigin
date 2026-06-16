@@ -86,6 +86,109 @@ class RestApiClientTest {
     }
 
     @Test
-    void post() {
+    @DisplayName("mininumNumberOfCalls 미충족 시 CLOSE 유지")
+    void post_closed_whenMininumCallsNotMet() {
+        CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker(PartnerCode.KAKAO_BANK.name());
+
+        // minimumNumberOfCalls = 4, 3건만 호출
+        for(int i = 0; i <  1; i++) {
+            circuitBreaker.executeSupplier(Object::new);
+        }
+
+        for(int i = 0; i < 2; i++) {
+            assertThatThrownBy(() ->
+                    circuitBreaker.executeSupplier(() ->{
+                        throw new ExternalApiFailException("한도조회_ERROR", "API 오류");
+                    })
+            ).isInstanceOf(ExternalApiFailException.class);
+        }
+
+        assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
+        assertThat(circuitBreaker.getMetrics().getFailureRate()).isEqualTo(-1.0f);
+    }
+
+    @Test
+    @DisplayName("OPEN 상태 - CallNotPermittedException 즉시 발생")
+    void post_open_throwCallNotPermittedException() {
+        CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker(PartnerCode.KAKAO_BANK.name());
+        circuitBreaker.transitionToOpenState();
+
+        assertThatThrownBy(() -> circuitBreaker.executeSupplier(Object::new))
+                .isInstanceOf(CallNotPermittedException.class);
+    }
+
+    @Test
+    @DisplayName("OPEN 상태 - 차단된 호출 수 증가")
+    void post_open_incrementNotPermittedCalls() {
+        CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker(PartnerCode.KAKAO_BANK.name());
+        circuitBreaker.transitionToOpenState();
+
+        for(int i = 0; i < 3; i++) {
+            try {
+                circuitBreaker.executeSupplier(Object::new);
+            } catch (CallNotPermittedException ignored) {}
+        }
+
+        assertThat(circuitBreaker.getMetrics().getNumberOfNotPermittedCalls()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("OPEN → HALF_OPEN 자동 전환 - waitDuration 경과 후")
+    void post_openToHalfOpen_afterWaitDuration() throws InterruptedException {
+        CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker(PartnerCode.KAKAO_BANK.name());
+        circuitBreaker.transitionToOpenState();
+
+        Thread.sleep(600);  // waitDurationInOpenState(500ms) 경과
+
+        assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.HALF_OPEN);
+    }
+
+    @Test
+    @DisplayName("HALF_OPEN → CLOSED 전환 - 테스트 호출 성공 시 복구")
+    void post_halfOpenToClosed_whenTestCallsSucceed() {
+        CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker(PartnerCode.KAKAO_BANK.name());
+
+        // CLOSE → OPEN → HALF_OPEN 순서로 전환
+        circuitBreaker.transitionToOpenState();
+        circuitBreaker.transitionToHalfOpenState();
+
+        // permittedNumberOfCallsInHalfOpenState(2) 모두 성공
+        for(int i = 0; i < 2; i++) {
+            circuitBreaker.executeSupplier(Object::new);
+        }
+
+        assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
+    }
+
+    @Test
+    @DisplayName("HALF_OPEN → OPEN 재전환 - 테스트 호출 실패 시")
+    void post_halfOpenToOpen_whenTestCallsFail() {
+        CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker(PartnerCode.KAKAO_BANK.name());
+
+        // CLOSE → OPEN → HALF_OPEN 순서로 전환
+        circuitBreaker.transitionToOpenState();
+        circuitBreaker.transitionToHalfOpenState();
+
+        for(int i = 0; i < 2; i++) {
+            assertThatThrownBy(() ->
+                    circuitBreaker.executeSupplier(() -> {
+                        throw new ExternalApiFailException("한도조회_ERROR", "API 오류");
+                    })
+            ).isInstanceOf(ExternalApiFailException.class);
+        }
+
+        assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+    }
+
+    @Test
+    @DisplayName("금융사별 Circuit Breaker 독립 - TOSS_BANK OPEN이 KAKAO_BANk 미영향")
+    void post_circuitBreakerIndependentPerPartner() {
+        CircuitBreaker kakao = circuitBreakerRegistry.circuitBreaker(PartnerCode.KAKAO_BANK.name());
+        CircuitBreaker toss = circuitBreakerRegistry.circuitBreaker(PartnerCode.TOSS_BANK.name());
+
+        toss.transitionToOpenState();
+
+        assertThat(kakao.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
+        assertThat(toss.getState()).isEqualTo(CircuitBreaker.State.OPEN);
     }
 }
