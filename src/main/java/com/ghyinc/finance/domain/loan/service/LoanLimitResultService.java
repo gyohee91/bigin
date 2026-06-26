@@ -5,16 +5,20 @@ import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptor;
 import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptorFactory;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResultRequest;
 import com.ghyinc.finance.domain.loan.dto.ResultResponse;
+import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 한도결과 콜백 수신 서비스
@@ -42,6 +46,7 @@ import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 public class LoanLimitResultService {
+    private final RedissonClient redissonClient;
     private final LoanLimitResultAdaptorFactory resultAdaptorFactory;
     private final LoanLimitProductResultRepository loanLimitProductResultRepository;
 
@@ -83,34 +88,8 @@ public class LoanLimitResultService {
             // 금융사별 응답 포맷에 맞는 Adaptor를 선택한다
             LoanLimitResultRequest request = adaptor.convert(reqBody);
 
-            request.getLoanApplyResults().forEach(item -> {
-                // loReqtNo와 productCode로 선저장된 ProductResult 조회
-                var productResult = loanLimitProductResultRepository.findByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
-                        .orElseThrow(() -> new InvalidRequestException("존재하지 않는 식별번호&상품코드. loReqtNo: " + item.getLoReqtNo() + ", productCode: " + item.getProductCode()));
-
-                // 비관적 Lock으로 동시 수신 시 순차 처리 보장
-                var loanLimitInquiry = loanLimitProductResultRepository.findInquiryByLoReqtNoAndProduceCodeWithLock(item.getLoReqtNo(), item.getProductCode())
-                        .orElseThrow(() -> new InvalidRequestException("존재하지 않는 한도조회 이력"));
-
-                // SEND_SUCCESS 상태가 아닌 경우 처리 불가 상태로 간주하고 skip한다.
-                // 중복 수신(SUCCESS) 또는 전송 실패/타임아웃된 건은 결과를 덮어쓰지 않는다
-                if(productResult.getStatus() != PartnerInquiryStatus.SEND_SUCCESS) {
-                    log.warn("[{}] 처리 불가 상태의 결과 수신. loReqtNo={}, status={}",
-                            partnerCode, item.getLoReqtNo(), productResult.getStatus());
-
-                    if(productResult.getStatus() == PartnerInquiryStatus.SUCCESS) {
-                        log.warn("[{}] 중복 수신. loReqtNo={}",
-                                partnerCode, item.getLoReqtNo());
-                    }
-
-                    return;
-                }
-
-                // 콜백 수신 카운트 증가 및 한도결과 UPDATE
-                // incrementSuccessCount(): Inquiry의 successProductCount 증가
-                loanLimitInquiry.incrementSuccessCount();
-                productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
-            });
+            request.getLoanApplyResults()
+                    .forEach(item -> this.processCallbackItem(partnerCode, item));
 
             return adaptor.buildResponse(true, "한도결과 API 정상 처리");
         }
@@ -123,6 +102,70 @@ public class LoanLimitResultService {
             log.error("[{}] 한도결과 API 처리 중 오류. ", requestPartnerCode, e);
             return adaptor.buildResponse(false, "처리 중 오류가 발생했습니다");
         }
+    }
+
+    /**
+     * 콜백 1건 처리 - 상태 체크 + 분산 락 진입
+     */
+    private void processCallbackItem(PartnerCode partnerCode, LoanLimitResultRequest.LoanApplyResult item) {
+        var productResult = loanLimitProductResultRepository.findByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
+                .orElseThrow(() -> new InvalidRequestException("존재하지 않는 식별번호&상품코드. loReqtNo: " + item.getLoReqtNo() + ", productCode: " + item.getProductCode()));
+
+        // SEND_SUCCESS 상태가 아닌 경우 처리 불가 상태로 간주하고 skip한다.
+        // 중복 수신(SUCCESS) 또는 전송 실패/타임아웃된 건은 결과를 덮어쓰지 않는다
+        if(productResult.getStatus() != PartnerInquiryStatus.SEND_SUCCESS) {
+            log.warn("[{}] 처리 불가 상태의 결과 수신. loReqtNo={}, status={}",
+                    partnerCode, item.getLoReqtNo(), productResult.getStatus());
+
+            if(productResult.getStatus() == PartnerInquiryStatus.SUCCESS) {
+                log.warn("[{}] 중복 수신. loReqtNo={}",
+                        partnerCode, item.getLoReqtNo());
+            }
+
+            return;
+        }
+
+        // Redis 분산 락으로 successProductCount 갱신 보호
+        this.updateWithDistributedLock(partnerCode, item, productResult);
+    }
+
+    /**
+     * 분산락 획득 후 successProductCount 갱신
+     */
+    private void updateWithDistributedLock(PartnerCode partnerCode, LoanLimitResultRequest.LoanApplyResult item, LoanLimitProductResult productResult) {
+        String lockKey = "loan:inquiry:lock:" + item.getLoReqtNo();
+        RLock lock = redissonClient.getLock(lockKey);
+
+        try {
+            if( !lock.tryLock(3, 5, TimeUnit.SECONDS) ) {
+                log.warn("[{}] 분산 락 획득 실패. loReqtNo={}", partnerCode, item.getLoReqtNo());
+                return;
+            }
+
+            var loanLimitInquiry = loanLimitProductResultRepository.findInquiryByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
+                    .orElseThrow(() -> new InvalidRequestException("존재하지 않는 한도조회 이력"));
+
+            loanLimitInquiry.incrementSuccessCount();
+            productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("[{}] 분산 락 대기 중 인터럽트. loReqtNo={}", partnerCode, item.getLoReqtNo());
+        } finally {
+            if(lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
+        }
+
+        // 비관적 Lock으로 동시 수신 시 순차 처리 보장
+        //var loanLimitInquiry = loanLimitProductResultRepository.findInquiryByLoReqtNoAndProduceCodeWithLock(item.getLoReqtNo(), item.getProductCode())
+        //        .orElseThrow(() -> new InvalidRequestException("존재하지 않는 한도조회 이력"));
+
+
+        // 콜백 수신 카운트 증가 및 한도결과 UPDATE
+        // incrementSuccessCount(): Inquiry의 successProductCount 증가
+        //loanLimitInquiry.incrementSuccessCount();
+        //productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
     }
 
 }
