@@ -15,12 +15,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 
@@ -35,6 +37,9 @@ class LoanLimitResultServiceTest {
 
     @Mock
     private LoanLimitProductResultRepository loanLimitProductResultRepository;
+
+    @Mock
+    private RedissonClient redissonClient;
 
     private LoanLimitInquiry buildInquiry() {
         return LoanLimitInquiry.builder()
@@ -85,18 +90,28 @@ class LoanLimitResultServiceTest {
 
     @Test
     @DisplayName("콜백 정상 수신")
-    void responseCompareLoanResult() {
+    void responseCompareLoanResult() throws InterruptedException {
         // given
         LoanLimitInquiry inquiry = this.buildInquiry();
         LoanLimitProductResult productResult = this.buildProductResult(inquiry, "LR20260410AAA", "P060100206");
         LoanLimitResultRequest.LoanApplyResult preScrResultList = this.buildSuccessItem("LR20260410AAA", "P060100206");
+
+        // Redisson 분산 락 mock 결정
+        RLock rLock = mock(RLock.class);
+        given(redissonClient.getLock(anyString())).willReturn(rLock);
+        given(rLock.tryLock(anyLong(), anyLong(), any())).willReturn(true);
+        given(rLock.isHeldByCurrentThread()).willReturn(true);
 
         LoanLimitResultAdaptor adaptor = mock(LoanLimitResultAdaptor.class);
         given(resultAdaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
         given(adaptor.convert(any())).willReturn(this.buildRequestDto(List.of(preScrResultList)));
         given(loanLimitProductResultRepository.findByLoReqtNoAndProductCode("LR20260410AAA", "P060100206"))
                 .willReturn(Optional.of(productResult));
-        given(loanLimitProductResultRepository.findInquiryByLoReqtNoAndProduceCodeWithLock("LR20260410AAA", "P060100206"))
+        //given(loanLimitProductResultRepository.findInquiryByLoReqtNoAndProduceCodeWithLock("LR20260410AAA", "P060100206"))
+        //        .willReturn(Optional.of(inquiry));
+
+        // 비관 락 메서드 → 일반 조회 메서드로 교체
+        given(loanLimitProductResultRepository.findInquiryByLoReqtNoAndProductCode("LR20260410AAA", "P060100206"))
                 .willReturn(Optional.of(inquiry));
 
         // when
@@ -106,5 +121,59 @@ class LoanLimitResultServiceTest {
         assertThat(productResult.getStatus()).isEqualTo(PartnerInquiryStatus.SUCCESS);
         assertThat(productResult.getAmount()).isEqualTo(30_000_000);
         assertThat(productResult.getResultCode()).isEqualTo(LoanLimitResultCode.SUCCESS);
+    }
+
+    @Test
+    @DisplayName("분산 락 획득 실패 시 successProductCount 미증가")
+    void concurrentCallbacks_successProductCountConsistency() throws InterruptedException {
+        // given
+        LoanLimitInquiry inquiry = this.buildInquiry();
+        LoanLimitProductResult productResult = this.buildProductResult(inquiry, "LR20260410AAA", "P060100206");
+        LoanLimitResultRequest.LoanApplyResult item = this.buildSuccessItem("LR20260410AAA", "P060100206");
+
+        RLock rLock = mock(RLock.class);
+        given(redissonClient.getLock(anyString())).willReturn(rLock);
+        // 락 획득 실패 시뮬레이션
+        given(rLock.tryLock(anyLong(), anyLong(), any())).willReturn(false);
+
+        LoanLimitResultAdaptor adaptor = mock(LoanLimitResultAdaptor.class);
+        given(resultAdaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
+        given(adaptor.convert(any())).willReturn(this.buildRequestDto(List.of(item)));
+        given(loanLimitProductResultRepository.findByLoReqtNoAndProductCode("LR20260410AAA", "P060100206"))
+                .willReturn(Optional.of(productResult));
+
+        // when
+        loanLimitResultService.responseCompareLoanResult("LINE_BANK", this.buildRequest(List.of(item)));
+
+        // then
+        assertThat(inquiry.getSuccessProductCount()).isEqualTo(0);
+        assertThat(productResult.getStatus()).isEqualTo(PartnerInquiryStatus.SEND_SUCCESS);
+    }
+
+    @Test
+    @DisplayName("분산락 대기 중 인터럽트 발생 시 successProductCount 미증가")
+    void responseCompareLoanResult_interrupted() throws InterruptedException {
+        // given
+        LoanLimitInquiry inquiry = this.buildInquiry();
+        LoanLimitProductResult productResult = this.buildProductResult(inquiry, "LR20260410AAA", "P060100206");
+        LoanLimitResultRequest.LoanApplyResult item = this.buildSuccessItem("LR20260410AAA", "P060100206");
+
+        RLock rLock = mock(RLock.class);
+        given(redissonClient.getLock(anyString())).willReturn(rLock);
+        // 인터럽트 시뮬레이션
+        given(rLock.tryLock(anyLong(), anyLong(), any())).willThrow(new InterruptedException());
+
+        LoanLimitResultAdaptor adaptor = mock(LoanLimitResultAdaptor.class);
+        given(resultAdaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
+        given(adaptor.convert(any())).willReturn(this.buildRequestDto(List.of(item)));
+        given(loanLimitProductResultRepository.findByLoReqtNoAndProductCode("LR20260410AAA", "P060100206"))
+                .willReturn(Optional.of(productResult));
+
+        // when
+        loanLimitResultService.responseCompareLoanResult("LINE_BANK", this.buildRequest(List.of(item)));
+
+        // then
+        assertThat(inquiry.getSuccessProductCount()).isEqualTo(0);
+        assertThat(Thread.currentThread().isInterrupted()).isTrue();    // interrupt 플래그 복원 확인
     }
 }
