@@ -18,6 +18,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -30,8 +32,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.mock;
@@ -58,10 +59,27 @@ class LoanLimitServiceTest {
     @Mock
     private ApplicationEventPublisher applicationEventPublisher;
 
+    @Mock
+    private RedissonClient redissonClient;
+
+    private RLock rLock;
+
+    /**
+     * 락 관련 given 설정
+     */
+    private void givenLockAcquired() throws InterruptedException {
+        rLock = mock(RLock.class);
+        given(redissonClient.getLock(anyString())).willReturn(rLock);
+        given(rLock.tryLock(anyLong(), anyLong(), any())).willReturn(true); // 기본: 락 획득 성공
+        given(rLock.isHeldByCurrentThread()).willReturn(true);
+    }
+
     @Test
     @DisplayName("한도조회 요청 정상처리 - 202 Accepted 즉시 응답")
-    void requestCompareLoan_success() {
+    void requestCompareLoan_success() throws InterruptedException {
         // given
+        this.givenLockAcquired();
+
         LoanLimitRequest request = LoanLimitRequest.builder()
                 .userId(1L)
                 .name("윤교희")
@@ -108,8 +126,10 @@ class LoanLimitServiceTest {
 
     @Test
     @DisplayName("활성화된 금융사가 없으면 InvalidRequestException 발생")
-    void requestCompareLoan_noActivePartner_throwException() {
+    void requestCompareLoan_noActivePartner_throwException() throws InterruptedException {
         // given
+        this.givenLockAcquired();
+
         LoanLimitRequest request = LoanLimitRequest.builder()
                 .userId(1L)
                 .name("윤교희")
@@ -138,8 +158,10 @@ class LoanLimitServiceTest {
 
     @Test
     @DisplayName("진행 중인 한도조회 요청이 있으면 중복 요청 방지")
-    void requestCompareLoan_inProgressExists_throwsException() {
+    void requestCompareLoan_inProgressExists_throwsException() throws InterruptedException {
         // given
+        this.givenLockAcquired();
+
         LoanLimitRequest request = LoanLimitRequest.builder()
                 .userId(1L)
                 .name("윤교희")
@@ -164,8 +186,10 @@ class LoanLimitServiceTest {
 
     @Test
     @DisplayName("오토담보 - Nice DNR 조회 성공 시 정상 처리")
-    void requestCompareLoan_auto_niceDnrSuccess() {
+    void requestCompareLoan_auto_niceDnrSuccess() throws InterruptedException {
         // given
+        this.givenLockAcquired();
+
         LoanLimitRequest request = LoanLimitRequest.builder()
                 .userId(1L)
                 .name("윤교희")
@@ -210,8 +234,10 @@ class LoanLimitServiceTest {
 
     @Test
     @DisplayName("오토담보 - Nice DNR 조회 실패 시 진행 가능 금융사 없으면 예외")
-    void requestCompareLoan_auto_niceDnrFailed_throwException() {
+    void requestCompareLoan_auto_niceDnrFailed_throwException() throws InterruptedException {
         // given
+        this.givenLockAcquired();
+
         LoanLimitRequest request = LoanLimitRequest.builder()
                 .userId(1L)
                 .name("윤교희")
@@ -242,6 +268,63 @@ class LoanLimitServiceTest {
         assertThatThrownBy(() -> loanLimitService.requestCompareLoan(request))
                 .isInstanceOf(InvalidRequestException.class);
         then(applicationEventPublisher).should(never()).publishEvent(any());
+    }
+
+    @Test
+    @DisplayName("동시 요청 - 분산 락 확득 실패 시 즉시 예외")
+    void requestCompareLoan_lockFailed_throwsException() throws InterruptedException {
+        // given
+        rLock = mock(RLock.class);
+        given(redissonClient.getLock(anyString())).willReturn(rLock);
+        given(rLock.tryLock(anyLong(), anyLong(), any())).willReturn(false);
+        given(rLock.isHeldByCurrentThread()).willReturn(false);
+
+        LoanLimitRequest request = LoanLimitRequest.builder()
+                .userId(1L)
+                .name("윤교희")
+                .rrno("9102131234556")
+                .ci("wEi9oYSuekQGxT9MV4rKHG4CO+Zrp+onhLIIuembI8jx/0PLF5Ne3oMBxvUFlN4UmsgjeNErZfmpCVUFH")
+                .jobType(JobType.EMPLOYEE)
+                .jobName("오케이")
+                .loanType(LoanType.PERSONAL_CREDIT)
+                .build();
+
+        // when & then
+        assertThatThrownBy(() -> loanLimitService.requestCompareLoan(request))
+                .isInstanceOf(InvalidRequestException.class)
+                .hasMessage("요청이 처리 중입니다. 잠시 후 다시 시도해 주세요.");
+
+        then(loanLimitInquiryRepository).should(never())
+                .existsByUserIdAndLoanTypeAndStatus(any(), any(), any());
+        then(loanLimitInquiryRepository).should(never()).save(any());
+        then(applicationEventPublisher).should(never()).publishEvent(any());
+    }
+
+    @Test
+    @DisplayName("동시 요청 - 락 대기 중 인터럽트 발생 시 예외")
+    void requestCompareLoan_interrupted_throwsException() throws InterruptedException {
+        // given
+        rLock = mock(RLock.class);
+        given(redissonClient.getLock(anyString())).willReturn(rLock);
+        given(rLock.tryLock(anyLong(), anyLong(), any())).willThrow(new InterruptedException());
+        given(rLock.isHeldByCurrentThread()).willReturn(false);
+
+        LoanLimitRequest request = LoanLimitRequest.builder()
+                .userId(1L)
+                .name("윤교희")
+                .rrno("9102131234556")
+                .ci("wEi9oYSuekQGxT9MV4rKHG4CO+Zrp+onhLIIuembI8jx/0PLF5Ne3oMBxvUFlN4UmsgjeNErZfmpCVUFH")
+                .jobType(JobType.EMPLOYEE)
+                .jobName("오케이")
+                .loanType(LoanType.PERSONAL_CREDIT)
+                .build();
+
+        // when & then
+        assertThatThrownBy(() -> loanLimitService.requestCompareLoan(request))
+                .isInstanceOf(InvalidRequestException.class)
+                .hasMessage("요청 처리 중 오류가 발생했습니다.");
+
+        assertThat(Thread.currentThread().isInterrupted()).isTrue();
     }
 
     @Test
