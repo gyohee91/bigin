@@ -23,6 +23,7 @@ import com.ghyinc.finance.global.outbox.entity.OutboxStatus;
 import com.ghyinc.finance.global.outbox.event.OutboxCreatedEvent;
 import com.ghyinc.finance.global.outbox.repository.OutboxEventRepository;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
@@ -180,6 +181,11 @@ public class LoanLimitSenderService {
                                     if(ex.getCause() instanceof CallNotPermittedException) {
                                         log.warn("[{}] Circuit Breaker OPEN - 해당 금융사 격리", partnerCode, ex);
                                         return LoanLimitAdaptorResponse.fail(partnerCode, ex.getMessage(), 0L);
+                                    }
+
+                                    // RateLimiter 한도 초과 Fallback 추가
+                                    if(ex.getCause() instanceof RequestNotPermitted) {
+                                        return LoanLimitAdaptorResponse.fail(partnerCode, "RATE_LIMIT_EXCEEDED", 0L);
                                     }
 
                                     // partnerApiExecutor 큐 초과 시 즉시 실패 처리

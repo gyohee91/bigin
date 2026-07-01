@@ -67,13 +67,15 @@ management:
     prometheus:
       enabled: true
   metrics:
+    enable:
+      resilience4j: true
     export:
       prometheus:
         enabled: true
     tags:
       # 모든 매트릭에 애플리케이션 이름 태그 추가
-      # Grafana에서 application="notification-service" 로 필터링 가능
-      application: notification-service
+      # Grafana에서 application="bigin" 로 필터링 가능
+      application: bigin
 
 springdoc:
   swagger-ui:
@@ -94,6 +96,9 @@ resilience4j:
   circuitbreaker:
     configs:
       default:
+        register-health-indicator: true   # health 엔드 포인트에 CB 상태 노출
+        limit-refresh-period: 1s          # 1초마다 허용량 초기화
+        timeout-duration: 0s              # 대기 없이 즉시 실패
 
         # Sliding Window 설정
         sliding-window-type: COUNT_BASED
@@ -133,6 +138,7 @@ resilience4j:
         base-config: default
       LINE_BANK:
         base-config: default
+        limit-for-period: 20    # 초당 20건 허용
 
 
   # Retry 설정

@@ -6,6 +6,10 @@ import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.ratelimiter.RateLimiter;
+import io.github.resilience4j.ratelimiter.RateLimiterConfig;
+import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import io.github.resilience4j.retry.RetryConfig;
 import io.github.resilience4j.retry.RetryRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +31,7 @@ class RestApiClientTest {
     private RestApiClient restApiClient;
     private CircuitBreakerRegistry circuitBreakerRegistry;
     private RetryRegistry retryRegistry;
+    private RateLimiterRegistry rateLimiterRegistry;
 
     @Mock
     private Map<PartnerCode, RestClient> partnerRestClients;
@@ -54,7 +59,21 @@ class RestApiClientTest {
                 .build();
         retryRegistry = RetryRegistry.of(retryConfig);
 
-        restApiClient = new RestApiClient(circuitBreakerRegistry, retryRegistry, partnerRestClients);
+        // RateLimiter 초기화
+        RateLimiterConfig rateLimiterConfig = RateLimiterConfig.custom()
+                .limitRefreshPeriod(Duration.ofSeconds(1))
+                .limitForPeriod(5)
+                .timeoutDuration(Duration.ZERO)
+                .build();
+
+        rateLimiterRegistry = RateLimiterRegistry.of(rateLimiterConfig);
+
+        restApiClient = new RestApiClient(
+                circuitBreakerRegistry,
+                retryRegistry,
+                rateLimiterRegistry,
+                partnerRestClients
+        );
     }
 
     @Test
@@ -190,5 +209,59 @@ class RestApiClientTest {
 
         assertThat(kakao.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
         assertThat(toss.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+    }
+
+    @Test
+    @DisplayName("RateLimiter - 허용량 초과 시 RequestNotPermitted 즉시 발생")
+    void post_rateLimiter_requestNotPermittedWhenLimitExceeded() {
+        RateLimiter rateLimiter = rateLimiterRegistry.rateLimiter(PartnerCode.KAKAO_BANK.name());
+
+        // limitForPeriod(5) 소진
+        for(int i = 0; i < 5; i++) {
+            rateLimiter.executeSupplier(Object::new);
+        }
+
+        // 6번째 요청 → 허용량 초과 → RequestNotPermitted 즉시 발생
+        assertThatThrownBy(() -> rateLimiter.executeSupplier(Object::new))
+                .isInstanceOf(RequestNotPermitted.class);
+    }
+
+    @Test
+    @DisplayName("RateLimiter - limitRefreshPeriod 경과 후 허용량 초기화")
+    void post_rateLimit_permitRestoredAfterRefreshPeriod() throws InterruptedException {
+        RateLimiter rateLimiter = rateLimiterRegistry.rateLimiter(PartnerCode.KAKAO_BANK.name());
+
+        // limitForPeriod(5) 소진
+        for(int i = 0; i < 5; i++) {
+            rateLimiter.executeSupplier(Object::new);
+        }
+
+        // limitRefreshPeriod(1s) 경과 후 허용량 초기화
+        Thread.sleep(1100);
+
+        // 초기화 후 정상 호출 가능
+        rateLimiter.executeSupplier(Object::new);
+
+        assertThat(rateLimiter.getMetrics().getAvailablePermissions()).isEqualTo(4);
+    }
+
+    @Test
+    @DisplayName("RateLimiter - 금융사별 독립 - KAKAO_BANK 한도 소진이 TOSS_BANK 미영향")
+    void post_rateLimiter_independentPerPartner() {
+        RateLimiter kakaoRateLimiter = rateLimiterRegistry.rateLimiter(PartnerCode.KAKAO_BANK.name());
+        RateLimiter tossRateLimiter = rateLimiterRegistry.rateLimiter(PartnerCode.TOSS_BANK.name());
+
+        // KAKAO_BANK 허용량 전부 소진
+        for(int i = 0; i < 5; i++) {
+            kakaoRateLimiter.executeSupplier(Object::new);
+        }
+
+        // KAKAO_BANK → RequestNotPermitted
+        assertThatThrownBy(() -> kakaoRateLimiter.executeSupplier(Object::new))
+                .isInstanceOf(RequestNotPermitted.class);
+
+        // TOSS_BANK → 정상 호출 가능 (독립적)
+        tossRateLimiter.executeSupplier(Object::new);
+        assertThat(tossRateLimiter.getMetrics().getAvailablePermissions()).isEqualTo(4);
     }
 }
