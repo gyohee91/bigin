@@ -185,6 +185,7 @@ public class LoanLimitSenderService {
 
                                     // RateLimiter 한도 초과 Fallback 추가
                                     if(ex.getCause() instanceof RequestNotPermitted) {
+                                        log.warn("[{}] RateLimiter 한도 초과 - 요청 제한", partnerCode);
                                         return LoanLimitAdaptorResponse.fail(partnerCode, "RATE_LIMIT_EXCEEDED", 0L);
                                     }
 

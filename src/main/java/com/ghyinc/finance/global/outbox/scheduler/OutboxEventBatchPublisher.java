@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -31,6 +32,7 @@ public class OutboxEventBatchPublisher {
             lockAtLeastFor = "50s",     // 최소 50초 Lock 유지 (중복 실행 방지)
             lockAtMostFor = "55s"       // 최대 55초 후 Lock 해제
     )
+    @Transactional
     public void retryPendingEvents() {
         List<OutboxEvent> retryTargets = outboxEventRepository.findRetryTargets(
                 OutboxStatus.PENDING,
@@ -46,8 +48,8 @@ public class OutboxEventBatchPublisher {
         retryTargets.forEach(outboxEvent -> {
             try {
                 outboxEventService.publishToKafka(outboxEvent);
-                outboxEventRepository.save(outboxEvent);
             } catch (Exception e) {
+                log.error("Outbox 재시도 실패. outboxId={}", outboxEvent.getId(), e);
                 outboxEvent.markAsFailed();
             }
         });

@@ -8,6 +8,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
@@ -23,8 +25,8 @@ public class OutboxEventService {
 
     /**
      * 트랜잭션 커밋 후 즉시 Kafka 발행
-     * @param event
      */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void publishAfterCommit(OutboxCreatedEvent event) {
         outboxEventRepository.findById(event.id())
