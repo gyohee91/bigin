@@ -3,6 +3,11 @@ plugins {
 	id 'org.springframework.boot' version '3.5.10'
 	id 'io.spring.dependency-management' version '1.1.7'
 	id 'org.asciidoctor.jvm.convert' version '4.0.5'
+    id 'jacoco'
+}
+
+jacoco {
+    toolVersion = "0.8.12"
 }
 
 group = 'com.ghyinc.finance'
@@ -79,6 +84,67 @@ dependencies {
 
 	testImplementation 'org.springframework.restdocs:spring-restdocs-mockmvc'
 	testImplementation 'org.springframework.security:spring-security-test'
+}
+
+def jacocoExcludePatterns = [
+        '**/client/**',
+        '**/interceptor/**',
+        '**/filter/**',
+        '**/external/**',
+        '**/circuitbreaker/**',
+        '**/config/**',
+
+        '**/event/impl/**',
+        '**/*Application*',
+
+        // DTO, 예외, Enum, Entity (비즈니스 로직 없음)
+        '**/dto/**',
+        '**/exception/**',
+        '**/init/**',
+
+        // 도메인 어댑터, 전략 (외부 API 포맷 의존)
+        '**/adaptor/**',
+        '**/strategy/**',
+        '**/notification/**',
+        '**/outbox/scheduler/**',
+        '**/crypto/CryptoFactory*',
+        '**/service/LoanLimitEventHandler*',
+        '**/factory/LoanLimitAdaptorFactory*'
+]
+
+jacocoTestReport {
+    dependsOn test
+    finalizedBy jacocoTestCoverageVerification
+
+    reports {
+        xml.required = true
+        html.required = true
+        csv.required = false
+    }
+
+    afterEvaluate {
+        classDirectories.setFrom(files(classDirectories.files.collect {
+            fileTree(dir: it, exclude: jacocoExcludePatterns)
+        }))
+    }
+}
+
+jacocoTestCoverageVerification {
+    afterEvaluate {
+        classDirectories.setFrom(files(classDirectories.files.collect {
+            fileTree(dir: it, exclude: jacocoExcludePatterns)
+        }))
+    }
+
+    violationRules {
+        rule {
+            limit {
+                counter = 'LINE'
+                value = 'COVEREDRATIO'
+                minimum = 0.70
+            }
+        }
+    }
 }
 
 tasks.named('test') {
