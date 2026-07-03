@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
@@ -175,5 +176,71 @@ class LoanLimitResultServiceTest {
         // then
         assertThat(inquiry.getSuccessProductCount()).isEqualTo(0);
         assertThat(Thread.currentThread().isInterrupted()).isTrue();    // interrupt 플래그 복원 확인
+    }
+
+    @Test
+    @DisplayName("유효하지 않은 partnerCode 수신 시 InvalidRequestException")
+    void responseCompareLoanResult_invalidPartnerCode() {
+        // when & then
+        // PartnerCode.valueOf()가 실패하는 잘못된 코드 전달
+        assertThatThrownBy(() ->
+                loanLimitResultService.responseCompareLoanResult(
+                        "INVALID_CODE", this.buildRequest(List.of()))
+        ).isInstanceOf(Exception.class);
+    }
+
+    @Test
+    @DisplayName("SEND_SUCCESS가 아닌 상태 콜백 수신 시 처리 skip")
+    void responseCompareLoanResult_notSendSuccessStatus_skip() throws InterruptedException {
+        // given
+        LoanLimitInquiry inquiry = this.buildInquiry();
+        LoanLimitProductResult productResult = LoanLimitProductResult.builder()
+                .loanLimitInquiry(inquiry)
+                .loReqtNo("LR20260410AAA")
+                .partnerCode(PartnerCode.LINE_BANK)
+                .productCode("P060100206")
+                .status(PartnerInquiryStatus.PENDING)
+                .build();
+        // PENDING 상태 유지 (sendSuccess() 호출 안 함)
+
+        LoanLimitResultRequest.LoanApplyResult item = this.buildSuccessItem("LR20260410AAA", "P060100206");
+
+        LoanLimitResultAdaptor adaptor = mock(LoanLimitResultAdaptor.class);
+        given(resultAdaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
+        given(adaptor.convert(any())).willReturn(this.buildRequestDto(List.of(item)));
+        given(loanLimitProductResultRepository.findByLoReqtNoAndProductCode("LR20260410AAA", "P060100206"))
+                .willReturn(Optional.of(productResult));
+
+        // when
+        loanLimitResultService.responseCompareLoanResult("LINE_BANK", this.buildRequest(List.of(item)));
+
+        // then - PENDING 상태라 처리 skip, successCount 미증가
+        assertThat(inquiry.getSuccessProductCount()).isEqualTo(0);
+        assertThat(productResult.getStatus()).isEqualTo(PartnerInquiryStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("SUCCESS 상태 콜백 중복 수신 시 처리 skip (멱등성)")
+    void responseCompareLoanResult_duplicateSuccess_skip() throws InterruptedException {
+        // given
+        LoanLimitInquiry inquiry = this.buildInquiry();
+        LoanLimitProductResult productResult = this.buildProductResult(inquiry, "LR20260410AAA", "P060100206");
+        productResult.sendSuccess();
+        productResult.updateResult(LoanLimitResultCode.SUCCESS, 30_000_000L, 4.5);  // 이미 SUCCESS
+
+        LoanLimitResultRequest.LoanApplyResult item = this.buildSuccessItem("LR20260410AAA", "P060100206");
+
+        LoanLimitResultAdaptor adaptor = mock(LoanLimitResultAdaptor.class);
+        given(resultAdaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
+        given(adaptor.convert(any())).willReturn(this.buildRequestDto(List.of(item)));
+        given(loanLimitProductResultRepository.findByLoReqtNoAndProductCode("LR20260410AAA", "P060100206"))
+                .willReturn(Optional.of(productResult));
+
+        // when
+        loanLimitResultService.responseCompareLoanResult("LINE_BANK", this.buildRequest(List.of(item)));
+
+        // then - 이미 SUCCESS라 중복 수신으로 skip
+        assertThat(inquiry.getSuccessProductCount()).isEqualTo(0);
+        assertThat(productResult.getStatus()).isEqualTo(PartnerInquiryStatus.SUCCESS);
     }
 }

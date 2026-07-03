@@ -4,6 +4,7 @@ import com.ghyinc.finance.global.outbox.entity.OutboxEvent;
 import com.ghyinc.finance.global.outbox.entity.OutboxStatus;
 import com.ghyinc.finance.global.outbox.event.OutboxCreatedEvent;
 import com.ghyinc.finance.global.outbox.repository.OutboxEventRepository;
+import org.apache.kafka.common.errors.InvalidRequestException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,8 +20,8 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.mock;
@@ -113,4 +114,39 @@ class OutboxEventServiceTest {
         assertThat(outboxEvent.getStatus()).isEqualTo(OutboxStatus.PENDING);
     }
 
+    @Test
+    @DisplayName("Notification aggregateType → notification.send 토픽 발행")
+    void publishToKafka_notificationTopic() {
+        // given
+        OutboxEvent outboxEvent = OutboxEvent.builder()
+                .aggregateType("Notification")
+                .aggregateId("1")
+                .payload("{}")
+                .build();
+
+        given(kafkaTemplate.send(eq("notification.send"), anyString(), any()))
+                .willReturn(mock(CompletableFuture.class));
+
+        // when
+        outboxEventService.publishToKafka(outboxEvent);
+
+        // then
+        then(kafkaTemplate).should().send(eq("notification.send"), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("알 수 없는 aggregateType → InvalidRequestException")
+    void publishToKafka_unknownAggregateType_throwsException() {
+        // given
+        OutboxEvent outboxEvent = OutboxEvent.builder()
+                .aggregateType("Unknown")
+                .aggregateId("1")
+                .payload("{}")
+                .build();
+
+        // when & then
+        assertThatThrownBy(() -> outboxEventService.publishToKafka(outboxEvent))
+                .isInstanceOf(InvalidRequestException.class)
+                .hasMessage("알 수 없는 aggregateType: " + outboxEvent.getAggregateType());
+    }
 }
