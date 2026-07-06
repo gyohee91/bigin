@@ -8,6 +8,7 @@ import com.ghyinc.finance.domain.loan.service.LoanLimitService;
 import com.ghyinc.finance.global.common.ApiCommResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -62,7 +63,12 @@ public class LoanController {
     })
     @PostMapping("/response-compare-loan-result")
     public ResponseEntity<ResultResponse> responseCompareLoanResult(
-            @Parameter(description = "금융사 코드", example = "LINE_BANK")
+            @Parameter(
+                    description = "금융사 코드",
+                    example = "LINE_BANK",
+                    required = true,
+                    in = ParameterIn.HEADER
+            )
             @RequestHeader("X-Partner-Code") String requestPartnerCode,
             @io.swagger.v3.oas.annotations.parameters.RequestBody(
                     description = "한도결과 요청",
@@ -101,9 +107,11 @@ public class LoanController {
     })
     @GetMapping("/inquiry/{inquiryNo}")
     public ResponseEntity<ApiCommResponse<LoanLimitPollingResponse>> getInquiryResult(
-            @Parameter(description = "업무 식별번호", example = "LL20260416q2g09nhgap")
+            @Parameter(description = "업무 식별번호", example = "LL20260416q2g09nhgap", required = true)
             @PathVariable String inquiryNo,
+            @Parameter(description = "페이지 번호 (0부터 시작)", example = "0")
             @RequestParam(defaultValue = "0") int page,
+            @Parameter(description = "페이지 크기", example = "20")
             @RequestParam(defaultValue = "20") int size
     ) {
         Pageable pageable = PageRequest.of(page, size);
