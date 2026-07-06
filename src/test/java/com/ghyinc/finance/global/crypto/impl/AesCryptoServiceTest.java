@@ -1,6 +1,7 @@
 package com.ghyinc.finance.global.crypto.impl;
 
 import com.ghyinc.finance.global.crypto.enums.CryptoAlgorithm;
+import com.ghyinc.finance.global.exception.CryptoException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -8,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Base64;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AesCryptoServiceTest {
 
@@ -57,6 +59,23 @@ class AesCryptoServiceTest {
     }
 
     @Test
-    void decrypt() {
+    @DisplayName("잘못된 키 길이로 AES 암호화 시 CryptoException 발생")
+    void encrypt_invalidKeyLength_throwsCryptoException() {
+        // given - 잘못된 길이의 키 (7 byte)
+        AesCryptoService service = new AesCryptoService("shortkey", CryptoAlgorithm.AES_256_CBC);
+
+        // when & then
+        assertThatThrownBy(() -> service.encrypt("plainText"))
+                .isInstanceOf(CryptoException.class)
+                .hasMessageContaining("Invalid AES key length");
+    }
+
+    @Test
+    @DisplayName("잘못된 암호문으로 AES 복호화 시 CryptoException")
+    void decrypt_invalidCipherText_throwsCryptoException() {
+        AesCryptoService service = new AesCryptoService("12345678901234567890123456789012", CryptoAlgorithm.AES_256_CBC);
+
+        assertThatThrownBy(() -> service.decrypt("not-valid-base64"))
+                .isInstanceOf(CryptoException.class);
     }
 }

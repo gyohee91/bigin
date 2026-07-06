@@ -5,10 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptor;
 import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptorFactory;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResultRequest;
+import com.ghyinc.finance.domain.loan.dto.ResultResponse;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
 import com.ghyinc.finance.domain.loan.enums.*;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepository;
+import org.apache.kafka.common.errors.InvalidRequestException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.mock;
 
 @ExtendWith(MockitoExtension.class)
@@ -191,7 +194,7 @@ class LoanLimitResultServiceTest {
 
     @Test
     @DisplayName("SEND_SUCCESS가 아닌 상태 콜백 수신 시 처리 skip")
-    void responseCompareLoanResult_notSendSuccessStatus_skip() throws InterruptedException {
+    void responseCompareLoanResult_notSendSuccessStatus_skip() {
         // given
         LoanLimitInquiry inquiry = this.buildInquiry();
         LoanLimitProductResult productResult = LoanLimitProductResult.builder()
@@ -221,7 +224,7 @@ class LoanLimitResultServiceTest {
 
     @Test
     @DisplayName("SUCCESS 상태 콜백 중복 수신 시 처리 skip (멱등성)")
-    void responseCompareLoanResult_duplicateSuccess_skip() throws InterruptedException {
+    void responseCompareLoanResult_duplicateSuccess_skip() {
         // given
         LoanLimitInquiry inquiry = this.buildInquiry();
         LoanLimitProductResult productResult = this.buildProductResult(inquiry, "LR20260410AAA", "P060100206");
@@ -242,5 +245,41 @@ class LoanLimitResultServiceTest {
         // then - 이미 SUCCESS라 중복 수신으로 skip
         assertThat(inquiry.getSuccessProductCount()).isEqualTo(0);
         assertThat(productResult.getStatus()).isEqualTo(PartnerInquiryStatus.SUCCESS);
+    }
+
+    @Test
+    @DisplayName("adaptor.convert() 중 InvalidRequestException 발생 시 실패 응답 반환")
+    void responseCompareLoanResult_invalidRequestException_returnFailResponse() {
+        // given
+        LoanLimitResultAdaptor adaptor = mock(LoanLimitResultAdaptor.class);
+        given(resultAdaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
+        given(adaptor.convert(any()))
+                .willThrow(new InvalidRequestException("존재하지 않는 식별번호"));
+        given(adaptor.buildResponse(eq(false), anyString()))
+                .willReturn(mock(ResultResponse.class));
+
+        // when
+        loanLimitResultService.responseCompareLoanResult("LINE_BANK", this.buildRequest(List.of()));
+
+        // then - 실패 응답 반환, 예외 전파 안 됨
+        then(adaptor).should().buildResponse(eq(false), contains("존재하지 않는 식별번호"));
+    }
+
+    @Test
+    @DisplayName("예상치 못한 Exception 발생 시 일반 실패 응답 반환")
+    void responseCompareLoanResult_unexpectedException_returnsFailResponse() {
+        // given
+        LoanLimitResultAdaptor adaptor = mock(LoanLimitResultAdaptor.class);
+        given(resultAdaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
+        given(adaptor.convert(any()))
+                .willThrow(new RuntimeException("예상치 못한 오류"));
+        given(adaptor.buildResponse(eq(false), anyString()))
+                .willReturn(mock(ResultResponse.class));
+
+        // when
+        loanLimitResultService.responseCompareLoanResult("LINE_BANK", this.buildRequest(List.of()));
+
+        // then
+        then(adaptor).should().buildResponse(eq(false), eq("처리 중 오류가 발생했습니다"));
     }
 }
