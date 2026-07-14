@@ -3,8 +3,6 @@ package com.ghyinc.finance.global.crypto;
 import com.ghyinc.finance.domain.loan.entity.Partner;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.repository.PartnerRepository;
-import com.ghyinc.finance.global.config.CryptoConfig;
-import com.ghyinc.finance.global.config.PartnerApiProperties;
 import com.ghyinc.finance.global.crypto.impl.AesCryptoService;
 import com.ghyinc.finance.global.crypto.impl.RsaCryptoService;
 import com.ghyinc.finance.global.exception.CryptoException;
@@ -14,10 +12,7 @@ import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Component;
 
-import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Component
@@ -25,7 +20,11 @@ import java.util.stream.Collectors;
 public class CryptoFactory {
     private final PartnerRepository partnerRepository;
 
-    @Cacheable(value = "cryptoService", key = "#partnerCode")
+    @Cacheable(
+            value = "cryptoService",
+            key = "#partnerCode",
+            cacheManager = "caffeineCacheManager"
+    )
     public CryptoService getCryptoService(PartnerCode partnerCode) {
         Partner partner = partnerRepository.findByPartnerCodeAndActive(partnerCode, true)
                 .orElseThrow(() -> new CryptoException(partnerCode + " 파트너 정보 없음"));
@@ -38,13 +37,21 @@ public class CryptoFactory {
     }
 
     // 키 교체 시 캐시 초기화 - 관리자 API 또는 Partner 업데이트 시 호출
-    @CacheEvict(value = "cryptoService", key = "#partnerCode")
+    @CacheEvict(
+            value = "cryptoService",
+            key = "#partnerCode",
+            cacheManager = "caffeineCacheManager"
+    )
     public void evictCryptoService(PartnerCode partnerCode) {
         log.info("[{}] 암호화 설정 캐시 초기화", partnerCode);
     }
 
     // 전체 캐시 초기화
-    @CacheEvict(value = "cryptoService", allEntries = true)
+    @CacheEvict(
+            value = "cryptoService",
+            allEntries = true,
+            cacheManager = "caffeineCacheManager"
+    )
     public void evictAllCryptoService() {
         log.info("전체 암호화 설정 캐시 초기화");
     }

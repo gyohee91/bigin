@@ -26,6 +26,7 @@
 | 콜백 동시성 제어 | JPA 비관적 락 (`PESSIMISTIC_WRITE`)                  | 멀티 인스턴스 환경에서 DB 커넥션 점유 누적 위험      |
 | 중복 요청 방지 | DB 조건절 조회 (`existsByUserIdAndLoanTypeAndStatus`) | 동시 요청 시 두 Pod 모두 통과 가능            |
 | 업무 식별번호 채번 | Oracle Sequence 기반                               | DB 부하가 높은 상황에서 채번 요청도 DB에 집중 |
+| 상품 정보 조회 | DB 조회 (`findActiveByPartnerCodeAndLoanType`) | 매 한도조회 요청마다 금융사 수만큼 반복 DB 조회 발생 |
 
 ### 프로젝트 목적
 
@@ -41,6 +42,7 @@
 | 콜백 동시성 제어 | JPA 비관적 락 | Redis 분산락 (Redisson) |
 | 중복 요청 방지 | DB 조건절 조회 | Redis 분산락 (`tryLock(0s)`) |
 | 업무 식별번호 채번 | Oracle Sequence + 채번 테이블 | Redis INCR + Lua 스크립트 |
+| 상품 정보 조회 | DB 직접 조회 | Redis 캐싱 (`@Cacheable`, TTL 6시간) |
 
 <br>
 
@@ -55,7 +57,6 @@
 | Architecture | Layered Architecture | Domain-driven Package Structure |
 | DB           | Oracle DB            | H2 DB (In-memory)               |
 | API 통신       | RestTemplate         | RestClient                      |
-| 채번           | Oracle Sequence      | Redis INCR                      |
 
 ### 개인 프로젝트 상세 스택
 
@@ -71,6 +72,8 @@
 | API 문서    | SpringDoc OpenAPI (Swagger)             |
 | Build     | Gradle                                  |
 | 메시지큐      | Apache Kafka                            |
+| 캐싱 | Redis Cache (`@Cacheable`), Caffeine (로컬 캐시) |
+| 분산처리 | Redis (Redisson 분산락, INCR 채번) |
 
 
 <br>
@@ -84,6 +87,7 @@ com.ghyinc.finance
 │   │   ├── controller         # API 진입점
 │   │   ├── service            # 비즈니스 로직
 │   │   │   ├── LoanLimitService.java
+│   │   │   ├── LoanLimitEventHandler.java     # 한도조회 처리 이벤트 리스너
 │   │   │   ├── LoanLimitSenderService.java    # @Async 비동기 전송
 │   │   │   └── LoanLimitResultService.java    # 콜백 수신 처리
 │   │   ├── adaptor            # 금융사별 API 변환
@@ -139,13 +143,19 @@ com.ghyinc.finance
 FE → POST /api/loan/limit/inquiry
          │
          ▼
-  LoanLimitService
+  LoanLimitService                      [HTTP 요청 스레드]
   ├── Strategy 선택 (대출유형별)
   ├── 외부데이터 조회 (Nice DNR 등)
   ├── LoanLimitInquiry INSERT (PENDING)
+  ├── ApplicationEventPublisher.publishEvent(LoanLimitInquiryCreatedEvent)
   └── 202 Accepted 즉시 응답
          │
-         ▼ @Async (병렬)
+         ▼ @TransactionalEventListener(AFTER_COMMIT)
+  LoanLimitEventHandler.handleInquiryCreated()
+         │  트랜잭션 커밋 후 실행 보장
+         │  (커밋 전 실행 시 콜백이 먼저 도착해도 Inquiry 조회 불가 → Race Condition)
+         │
+         ▼ @Async ("loanLimitExecutor") [별도 스레드 — HTTP 스레드 즉시 해제]
   LoanLimitSenderService
   ├── LoanLimitResult INSERT       (금융사당 1건)
   ├── LoanLimitProductResult INSERT (상품당 1건, PENDING 선저장)
@@ -166,8 +176,8 @@ FE → POST /api/loan/limit/inquiry
          ▼ Kafka (notification.send)
   NotificationEventConsumer
   └── 실제 Push/SMS 발송
-         
-  Callback
+─────────────────────────────────────────────────────
+  Callback (금융사 → 플랫폼)
   금융사 → POST /api/loan/limit/callback
   LoanLimitResultService
   ├── loReqtNo + productCode로 선저장 데이터 조회 및 UPDATE
@@ -429,6 +439,26 @@ CryptoService cryptoService = cryptoFactory.getCryptoService(partnerCode);
 String encryptedRrn = cryptoService.encrypt(request.getRrn(), partnerCode);
 ```
 
+### Caffeine 캐시 적용
+
+`CryptoFactory.getCryptoService()`에 Caffeine 로컬 캐시 적용.
+
+```
+적용 이유
+  → CryptoService 객체 자체가 직렬화 불가 (SecretKeySpec, Cipher 등)
+  → 인스턴스 간 공유 불필요 — 각 인스턴스가 DB에서 동일한 키를 보유
+  → JVM 내 메모리 접근으로 Redis 네트워크 비용 없음
+```
+
+```java
+@Cacheable(
+    value = "cryptoService",
+    key = "#partnerCode",
+    cacheManager = "caffeineCacheManager"
+)
+public CryptoService getCryptoService(PartnerCode partnerCode) { ... }
+```
+
 <br>
 
 ## 🚗 오토담보/주택담보 대출 - Nice DNR, KB부동산 시세정보 연동
@@ -625,17 +655,19 @@ partner-api:
 
 주요 테스트 대상은 다음과 같습니다.
 
-| 테스트 클래스                      | 검증 항목 |
-|------------------------------|---|
-| LoanLimitServiceTest         | 한도조회 요청 비즈니스 로직 |
-| LoanLimitSenderServiceTest   | 비동기 전송 및 상태 처리 |
-| LoanLimitResultServiceTest   | 콜백 수신 및 Outbox INSERT 검증 |
-| LoanLimitStrategyFactoryTest | 대출유형별 전략 검증 |
-| OutboxEventServiceTest       | Outbox 즉시 발행 / 실패 시 PENDING 유지 |
-| AesCryptoServiceTest         | AES 암복호화 |
-| RsaCryptoServiceTest         | RSA 암복호화 |
-| RestApiClientTest            | CB 상태 전환 (CLOSED→OPEN→HALF_OPEN→CLOSED) |
-| LoReqtNoGeneratorTest        | 채번 검증 |
+| 테스트 클래스                           | 검증 항목                                   |
+|-----------------------------------|-----------------------------------------|
+| LoanLimitServiceTest              | 한도조회 요청 비즈니스 로직                         |
+| LoanLimitSenderServiceTest        | 비동기 전송 및 상태 처리                          |
+| LoanLimitResultServiceTest        | 콜백 수신 및 Outbox INSERT 검증                |
+| LoanLimitStrategyFactoryTest      | 대출유형별 전략 검증                             |
+| OutboxEventServiceTest            | Outbox 즉시 발행 / 실패 시 PENDING 유지          |
+| AesCryptoServiceTest              | AES 암복호화                                |
+| RsaCryptoServiceTest              | RSA 암복호화                                |
+| RestApiClientTest                 | CB 상태 전환 (CLOSED→OPEN→HALF_OPEN→CLOSED) |
+| LoReqtNoGeneratorTest             | 채번 검증                                   |
+| CryptoFactoryTest                 | 파트너별 CryptoService 생성                   |
+| CryptoFactoryCacheIntegrationTest | Caffeine Cache hit 동시성 테스트              |
 
 <br>
 
@@ -651,16 +683,19 @@ partner-api:
 | Adaptor에서 CB Fallback 처리 | @CircuitBreaker 어노테이션 방식은 금융사별 독립 인스턴스 지정 불가, 수동 catch로 명시적 Fallback 처리 |
 | Partial Failure 패턴 | 특정 금융사 CB OPEN 시 Fallback 응답 반환, 나머지 금융사 정상 진행                          |
 | 타임아웃 계층 분리 | readTimeout(CB 실패 기록) + orTimeout(스레드 강제 해제) 역할 분리                      |
-| 암호화 키 DB 관리 | DB에서 알고리즘/키 관리, 배포 없이 키 교체 가능, CryptoFactory의 supports()로 구현체 자동 선택     |
+| 암호화 키 Caffeine 캐싱 | Caffeine 로컬 캐시로 JVM 내 보관, 직렬화 없이 객체 그대로 캐싱     |
 | ExternalDataContext | 외부 조회 결과 파라미터 고정 (Nice DNR, KB시세 등 확장 시 파라미터 불변)                        |
 | Kafka 알림 연동 | 다중 인스턴스 환경에서 이벤트 소실 방지, loan-notification 도메인 물리적 분리                     |
+| 상품 정보 Redis 캐싱 | 매 한도조회 요청마다 금융사별 상품 DB 조회 반복 → `@Cacheable` + `ProductCache` DTO 변환으로 Redis 캐싱, Entity 직렬화 문제 회피 |
 
 ### 실무 대비 개인 프로젝트 개선 사항
 
-| 항목 | 실무 프로젝트                | 개인 프로젝트                   | 개선 이유                                |
-|---|------------------------|---------------------------|--------------------------------------|
-| 콜백 동시성 제어 | JPA 비관적 락              | Redis 분산락 (Redisson)      | 멀티 Pod 환경에서 DB 커넥션 점유 없이 동시성 제어      |
-| 중복 요청 방지 | DB 조건절 (`existsBy...`) | Redis 분산락 (`tryLock(0s)`) | 두 Pod 동시 통과 가능한 race condition 원천 차단 |
-| 업무 식별번호 채번 | Oracle Sequence        | Redis INCR + Lua 스크립트     | Oracle 의존 제거, 서버 재기동 후에도 gap 없는 연속 채번                       |
+| 항목         | 실무 프로젝트                | 개인 프로젝트                   | 개선 이유                                 |
+|------------|------------------------|---------------------------|---------------------------------------|
+| 콜백 동시성 제어  | JPA 비관적 락              | Redis 분산락 (Redisson)      | 멀티 Pod 환경에서 DB 커넥션 점유 없이 동시성 제어       |
+| 중복 요청 방지   | DB 조건절 (`existsBy...`) | Redis 분산락 (`tryLock(0s)`) | 두 Pod 동시 통과 가능한 race condition 원천 차단  |
+| 업무 식별번호 채번 | Oracle Sequence        | Redis INCR + Lua 스크립트     | Oracle 의존 제거, 서버 재기동 후에도 gap 없는 연속 채번 |
+| 상품 정보 조회   | DB 조회 (`findBy...`)    | Redis 캐싱     | 매 요청마다 금융사별 상품 DB 조회 반복 발생 문제 해결      |
+
 
 <br>

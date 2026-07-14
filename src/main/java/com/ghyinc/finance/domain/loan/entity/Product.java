@@ -40,4 +40,8 @@ public class Product {
     @Column(nullable = false)
     @Comment("활성화 여부")
     private Boolean active;
+
+    public void changeActive(boolean active) {
+        this.active = active;
+    }
 }
