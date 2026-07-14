@@ -5,17 +5,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
+import com.ghyinc.finance.domain.loan.dto.ProductCache;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
-import com.ghyinc.finance.domain.loan.entity.Product;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.JobType;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.factory.LoanLimitAdaptorFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
-import com.ghyinc.finance.domain.loan.repository.ProductRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
-import com.ghyinc.finance.global.event.impl.KafkaLoanLimitEventPublisher;
 import com.ghyinc.finance.global.exception.ExternalApiFailException;
 import com.ghyinc.finance.global.outbox.entity.OutboxEvent;
 import com.ghyinc.finance.global.outbox.entity.OutboxStatus;
@@ -52,7 +50,7 @@ class LoanLimitSenderServiceTest {
     private LoanLimitInquiryRepository loanLimitInquiryRepository;
 
     @Mock
-    private ProductRepository productRepository;
+    private ProductService productService;
 
     @Mock
     private LoReqtNoGenerator generator;
@@ -89,10 +87,15 @@ class LoanLimitSenderServiceTest {
                 .build();
     }
 
-    private Product buildProduct(String productCode) {
-        Product product = mock(Product.class);
-        given(product.getProductCode()).willReturn(productCode);
-        return product;
+    private ProductCache buildProductCache(String productCode, PartnerCode partnerCode) {
+        return ProductCache.builder()
+                .id(1L)
+                .productCode(productCode)
+                .productName("신용상품")
+                .loanType(LoanType.PERSONAL_CREDIT)
+                .partnerCode(partnerCode)
+                .active(true)
+                .build();
     }
 
     @Test
@@ -102,9 +105,9 @@ class LoanLimitSenderServiceTest {
         LoanLimitInquiry inquiry = this.buildInquiry();
         given(loanLimitInquiryRepository.findById(1L)).willReturn(Optional.of(inquiry));
 
-        Product product = this.buildProduct("P060100206");
-        given(productRepository.findActiveByPartnerCodeAndLoanType(PartnerCode.LINE_BANK, LoanType.PERSONAL_CREDIT))
-                .willReturn(List.of(product));
+        ProductCache productCache = this.buildProductCache("P060100206", PartnerCode.LINE_BANK);
+        given(productService.getActiveProducts(PartnerCode.LINE_BANK, LoanType.PERSONAL_CREDIT))
+                .willReturn(List.of(productCache));
         given(generator.generate("LR")).willReturn("LR20260410AAA");
 
         LoanLimitAdaptor adaptor = mock(LoanLimitAdaptor.class);
@@ -165,9 +168,9 @@ class LoanLimitSenderServiceTest {
     void inquiry_sendFailed_inquiryFailed() {
         LoanLimitInquiry inquiry = this.buildInquiry();
         given(loanLimitInquiryRepository.findById(1L)).willReturn(Optional.of(inquiry));
-        Product product = this.buildProduct("P060100206");
-        given(productRepository.findActiveByPartnerCodeAndLoanType(any(), any()))
-                .willReturn(List.of(product));
+        ProductCache productCache = this.buildProductCache("P060100206", PartnerCode.LINE_BANK);
+        given(productService.getActiveProducts(any(), any()))
+                .willReturn(List.of(productCache));
 
         LoanLimitAdaptor adaptor = mock(LoanLimitAdaptor.class);
         given(adaptorFactory.getAdaptor(any())).willReturn(adaptor);
@@ -196,13 +199,13 @@ class LoanLimitSenderServiceTest {
         // given
         LoanLimitInquiry loanLimitInquiry = this.buildInquiry();
         given(loanLimitInquiryRepository.findById(1L)).willReturn(Optional.of(loanLimitInquiry));
-        Product kakaoProduct = this.buildProduct("TA");
-        Product tossProduct = this.buildProduct("FNQ005");
+        ProductCache kakaoProductCache = this.buildProductCache("TA", PartnerCode.KAKAO_BANK);
+        ProductCache tossProductCache = this.buildProductCache("FNQ005", PartnerCode.TOSS_BANK);
 
-        given(productRepository.findActiveByPartnerCodeAndLoanType(eq(PartnerCode.KAKAO_BANK), any()))
-                .willReturn(List.of(kakaoProduct));
-        given(productRepository.findActiveByPartnerCodeAndLoanType(eq(PartnerCode.TOSS_BANK), any()))
-                .willReturn(List.of(tossProduct));
+        given(productService.getActiveProducts(eq(PartnerCode.KAKAO_BANK), any()))
+                .willReturn(List.of(kakaoProductCache));
+        given(productService.getActiveProducts(eq(PartnerCode.TOSS_BANK), any()))
+                .willReturn(List.of(tossProductCache));
         given(generator.generate("LR")).willReturn("LR20260410AAA", "LR20260410BBB");
 
         LoanLimitAdaptor kakaoAdaptor = mock(LoanLimitAdaptor.class);
@@ -236,10 +239,10 @@ class LoanLimitSenderServiceTest {
         // given
         LoanLimitInquiry inquiry = this.buildInquiry();
         given(loanLimitInquiryRepository.findById(1L)).willReturn(Optional.of(inquiry));
-        Product product1 = this.buildProduct("P060100206");
-        Product product2 = this.buildProduct("P060100205");
-        given(productRepository.findActiveByPartnerCodeAndLoanType(eq(PartnerCode.LINE_BANK), any()))
-                .willReturn(List.of(product1, product2));
+        ProductCache productCache1 = this.buildProductCache("P060100206", PartnerCode.LINE_BANK);
+        ProductCache productCache2 = this.buildProductCache("P060100205", PartnerCode.LINE_BANK);
+        given(productService.getActiveProducts(eq(PartnerCode.LINE_BANK), any()))
+                .willReturn(List.of(productCache1, productCache2));
         given(generator.generate("LR")).willReturn("LR_AAA", "LR_BBB");
 
         LoanLimitAdaptor adaptor = mock(LoanLimitAdaptor.class);

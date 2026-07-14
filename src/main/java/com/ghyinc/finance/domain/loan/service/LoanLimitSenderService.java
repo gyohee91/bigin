@@ -13,7 +13,6 @@ import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.factory.LoanLimitAdaptorFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
-import com.ghyinc.finance.domain.loan.repository.ProductRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.global.event.impl.KafkaLoanLimitEventPublisher;
@@ -64,8 +63,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class LoanLimitSenderService {
     private final LoanLimitAdaptorFactory adaptorFactory;
+    private final ProductService productService;
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
-    private final ProductRepository productRepository;
     private final OutboxEventRepository outboxEventRepository;
 
     private final LoReqtNoGenerator generator;
@@ -126,7 +125,7 @@ public class LoanLimitSenderService {
             Map<PartnerCode, List<LoanLimitProductResult>> productResultMap = partnerCodes.stream()
                     .collect(Collectors.toMap(
                             partnerCode -> partnerCode,
-                            partnerCode -> productRepository.findActiveByPartnerCodeAndLoanType(partnerCode, adaptorRequest.loanType())
+                            partnerCode -> productService.getActiveProducts(partnerCode, adaptorRequest.loanType())
                                     .stream()
                                     .map(product -> {
                                         LoanLimitProductResult productResult =
@@ -134,7 +133,7 @@ public class LoanLimitSenderService {
                                                         .loanLimitInquiry(loanLimitInquiry)
                                                         .loReqtNo(generator.generate("LR")) //신청번호 채번
                                                         .partnerCode(partnerCode)
-                                                        .productCode(product.getProductCode())
+                                                        .productCode(product.productCode())
                                                         .status(PartnerInquiryStatus.PENDING)
                                                         .build();
                                         loanLimitInquiry.addProductResult(productResult);

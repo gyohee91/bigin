@@ -19,6 +19,14 @@
 - Layered Architecture (Controller → Service → Repository)
 - 기존 시스템과의 호환성을 고려한 점진적 개선만 가능
 
+또한 아래와 같은 기술적 한계를 실무에서 직접 경험했습니다.
+
+| 문제 영역 | 실무 방식                                            | 한계                                |
+|---|--------------------------------------------------|-----------------------------------|
+| 콜백 동시성 제어 | JPA 비관적 락 (`PESSIMISTIC_WRITE`)                  | 멀티 인스턴스 환경에서 DB 커넥션 점유 누적 위험      |
+| 중복 요청 방지 | DB 조건절 조회 (`existsByUserIdAndLoanTypeAndStatus`) | 동시 요청 시 두 Pod 모두 통과 가능            |
+| 업무 식별번호 채번 | Oracle Sequence 기반                               | DB 부하가 높은 상황에서 채번 요청도 DB에 집중 |
+
 ### 프로젝트 목적
 
 실무에서 직접 경험한 **제휴 금융사 한도조회 시스템의 핵심 도메인**을 새로운 기술 스택과 아키텍처로 재설계하여 구현했습니다.
@@ -26,6 +34,13 @@
 - 실무와 동일한 비즈니스 로직 (콜백 기반 비동기 한도조회, 상품별 채번, 디자인 패턴 등)
 - Java 17 + Spring Boot 3.5로 업그레이드하여 최신 기능 적용
 - Layered Architecture → Domain-driven Package Structure로 전환
+- 실무에서 경험한 기술적 한계를 Redis 기반으로 개선
+
+| 개선 항목 | 실무 방식 | bigin 방식 |
+  |---|---|---|
+| 콜백 동시성 제어 | JPA 비관적 락 | Redis 분산락 (Redisson) |
+| 중복 요청 방지 | DB 조건절 조회 | Redis 분산락 (`tryLock(0s)`) |
+| 업무 식별번호 채번 | Oracle Sequence + 채번 테이블 | Redis INCR + Lua 스크립트 |
 
 <br>
 
@@ -33,28 +48,29 @@
 
 ### 실무 vs 개인 프로젝트 비교
 
-| 구분           | 실무         | 개인 프로젝트 (Bigin)                 |
-|--------------|--------------------|---------------------------------|
-| Language     | Java 8             | Java 17                         |
-| Framework    | Spring Boot 2.7    | Spring Boot 3.5                 |
+| 구분           | 실무                   | 개인 프로젝트 (Bigin)                 |
+|--------------|----------------------|---------------------------------|
+| Language     | Java 8               | Java 17                         |
+| Framework    | Spring Boot 2.7      | Spring Boot 3.5                 |
 | Architecture | Layered Architecture | Domain-driven Package Structure |
-| DB           | Oracle DB          | H2 DB (In-memory)               |
-| API 통신       | RestTemplate       | RestClient                      |
+| DB           | Oracle DB            | H2 DB (In-memory)               |
+| API 통신       | RestTemplate         | RestClient                      |
+| 채번           | Oracle Sequence      | Redis INCR                      |
 
 ### 개인 프로젝트 상세 스택
 
-| 구분        | 기술                                   |
-|-----------|--------------------------------------|
-| Language  | Java 17                              |
-| Framework | Spring Boot 3.5                      |
-| ORM       | Spring Data JPA / Hibernate          |
-| DB        | H2 DB                                |
-| 비동기       | Spring @Async / CompletableFuture    |
-| 장애격리      | Resilience4j Circuit Breaker / Retry |
-| 암복호화      | AES-256-CBC, AES-256-ECB, RSA-OAEP   |
-| API 문서    | SpringDoc OpenAPI (Swagger)          |
-| Build     | Gradle                               |
-| 메시지큐      | Apache Kafka                         |
+| 구분        | 기술                                      |
+|-----------|-----------------------------------------|
+| Language  | Java 17                                 |
+| Framework | Spring Boot 3.5                         |
+| ORM       | Spring Data JPA / Hibernate             |
+| DB        | H2 DB                                   |
+| 비동기       | Spring @Async / CompletableFuture       |
+| 장애격리      | Resilience4j Circuit Breaker / Retry / Rate Limiter |
+| 암복호화      | AES-256-CBC, AES-256-ECB, RSA-OAEP      |
+| API 문서    | SpringDoc OpenAPI (Swagger)             |
+| Build     | Gradle                                  |
+| 메시지큐      | Apache Kafka                            |
 
 
 <br>
@@ -367,8 +383,30 @@ resilience4j:
           - io.github.resilience4j.circuitbreaker.CallNotPermittedException
 ```
 
+### Rate Limiter 설정
+
+금융사 API 호출량을 제어하여 과도한 요청으로 인한 금융사 측 차단을 방지합니다.
+
+```yaml
+resilience4j:
+  ratelimiter:
+    configs:
+      default:
+        limit-for-period: 10          # 갱신 주기당 최대 허용 요청 수
+        limit-refresh-period: 1s      # 갱신 주기 (1초)
+        timeout-duration: 0           # 대기 없이 즉시 실패 (0 = 허용량 초과 시 즉시 예외)
+    instances:
+      KAKAO_BANK:
+        base-config: default
+      TOSS_BANK:
+        base-config: default
+      LINE_BANK:
+        base-config: default
+```
+
 ```
 Retry → Circuit Breaker 순으로 실행
+  → Rate Limiter 초과 시 RequestNotPermitted 예외 발생
   → maxAttempts(3) 모두 실패 후 CB 실패로 기록
   → CB OPEN 시 Retry 없이 즉시 Fallback 실행 (ignoreExceptions)
 ```
@@ -521,10 +559,14 @@ notification     NotificationService     → 알림 발송 이벤트
 Optional<LoanLimitInquiry> findInquiryByLoReqtNoAndProduceCodeWithLock(@Param("loReqtNo") String loReqtNo, @Param("productCode") String productCode);
 ```
 
+## 🔢 업무 식별번호 채번 - Redis INCR
+
 ```
-금융사 수에 따른 동시성 전략
-  현재 → 비관적 락
-  예정 → Message Queue 직렬화 처리
+> 실무에서는 Oracle Sequence와 채번 테이블을 조합해서 사용했습니다.
+> Oracle Sequence는 중복 없음을 보장하지만, 날짜 기반 초기화를 위한 별도 채번 테이블 관리가 필요하고
+> 서버 재기동 시 Sequence cache gap이 발생할 수 있습니다.
+> 해당 프로젝트에서는 Redis INCR로 전환하여 Oracle 의존 제거, 날짜 기반 자정 초기화(TTL),
+> gap 없는 연속 채번을 동시에 해결했습니다.
 ```
 
 <br>
@@ -583,17 +625,17 @@ partner-api:
 
 주요 테스트 대상은 다음과 같습니다.
 
-| 테스트 클래스 | 검증 항목 |
-|---|---|
-| LoanLimitServiceTest | 한도조회 요청 비즈니스 로직 |
-| LoanLimitSenderServiceTest | 비동기 전송 및 상태 처리 |
-| LoanLimitCallbackServiceTest | 콜백 수신 및 Outbox INSERT 검증 |
-| LoanLimitStrategyTest | 대출유형별 전략 검증 |
-| OutboxEventServiceTest | Outbox 즉시 발행 / 실패 시 PENDING 유지 |
-| AesCryptoServiceTest | AES 암복호화 |
-| RsaCryptoServiceTest | RSA 암복호화 |
-| RestApiClientTest | CB 상태 전환 (CLOSED→OPEN→HALF_OPEN→CLOSED) |
-| InquiryNoGeneratorTest | 채번 중복 없음 검증 |
+| 테스트 클래스                      | 검증 항목 |
+|------------------------------|---|
+| LoanLimitServiceTest         | 한도조회 요청 비즈니스 로직 |
+| LoanLimitSenderServiceTest   | 비동기 전송 및 상태 처리 |
+| LoanLimitResultServiceTest   | 콜백 수신 및 Outbox INSERT 검증 |
+| LoanLimitStrategyFactoryTest | 대출유형별 전략 검증 |
+| OutboxEventServiceTest       | Outbox 즉시 발행 / 실패 시 PENDING 유지 |
+| AesCryptoServiceTest         | AES 암복호화 |
+| RsaCryptoServiceTest         | RSA 암복호화 |
+| RestApiClientTest            | CB 상태 전환 (CLOSED→OPEN→HALF_OPEN→CLOSED) |
+| LoReqtNoGeneratorTest        | 채번 검증 |
 
 <br>
 
@@ -605,11 +647,20 @@ partner-api:
 | LoanLimitResult 분리 | 상품 수가 많아도 금융사당 1건만 INSERT/UPDATE                                        |
 | 통신방식별 ApiClient 분리 | REST/전용선 금융사 혼재 대응, OCP 준수                                              |
 | 금융사별 Circuit Breaker | 특정 금융사 장애 시 다른 금융사 영향 없이 격리                                             |
+| Rate Limiter 도입 | 금융사 API Rate Limit 정책 준수, CB 불필요 OPEN 방지, RequestNotPermitted를 CB 실패에서 제외 |
 | Adaptor에서 CB Fallback 처리 | @CircuitBreaker 어노테이션 방식은 금융사별 독립 인스턴스 지정 불가, 수동 catch로 명시적 Fallback 처리 |
 | Partial Failure 패턴 | 특정 금융사 CB OPEN 시 Fallback 응답 반환, 나머지 금융사 정상 진행                          |
 | 타임아웃 계층 분리 | readTimeout(CB 실패 기록) + orTimeout(스레드 강제 해제) 역할 분리                      |
 | 암호화 키 DB 관리 | DB에서 알고리즘/키 관리, 배포 없이 키 교체 가능, CryptoFactory의 supports()로 구현체 자동 선택     |
 | ExternalDataContext | 외부 조회 결과 파라미터 고정 (Nice DNR, KB시세 등 확장 시 파라미터 불변)                        |
 | Kafka 알림 연동 | 다중 인스턴스 환경에서 이벤트 소실 방지, loan-notification 도메인 물리적 분리                     |
+
+### 실무 대비 개인 프로젝트 개선 사항
+
+| 항목 | 실무 프로젝트                | 개인 프로젝트                   | 개선 이유                                |
+|---|------------------------|---------------------------|--------------------------------------|
+| 콜백 동시성 제어 | JPA 비관적 락              | Redis 분산락 (Redisson)      | 멀티 Pod 환경에서 DB 커넥션 점유 없이 동시성 제어      |
+| 중복 요청 방지 | DB 조건절 (`existsBy...`) | Redis 분산락 (`tryLock(0s)`) | 두 Pod 동시 통과 가능한 race condition 원천 차단 |
+| 업무 식별번호 채번 | Oracle Sequence        | Redis INCR + Lua 스크립트     | Oracle 의존 제거, 서버 재기동 후에도 gap 없는 연속 채번                       |
 
 <br>
