@@ -578,6 +578,151 @@ notification     NotificationService     → 알림 발송 이벤트
 
 <br>
 
+## 🗃 캐싱 전략
+
+조회 빈도가 높고 변경 빈도가 낮은 데이터에 캐싱을 적용하여 DB 부하를 줄였습니다.
+데이터 특성에 따라 **Redis 캐시**와 **Caffeine 로컬 캐시**를 분리하여 적용했습니다.
+
+### 캐시 저장소 선택 기준
+
+| 구분 | Redis 캐시 | Caffeine 로컬 캐시 |
+|---|---|---|
+| 적용 대상 | 상품 정보 (`ProductCache`) | 암호화 키 (`CryptoService`) |
+| 선택 이유 | 멀티 Pod 간 정합성 필요 | 보안상 외부 저장소 저장 불가 |
+| Pod 간 동기화 | O (Redis 공유) | X (Pod별 독립) |
+| 무효화 방식 | `@CacheEvict` + TTL | `@CacheEvict` + TTL |
+| TTL | 6시간 | 1시간 |
+
+```
+멀티 Pod 환경에서 상품 정보를 로컬 캐시로 관리하면
+  Pod A에서 상품 비활성화 → Pod A 캐시만 evict
+  Pod B는 여전히 비활성화된 상품을 캐시에서 반환 → 정합성 깨짐
+
+Redis 캐시 적용 후
+  Pod A에서 상품 비활성화 → Redis 캐시 evict
+  Pod B도 다음 조회 시 DB에서 갱신된 데이터 반환 → 정합성 유지
+```
+
+### 1. 상품 정보 캐싱 — Redis (`@Cacheable`)
+
+한도조회 요청 시 금융사별 상품 목록을 조회합니다. 상품 정보는 자주 조회되지만 변경 빈도가 낮아 캐싱 효과가 큽니다.
+
+```
+캐시 키: products::{partnerCode}:{loanType}
+예시:     products::KAKAO_BANK:PERSONAL_CREDIT
+
+적용 효과
+  피크 트래픽 기준 금융사 6개 × 요청당 1회 조회
+  → 캐시 미적용 시 DB 조회 집중
+  → 캐시 적용 후 첫 조회만 DB, 이후 Redis에서 처리
+```
+
+```java
+// ProductService
+@Cacheable(
+    value = "products",
+    key = "#partnerCode.name() + ':' + #loanType.name()"
+)
+public List<ProductCache> getActiveProducts(PartnerCode partnerCode, LoanType loanType) {
+    return productRepository.findActiveByPartnerCodeAndLoanType(partnerCode, loanType)
+            .stream()
+            .map(ProductCache::from)
+            .toList();
+}
+
+// 상품 변경 시 캐시 무효화
+@CacheEvict(value = "products",
+            key = "#product.partnerCode.name() + ':' + #product.loanType.name()")
+public void updateProductStatus(ProductCache product, boolean active) { ... }
+
+// 전체 캐시 초기화 (관리자 API)
+@CacheEvict(value = "products", allEntries = true)
+public void evictAllProductCache() { ... }
+```
+
+#### JPA Entity 직렬화 문제 해결
+
+`@Cacheable`로 JPA Entity를 Redis에 직접 저장하면 두 가지 문제가 발생합니다.
+
+```
+① NotSerializableException
+   → Entity는 Serializable 미구현
+   → 연관관계(@ManyToOne Partner)까지 직렬화 시 민감 정보 노출 위험
+
+② LazyInitializationException
+   → 캐시 저장 시점에 Lazy 연관관계 초기화 안 됨
+```
+
+별도 `ProductCache` DTO로 변환 후 캐싱하여 해결했습니다.
+
+```java
+@Builder
+@JsonDeserialize(builder = ProductCache.ProductCacheBuilder.class)
+public record ProductCache(
+        Long id,
+        String productCode,
+        String productName,
+        LoanType loanType,
+        PartnerCode partnerCode,
+        boolean active
+) {
+    public static ProductCache from(Product product) {
+        return ProductCache.builder()
+                .id(product.getId())
+                .productCode(product.getProductCode())
+                .productName(product.getProductName())
+                .loanType(product.getLoanType())
+                .partnerCode(product.getPartner().getPartnerCode())
+                .active(product.isActive())
+                .build();
+    }
+}
+```
+
+### 2. 암호화 키 캐싱 — Caffeine 로컬 캐시
+
+금융사별 암호화 키(`secretKeySpec`)와 `CryptoService` 구현체를 캐싱합니다.
+
+```
+Redis 대신 Caffeine을 선택한 이유
+  → 암호화 키(AES SecretKeySpec, RSA 개인키)는 보안상 외부 저장소에 저장 불가
+  → CryptoService 객체 자체가 직렬화 불가 (SecretKeySpec, Cipher 등)
+  → Pod 간 공유가 불필요 (각 Pod에서 독립적으로 동일한 키 보유 가능)
+  → JVM 내 메모리 접근으로 네트워크 비용 없음
+```
+
+```java
+@Cacheable(
+    value = "cryptoService",
+    key = "#partnerCode",
+    cacheManager = "caffeineCacheManager"   // ← 로컬 캐시 명시
+)
+public CryptoService getCryptoService(PartnerCode partnerCode) { ... }
+```
+
+### 3. 캐시 매니저 구성
+
+```java
+// Redis 캐시 — 상품 정보 (멀티 Pod 정합성)
+@Primary
+RedisCacheManager → "products" 캐시, TTL 6시간
+
+// Caffeine 캐시 — 암호화 키 (보안 민감 데이터)
+CaffeineCacheManager → "cryptoService" 캐시, TTL 1시간, 최대 100개
+```
+
+```
+두 캐시 매니저를 분리한 이유
+  단일 RedisCacheManager 사용 시
+    → activateDefaultTyping(NON_FINAL) 적용
+    → CryptoService(AesCryptoService)까지 JSON 직렬화 시도
+    → No serializer found 오류 발생
+
+  캐시 매니저 분리 후
+    → 상품 정보: Redis JSON 직렬화
+    → 암호화 키: Caffeine JVM 로컬 저장 (직렬화 불필요)
+```
+
 ## 🔄 콜백 동시성 제어
 
 여러 금융사 콜백이 동시에 수신될 때 `LoanLimitInquiry` count 업데이트의 Lost Update를 방지합니다.

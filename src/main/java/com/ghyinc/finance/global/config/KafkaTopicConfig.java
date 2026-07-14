@@ -17,7 +17,6 @@ public class KafkaTopicConfig {
 
     /**
      * 알림서비스 전송
-     * @return
      */
     @Bean
     public NewTopic notificationSendTopic() {
@@ -29,11 +28,18 @@ public class KafkaTopicConfig {
 
     /**
      * 한도조회 완료
-     * @return
      */
     @Bean
     public NewTopic loanLimitSendTopic() {
         return TopicBuilder.name("loan-limit-completed")
+                .partitions(3)
+                .replicas(1)
+                .build();
+    }
+
+    @Bean
+    public NewTopic notificationSendDlqTopic() {
+        return TopicBuilder.name("notification.send.DLT")
                 .partitions(3)
                 .replicas(1)
                 .build();

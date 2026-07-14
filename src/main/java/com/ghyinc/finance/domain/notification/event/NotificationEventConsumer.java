@@ -1,7 +1,6 @@
 package com.ghyinc.finance.domain.notification.event;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.notification.dto.ExternalApiResponse;
 import com.ghyinc.finance.domain.notification.entity.Notification;
@@ -9,6 +8,7 @@ import com.ghyinc.finance.domain.notification.repository.NotificationRepository;
 import com.ghyinc.finance.domain.notification.service.NotificationSenderService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.MDC;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
@@ -52,7 +52,6 @@ public class NotificationEventConsumer {
             // payload에서 requestId 복원 -> Consumer 스레드 MDC에 설정
             String requestId = Optional.ofNullable(event.getRequestId())
                     .orElse(UUID.randomUUID().toString());  //Producer에서 누락된 경우
-
             MDC.put(REQUEST_ID_KEY, requestId);
 
             log.info("[Consumer] 메시지 수신 - id: {}", event.getId());
@@ -66,17 +65,24 @@ public class NotificationEventConsumer {
             if(response.isSuccess()) {
                 notification.markAsSuccess(response.getResultCode());
                 log.info("[Consumer] 발송 성공 - id: {}", event.getId());
-            }
-            else if("UNAVAILABLE".equals(response.getResultCode())) {
+            } else {
                 notification.markAsFailed(response.getResultCode());
-            }
-            else {
-                notification.markAsFailed(response.getResultCode());
+                log.warn("[Consumer] 발송 실패. id={}, code={}",
+                        event.getId(), response.getResultCode());
             }
         } catch (JsonProcessingException e) {
+            // NotRetryableException → DefaultErrorHandler가 즉시 DLQ로 이동
+            log.error("[Consumer] 페이로드 파싱 실패. DLQ 이동. payload={}", payload, e);
             throw new RuntimeException(e);
         } finally {
             MDC.clear();    //Consumer 스레드 재사용 시 이전 requestId 오염 방지
         }
+    }
+
+    @KafkaListener(topics = "notification.send.DLT", groupId = "notification-dlq-group")
+    public void consumeDlq(String payload, ConsumerRecord<String, String> record) {
+        log.error("[DLQ] 처리 실패 메시지 수신. topic={}, offset={}, payload={}",
+                record.topic(), record.offset(), payload);
+        // 필요 시 알림, DB 저장, 관리자 API 호출 등
     }
 }
