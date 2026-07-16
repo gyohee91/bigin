@@ -44,4 +44,12 @@ public class KafkaTopicConfig {
                 .replicas(1)
                 .build();
     }
+
+    @Bean
+    public NewTopic loanLimitSendDlqTopic() {
+        return TopicBuilder.name("loan-limit-completed.DLT")
+                .partitions(3)
+                .replicas(1)
+                .build();
+    }
 }
