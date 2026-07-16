@@ -11,7 +11,9 @@ import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -27,7 +29,7 @@ public class ProductService {
         return productRepository.findActiveByPartnerCodeAndLoanType(partnerCode, loanType)
                 .stream()
                 .map(ProductCache::from)
-                .toList();
+                .collect(Collectors.toCollection(ArrayList::new));
     }
 
     @Transactional
@@ -36,7 +38,7 @@ public class ProductService {
             key = "#product.partnerCode.name() + ':' + #product.loanType.name()"
     )
     public void updateProductStatus(ProductCache productCache, boolean active) {
-        productRepository.findById(productCache.id())
+        productRepository.findById(productCache.getId())
                 .ifPresent(product -> {
                     product.changeActive(active);
                     productRepository.save(product);

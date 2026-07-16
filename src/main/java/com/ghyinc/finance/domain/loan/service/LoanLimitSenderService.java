@@ -133,7 +133,7 @@ public class LoanLimitSenderService {
                                                         .loanLimitInquiry(loanLimitInquiry)
                                                         .loReqtNo(generator.generate("LR")) //신청번호 채번
                                                         .partnerCode(partnerCode)
-                                                        .productCode(product.productCode())
+                                                        .productCode(product.getProductCode())
                                                         .status(PartnerInquiryStatus.PENDING)
                                                         .build();
                                         loanLimitInquiry.addProductResult(productResult);
