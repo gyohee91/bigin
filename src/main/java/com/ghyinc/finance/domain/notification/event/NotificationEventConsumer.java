@@ -8,7 +8,6 @@ import com.ghyinc.finance.domain.notification.repository.NotificationRepository;
 import com.ghyinc.finance.domain.notification.service.NotificationSenderService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.MDC;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
@@ -79,10 +78,4 @@ public class NotificationEventConsumer {
         }
     }
 
-    @KafkaListener(topics = "notification.send.DLT", groupId = "notification-dlq-group")
-    public void consumeDlq(String payload, ConsumerRecord<String, String> record) {
-        log.error("[DLQ] 알림 발송 이벤트 처리 실패. topic={}, offset={}, payload={}",
-                record.topic(), record.offset(), payload);
-        // 필요 시 알림, DB 저장, 관리자 API 호출 등
-    }
 }

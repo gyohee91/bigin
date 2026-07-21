@@ -67,7 +67,7 @@ public class DlqEvent {
 
     public void markAsDead(String reason) {
         this.status = DlqStatus.DEAD;
-        this.errorMessage = reason;
+        this.errorMessage = this.errorMessage + " | DEAD: " + reason;
     }
 
     public boolean isMaxRetryExceeded() {

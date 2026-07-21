@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 지수 백오프 자동 재시도
@@ -35,46 +36,36 @@ public class DlqRetryScheduler {
         List<DlqEvent> targets = dlqEventRepository.findRetryTarget(
                 List.of(DlqStatus.PENDING, DlqStatus.RETRYING),
                 LocalDateTime.now(),
-                50  // 한 번에 최대 50건
+                50
         );
 
-        if(targets.isEmpty())   return;
-        
-        log.info("[DLQ 재시도] 대상 {}건", targets.size());
+        if (targets.isEmpty()) return;
 
+        log.info("[DLQ 재시도] 대상 {}건", targets.size());
         targets.forEach(this::retryEvent);
     }
 
     private void retryEvent(DlqEvent dlqEvent) {
-        // 최대 재시도 초과 → DEAD 처리
-        if(dlqEvent.isMaxRetryExceeded()) {
+        if (dlqEvent.isMaxRetryExceeded()) {
             dlqEvent.markAsDead("최대 재시도 횟수(" + dlqEvent.getRetryCount() + "회) 초과");
-            dlqEventRepository.save(dlqEvent);
-            log.error("[DLQ] 최대 재시도 초과. id={}, topic={}",
-                    dlqEvent.getId(), dlqEvent.getTopic());
-            // Slack 알림 추가
+            log.error("[DLQ] 최대 재시도 초과. id={}, topic={}", dlqEvent.getId(), dlqEvent.getTopic());
             return;
         }
 
-        try {
-            dlqEvent.markAsRetrying();
+        dlqEvent.markAsRetrying();
 
-            // 원본 토픽으로 재발행
-            kafkaTemplate.send(
-                    dlqEvent.getTopic(),
-                    dlqEvent.getPayload()
-            ).whenComplete(((result, ex) -> {
-                if(ex != null) {
-                    log.error("[DLQ] 재발행 실패. id={}", dlqEvent.getId(), ex);
-                } else {
-                    dlqEvent.markAsResolved();
-                    dlqEventRepository.save(dlqEvent);
-                    log.info("[DLQ] 재발행 성공. id={}, topic={}, retry={}회",
-                            dlqEvent.getId(), dlqEvent.getTopic(), dlqEvent.getRetryCount());
-                }
-            }));
+        try {
+            kafkaTemplate.send(dlqEvent.getTopic(), dlqEvent.getPayload())
+                    .get(5, TimeUnit.SECONDS);
+
+            dlqEvent.markAsResolved();
+            log.info("[DLQ] 재발행 성공. id={}, topic={}, retry={}회",
+                    dlqEvent.getId(), dlqEvent.getTopic(), dlqEvent.getRetryCount());
+
         } catch (Exception e) {
-            log.error("[DLQ] 재시도 중 오류. id={}", dlqEvent.getId(), e);
+            // RETRYING 상태 + 새 nextRetryAt이 이미 적용됨 → 다음 주기에 자동 재시도
+            log.error("[DLQ] 재발행 실패. id={}, topic={}. 다음 주기에 재시도.",
+                    dlqEvent.getId(), dlqEvent.getTopic(), e);
         }
     }
 }

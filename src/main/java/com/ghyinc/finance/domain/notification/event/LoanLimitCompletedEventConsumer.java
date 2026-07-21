@@ -10,7 +10,6 @@ import com.ghyinc.finance.domain.notification.service.NotificationService;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.MDC;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
@@ -69,10 +68,4 @@ public class LoanLimitCompletedEventConsumer {
         };
     }
 
-    @KafkaListener(topics = "loan-limit-completed.DLT", groupId = "notification-dlq-group")
-    public void consumeDlq(String payload, ConsumerRecord<String, String> record) {
-        log.error("[DLQ] 한도조회 완료  이벤트 처리 실패. topic={}, offset={}, payload={}",
-                record.topic(), record.offset(), payload);
-        // 필요 시 알림, DB 저장, 관리자 API 호출 등
-    }
 }
