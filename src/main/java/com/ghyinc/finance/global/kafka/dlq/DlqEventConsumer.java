@@ -34,8 +34,8 @@ public class DlqEventConsumer {
         log.error("[DLQ] 실패 메시지 수신. topic={}, offset={}, cause={}",
                 record.topic(), record.offset(), exceptionMessage);
 
-        Exception cause = this.resolveException(exceptionClass, exceptionMessage);
-        boolean isPoisonPill = classifier.isPoisonPill(cause);
+        //Exception cause = this.resolveException(exceptionClass, exceptionMessage);
+        boolean isPoisonPill = classifier.isPoisonPillByClassName(exceptionClass);
 
         DlqEvent dlqEvent = DlqEvent.builder()
                 .topic(record.topic().replace(".DLT", ""))
@@ -52,6 +52,7 @@ public class DlqEventConsumer {
 
         if(isPoisonPill) {
             log.error("[DLQ] Poison Pill 감지. 영구 보관. topic={}", record.topic());
+            // Slack 알림 추가
         } else {
             log.warn("[DLQ] 일시 장애로 판단. 자동 재시도 예약. topic={}", record.topic());
         }
