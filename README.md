@@ -71,7 +71,7 @@
 | 암복호화      | AES-256-CBC, AES-256-ECB, RSA-OAEP      |
 | API 문서    | SpringDoc OpenAPI (Swagger)             |
 | Build     | Gradle                                  |
-| 메시지큐      | Apache Kafka                            |
+| 메시지큐 | Apache Kafka (Outbox Pattern, DLQ, 지수 백오프 재시도) |
 | 캐싱 | Redis Cache (`@Cacheable`), Caffeine (로컬 캐시) |
 | 분산처리 | Redis (Redisson 분산락, INCR 채번) |
 
@@ -131,6 +131,16 @@ com.ghyinc.finance
 │   │   │   └── OutboxEventService.java      # @TransactionalEventListener
 │   │   └── scheduler
 │   │       └── OutboxEventBatchPublisher.java # @Scheduled 재시도
+│   ├── kafka
+│   │   └── dlq                    # Kafka DLQ 처리
+│   │       ├── entity
+│   │       │   ├── DlqEvent.java
+│   │       │   └── DlqStatus.java
+│   │       ├── repository
+│   │       │   └── DlqEventRepository.java
+│   │       ├── DlqEventConsumer.java      # DLT 토픽 수신 + Poison Pill 자동 분류
+│   │       ├── DlqRetryScheduler.java     # 지수 백오프 자동 재시도
+│   │       └── PoisonPillClassifier.java  # Poison Pill 판별
 ```
 
 <br>
@@ -193,6 +203,9 @@ loan-limit-completed   loan → notification 도메인 간 이벤트 전달
  
 notification.send      notification 도메인 내부 비동기 발송 처리
                         Notification INSERT 후 실제 발송 분리
+                        
+loan-limit-completed.DLT    loan-limit-completed 처리 실패 메시지 보관
+notification.send.DLT       notification.send 처리 실패 메시지 보관
 ```
 
 ### 2. 디자인 패턴
@@ -578,6 +591,78 @@ notification     NotificationService     → 알림 발송 이벤트
 
 <br>
 
+## 💀 Kafka DLQ (Dead Letter Queue)
+
+> Kafka Consumer 처리 실패 메시지를 DLQ로 이동하여 유실 없이 관리하고,
+> Poison Pill과 일시 장애를 자동 분류하여 각각 다른 방식으로 처리합니다.
+
+### 도입 배경
+
+```
+DLQ 미적용 시 문제
+  Consumer에서 예외 발생 → 동일 메시지 무한 재시도
+  JsonProcessingException → 재시도해도 계속 실패 (Poison Pill)
+  → Consumer가 해당 파티션에서 멈춤 (lag 무한 증가)
+  → 처리 실패 메시지 유실
+```
+
+### 처리 흐름
+
+```
+Consumer 예외 발생
+      │
+      ▼
+DefaultErrorHandler (KafkaConfig)
+      ├── JsonProcessingException    → 즉시 *.DLT 이동 (재시도 없음)
+      ├── IllegalArgumentException   → 즉시 *.DLT 이동 (재시도 없음)
+      └── 그 외 예외                 → 1초 간격 3회 재시도 → *.DLT 이동
+      │
+      ▼
+DlqEventConsumer (DLT 토픽 수신)
+      │
+      ├── PoisonPillClassifier 판별
+      │       ├── Poison Pill (파싱/데이터 오류)
+      │       │     → DlqEvent INSERT (DEAD)
+      │       │
+      │       └── 일시 장애 (DB/외부 API 오류)
+      │             → DlqEvent INSERT (PENDING)
+      │             → 지수 백오프 자동 재시도 예약
+      │
+      ▼
+DlqRetryScheduler (30초마다 실행, ShedLock 적용)
+      ├── nextRetryAt 도래한 PENDING/RETRYING 건 조회 (최대 50건)
+      ├── 원본 토픽 재발행
+      │       ├── 성공 → DlqEvent RESOLVED
+      │       └── 실패 → retryCount++ + nextRetryAt 갱신
+      └── 5회 초과 → DlqEvent DEAD
+```
+
+### Poison Pill 판별 기준
+
+```
+재시도 없이 즉시 DEAD 처리
+  → JsonProcessingException  (페이로드 자체가 깨짐)
+  → IllegalArgumentException (데이터 없음 — Notification, Inquiry 조회 실패)
+  → ClassCastException       (타입 불일치)
+  → 위 예외를 감싼 중첩 예외
+
+재시도 후 복구 가능
+  → ConnectException   (DB/외부 API 일시 장애)
+  → TimeoutException   (일시적 지연)
+  → RuntimeException   (일시적 오류 가능성)
+```
+
+### 지수 백오프 재시도 일정
+
+```
+retryCount=1 → nextRetryAt = now + 2분
+retryCount=2 → nextRetryAt = now + 4분
+retryCount=3 → nextRetryAt = now + 8분
+retryCount=4 → nextRetryAt = now + 16분
+retryCount=5 → nextRetryAt = now + 32분
+retryCount>5 → DEAD 처리
+```
+
 ## 🗃 캐싱 전략
 
 조회 빈도가 높고 변경 빈도가 낮은 데이터에 캐싱을 적용하여 DB 부하를 줄였습니다.
@@ -813,6 +898,9 @@ partner-api:
 | LoReqtNoGeneratorTest             | 채번 검증                                   |
 | CryptoFactoryTest                 | 파트너별 CryptoService 생성                   |
 | CryptoFactoryCacheIntegrationTest | Caffeine Cache hit 동시성 테스트              |
+| PoisonPillClassifierTest  | Poison Pill 판별 (클래스명/클래스 계층/중첩 예외) |
+| DlqEventConsumerTest      | DEAD/PENDING 자동 분류, Slack 알림 검증        |
+| DlqRetrySchedulerTest     | 재시도 성공/실패/한도 초과, 지수 백오프 검증       |
 
 <br>
 
@@ -832,6 +920,9 @@ partner-api:
 | ExternalDataContext | 외부 조회 결과 파라미터 고정 (Nice DNR, KB시세 등 확장 시 파라미터 불변)                        |
 | Kafka 알림 연동 | 다중 인스턴스 환경에서 이벤트 소실 방지, loan-notification 도메인 물리적 분리                     |
 | 상품 정보 Redis 캐싱 | 매 한도조회 요청마다 금융사별 상품 DB 조회 반복 → `@Cacheable` + `ProductCache` DTO 변환으로 Redis 캐싱, Entity 직렬화 문제 회피 |
+| Kafka DLQ 도입 | Consumer 처리 실패 메시지 유실 방지, Poison Pill과 일시 장애 자동 분류, 지수 백오프 자동 재시도로 운영팀 개입 최소화 |
+| PoisonPillClassifier | 재시도해도 의미 없는 예외(파싱/데이터 오류)를 즉시 DEAD 처리, 파티션 멈춤(lag 무한 증가) 방지 |
+| 지수 백오프 DB 영속화 | spring-retry ExponentialBackOff는 메모리에만 존재 → 서버 재기동 시 재시도 일정 소멸. DlqEvent.nextRetryAt을 DB에 저장하여 재기동 후에도 재시도 일정 유지 |
 
 ### 실무 대비 개인 프로젝트 개선 사항
 
