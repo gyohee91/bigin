@@ -111,7 +111,6 @@ def jacocoExcludePatterns = [
         '**/strategy/**',
         '**/notification/**',
         '**/outbox/scheduler/**',
-        '**/crypto/CryptoFactory*',
         '**/service/LoanLimitEventHandler*',
         '**/factory/LoanLimitAdaptorFactory*'
 ]

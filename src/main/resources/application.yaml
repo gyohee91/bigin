@@ -139,6 +139,12 @@ resilience4j:
       LINE_BANK:
         base-config: default
         limit-for-period: 20    # 초당 20건 허용
+      SMS:
+        base-config: default
+      EMAIL:
+        base-config: default
+      KAKAOTALK:
+        base-config: default
 
 
   # Retry 설정
@@ -161,7 +167,12 @@ resilience4j:
 # Notification Sender Server Configuration
 notification:
   sender:
-    base-url: http://localhost:8090/send/sms
+    sms:
+      base-url: http://localhost:8090/send/sms
+    email:
+      base-url: http://localhost:8090/send/email
+    kakaotalk:
+      base-url: http://localhost:8090/send/kakaotalk
 
 loan-api:
   partners:
