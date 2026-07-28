@@ -5,33 +5,27 @@ import com.ghyinc.finance.domain.notification.dto.EmailResponse;
 import com.ghyinc.finance.domain.notification.dto.ExternalApiResponse;
 import com.ghyinc.finance.domain.notification.entity.Notification;
 import com.ghyinc.finance.domain.notification.enums.ChannelType;
+import com.ghyinc.finance.global.config.NotificationApiProperties;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.retry.RetryRegistry;
 import org.slf4j.MDC;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClient;
 
 @Component
 public class EmailNotificationSender extends AbstractNotificationSender {
-    private final RestTemplate restTemplate;
+    private final NotificationApiProperties notificationApiProperties;
 
     public static final String REQUEST_ID_KEY = "requestId";
-
-    @Value("${notification.sender.email.base-url}")
-    private String url;
 
     public EmailNotificationSender(
             CircuitBreakerRegistry circuitBreakerRegistry,
             RetryRegistry retryRegistry,
-            RestTemplate restTemplate
+            RestClient restClient,
+            NotificationApiProperties notificationApiProperties
     ) {
-        super(circuitBreakerRegistry, retryRegistry);
-        this.restTemplate = restTemplate;
+        super(circuitBreakerRegistry, retryRegistry, restClient);
+        this.notificationApiProperties = notificationApiProperties;
     }
 
     @Override
@@ -42,21 +36,13 @@ public class EmailNotificationSender extends AbstractNotificationSender {
                 .content(notification.getContent())
                 .build();
 
-        HttpHeaders headers = new HttpHeaders();
-        HttpEntity<EmailRequest> httpEntity = new HttpEntity<>(requestDto, headers);
-        ResponseEntity<EmailResponse> responseEntity = restTemplate.exchange(
-                url,
-                HttpMethod.POST,
-                httpEntity,
-                EmailResponse.class
-        );
-
-        return this.toCommonResponse(responseEntity.getBody());
+        String path = notificationApiProperties.getConfig(ChannelType.EMAIL).getPath();
+        return post(path, requestDto, EmailResponse.class, this::toCommonResponse);
     }
 
     @Override
     public ChannelType getChannelType() {
-        return null;
+        return ChannelType.EMAIL;
     }
 
     private ExternalApiResponse toCommonResponse(EmailResponse response) {

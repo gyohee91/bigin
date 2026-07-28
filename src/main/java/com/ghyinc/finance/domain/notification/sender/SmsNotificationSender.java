@@ -5,30 +5,28 @@ import com.ghyinc.finance.domain.notification.dto.SmsRequest;
 import com.ghyinc.finance.domain.notification.dto.SmsResponse;
 import com.ghyinc.finance.domain.notification.entity.Notification;
 import com.ghyinc.finance.domain.notification.enums.ChannelType;
+import com.ghyinc.finance.global.config.NotificationApiProperties;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.retry.RetryRegistry;
 import org.slf4j.MDC;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClient;
 
 @Component
 public class SmsNotificationSender extends AbstractNotificationSender {
-    private final RestTemplate restTemplate;
+    private final NotificationApiProperties notificationApiProperties;
 
     public static final String REQUEST_ID_KEY = "requestId";
-
-    @Value("${notification.sender.sms.base-url}")
-    private String url;
 
     public SmsNotificationSender(
             CircuitBreakerRegistry circuitBreakerRegistry,
             RetryRegistry retryRegistry,
-            RestTemplate restTemplate
+            RestClient restClient,
+            NotificationApiProperties notificationApiProperties
     ) {
-        super(circuitBreakerRegistry, retryRegistry);
-        this.restTemplate = restTemplate;
+        super(circuitBreakerRegistry, retryRegistry, restClient);
+        this.notificationApiProperties = notificationApiProperties;
     }
 
     @Override
@@ -39,18 +37,8 @@ public class SmsNotificationSender extends AbstractNotificationSender {
                 .content(notification.getContent())
                 .build();
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        HttpEntity<SmsRequest> httpEntity = new HttpEntity<>(requestDto, headers);
-
-        ResponseEntity<SmsResponse> responseEntity = restTemplate.exchange(
-                url,
-                HttpMethod.POST,
-                httpEntity,
-                SmsResponse.class
-        );
-
-        return this.toCommonResponse(responseEntity.getBody());
+        String path = notificationApiProperties.getConfig(ChannelType.SMS).getPath();
+        return post(path, requestDto, SmsResponse.class, this::toCommonResponse);
     }
 
     @Override

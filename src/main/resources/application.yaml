@@ -209,3 +209,22 @@ nice-api:
     path: /send/sms
     connect-timeout-ms: 3000
     read-timeout-ms: 7000
+
+# 기존 notification.sender.* 블록을 아래로 교체
+notification-api:
+  channels:
+    SMS:
+      base-url: http://localhost:8090
+      path: /send/sms
+      connect-timeout-ms: 3000
+      read-timeout-ms: 5000
+    EMAIL:
+      base-url: http://localhost:8090
+      path: /send/email
+      connect-timeout-ms: 3000
+      read-timeout-ms: 5000
+    KAKAOTALK:
+      base-url: http://localhost:8090
+      path: /send/kakaotalk
+      connect-timeout-ms: 3000
+      read-timeout-ms: 5000
