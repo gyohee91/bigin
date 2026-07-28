@@ -96,40 +96,34 @@ resilience4j:
   circuitbreaker:
     configs:
       default:
-        register-health-indicator: true   # health 엔드 포인트에 CB 상태 노출
-        limit-refresh-period: 1s          # 1초마다 허용량 초기화
-        timeout-duration: 0s              # 대기 없이 즉시 실패
-
-        # Sliding Window 설정
+        register-health-indicator: true
+        limit-refresh-period: 1s
+        timeout-duration: 0s
         sliding-window-type: COUNT_BASED
-        sliding-window-size: 10           # 최근 10번 호출 기준
-        minimum-number-of-calls: 5        # 최소 5번 호출 후 통계
-
-        # CLOSE -> OPEN 전환 조건
-        failure-rate-threshold: 50        # 실패율 50% 이상이면 OPEN
-        slow-call-duration-threshold: 7s  # 7초 이상이면 느린 호출
-        slow-call-rate-threshold: 50      # 느린 호출 50% 이상이면 OPEN
-
-        # OPEN 상태 유지 시간
-        wait-duration-in-open-state: 60s  # OPEN 상태 60초 유지
-
-        # HALF_OPEN 상태 설정
-        permitted-number-of-calls-in-half-open-state: 3   # 3개 요청 테스트
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 7s
+        slow-call-rate-threshold: 50
+        wait-duration-in-open-state: 60s
+        permitted-number-of-calls-in-half-open-state: 3
         automatic-transition-from-open-to-half-open-enabled: true
-
-        # HALF_OPEN -> CLOSE 또는 OPEN 전환
-        max-wait-duration-in-half-open-state: 10s         # HALF_OPEN 최대 10초
-
-        # 기록할 예외
+        max-wait-duration-in-half-open-state: 10s
         record-exceptions:
           - org.springframework.web.client.HttpServerErrorException
           - org.springframework.web.client.ResourceAccessException
           - java.net.ConnectException
           - java.net.SocketTimeoutException
-
-        # 무시할 예외 (Circuit Breaker에 영향 안 줌)
         ignore-exceptions:
           - org.springframework.web.client.HttpClientErrorException
+
+      # default를 그대로 상속하고 예외 타입만 notification 도메인 것으로 교체
+      notification-default:
+        base-config: default
+        record-exceptions:
+          - com.ghyinc.finance.global.exception.ExternalApiServerException
+        ignore-exceptions:
+          - com.ghyinc.finance.global.exception.ExternalApiClientException
 
     instances:
       KAKAO_BANK:
@@ -138,7 +132,7 @@ resilience4j:
         base-config: default
       LINE_BANK:
         base-config: default
-        limit-for-period: 20    # 초당 20건 허용
+        limit-for-period: 20
       SMS:
         base-config: notification-default
       EMAIL:
@@ -146,50 +140,37 @@ resilience4j:
       KAKAOTALK:
         base-config: notification-default
 
-
-  # Retry 설정
   retry:
     configs:
-      notification-default:
-        max-attempts: 3
-        wait-duration: 1s
-        enable-exponential-backoff: true
-        exponential-backoff-multiplier: 2
-        max-wait-duration: 10s
-        retry-exceptions:
-          - com.ghyinc.finance.global.exception.ExternalApiServerException
-        ignore-exceptions:
-          - com.ghyinc.finance.global.exception.ExternalApiClientException
-    instances:
       default:
         max-attempts: 3
         wait-duration: 1s
         enable-exponential-backoff: true
         exponential-backoff-multiplier: 2
         max-wait-duration: 10s
-        # ✅ 여기에 추가!
         retry-exceptions:
           - org.springframework.web.client.HttpServerErrorException
           - org.springframework.web.client.ResourceAccessException
           - java.net.ConnectException
           - java.net.SocketTimeoutException
           - java.io.IOException
+
+      notification-default:
+        base-config: default
+        retry-exceptions:
+          - com.ghyinc.finance.global.exception.ExternalApiServerException
+        ignore-exceptions:
+          - com.ghyinc.finance.global.exception.ExternalApiClientException
+
+    instances:
+      default:
+        base-config: default
       SMS:
         base-config: notification-default
       EMAIL:
         base-config: notification-default
       KAKAOTALK:
         base-config: notification-default
-
-# Notification Sender Server Configuration
-notification:
-  sender:
-    sms:
-      base-url: http://localhost:8090/send/sms
-    email:
-      base-url: http://localhost:8090/send/email
-    kakaotalk:
-      base-url: http://localhost:8090/send/kakaotalk
 
 loan-api:
   partners:

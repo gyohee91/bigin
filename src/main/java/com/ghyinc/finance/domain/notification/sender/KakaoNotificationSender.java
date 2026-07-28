@@ -9,6 +9,7 @@ import com.ghyinc.finance.global.config.NotificationApiProperties;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.retry.RetryRegistry;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -22,7 +23,7 @@ public class KakaoNotificationSender extends AbstractNotificationSender {
     public KakaoNotificationSender(
             CircuitBreakerRegistry circuitBreakerRegistry,
             RetryRegistry retryRegistry,
-            RestClient restClient,
+            @Qualifier("kakaotalkRestClient") RestClient restClient,
             NotificationApiProperties notificationApiProperties
     ) {
         super(circuitBreakerRegistry, retryRegistry, restClient);

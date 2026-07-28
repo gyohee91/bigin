@@ -38,7 +38,7 @@ public abstract class AbstractNotificationSender implements NotificationSender {
     protected abstract ExternalApiResponse callApi(Notification notification);
 
     @Override
-    public ExternalApiResponse send(Notification notification) {
+    public final ExternalApiResponse send(Notification notification) {
         CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker(this.getChannelType().name());
         Retry retry = retryRegistry.retry(this.getChannelType().name());
 
@@ -69,7 +69,7 @@ public abstract class AbstractNotificationSender implements NotificationSender {
      * - 5xx / 연결 실패·타임아웃 -> ExternalApiServerException (Retry 대상 + CB 실패 집계)
      * - 4xx -> ExternalApiClientException (재시도 안 함, CB 실패 집계 제외 - 우리 쪽 요청 문제이므로)
      */
-    protected <Req, Res> ExternalApiResponse post(
+    protected final <Req, Res> ExternalApiResponse post(
             String path,
             Req requestDto,
             Class<Res> responseType,

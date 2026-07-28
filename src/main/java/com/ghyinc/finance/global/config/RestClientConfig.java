@@ -2,6 +2,7 @@ package com.ghyinc.finance.global.config;
 
 import com.ghyinc.finance.domain.external.nice.config.NiceApiProperties;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.domain.notification.enums.ChannelType;
 import com.ghyinc.finance.global.interceptor.LoggingRequestInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -20,6 +21,7 @@ import java.util.stream.Collectors;
 public class RestClientConfig {
     private final PartnerApiProperties partnerApiProperties;
     private final NiceApiProperties niceApiProperties;
+    private final NotificationApiProperties notificationApiProperties;
 
     /**
      * 금융사별 전용 RestClient Map
@@ -47,6 +49,24 @@ public class RestClientConfig {
     @Bean(name = "niceDnrRestClient")
     public RestClient niceDnrRestClient() {
         NiceApiProperties.NiceApiConfig config = niceApiProperties.getDnr();
+        return this.buildRestClient(config.getBaseUrl(), config.getConnectTimeoutMs(), config.getReadTimeoutMs());
+    }
+
+    @Bean(name = "smsRestClient")
+    public RestClient smsRestClient() {
+        NotificationApiProperties.ChannelApiConfig config = notificationApiProperties.getConfig(ChannelType.SMS);
+        return this.buildRestClient(config.getBaseUrl(), config.getConnectTimeoutMs(), config.getReadTimeoutMs());
+    }
+
+    @Bean(name = "emailRestClient")
+    public RestClient emailmsRestClient() {
+        NotificationApiProperties.ChannelApiConfig config = notificationApiProperties.getConfig(ChannelType.EMAIL);
+        return this.buildRestClient(config.getBaseUrl(), config.getConnectTimeoutMs(), config.getReadTimeoutMs());
+    }
+
+    @Bean(name = "kakaotalkRestClient")
+    public RestClient kakaotalkRestClient() {
+        NotificationApiProperties.ChannelApiConfig config = notificationApiProperties.getConfig(ChannelType.KAKAOTALK);
         return this.buildRestClient(config.getBaseUrl(), config.getConnectTimeoutMs(), config.getReadTimeoutMs());
     }
 
