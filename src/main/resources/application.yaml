@@ -140,15 +140,26 @@ resilience4j:
         base-config: default
         limit-for-period: 20    # 초당 20건 허용
       SMS:
-        base-config: default
+        base-config: notification-default
       EMAIL:
-        base-config: default
+        base-config: notification-default
       KAKAOTALK:
-        base-config: default
+        base-config: notification-default
 
 
   # Retry 설정
   retry:
+    configs:
+      notification-default:
+        max-attempts: 3
+        wait-duration: 1s
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        max-wait-duration: 10s
+        retry-exceptions:
+          - com.ghyinc.finance.global.exception.ExternalApiServerException
+        ignore-exceptions:
+          - com.ghyinc.finance.global.exception.ExternalApiClientException
     instances:
       default:
         max-attempts: 3
@@ -163,6 +174,12 @@ resilience4j:
           - java.net.ConnectException
           - java.net.SocketTimeoutException
           - java.io.IOException
+      SMS:
+        base-config: notification-default
+      EMAIL:
+        base-config: notification-default
+      KAKAOTALK:
+        base-config: notification-default
 
 # Notification Sender Server Configuration
 notification:
