@@ -38,7 +38,7 @@ public class KakaoNotificationSender extends AbstractNotificationSender {
                 .content(notification.getContent())
                 .build();
 
-        String path = notificationApiProperties.getConfig(ChannelType.KAKAOTALK).getPath();
+        String path = notificationApiProperties.getConfig(this.getChannelType()).getPath();
         return post(path, requestDto, KakaoResponse.class, this::toCommonResponse);
     }
 

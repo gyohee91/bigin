@@ -37,7 +37,7 @@ public class EmailNotificationSender extends AbstractNotificationSender {
                 .content(notification.getContent())
                 .build();
 
-        String path = notificationApiProperties.getConfig(ChannelType.EMAIL).getPath();
+        String path = notificationApiProperties.getConfig(this.getChannelType()).getPath();
         return post(path, requestDto, EmailResponse.class, this::toCommonResponse);
     }
 

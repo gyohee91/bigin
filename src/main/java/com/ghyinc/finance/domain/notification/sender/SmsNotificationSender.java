@@ -38,7 +38,7 @@ public class SmsNotificationSender extends AbstractNotificationSender {
                 .content(notification.getContent())
                 .build();
 
-        String path = notificationApiProperties.getConfig(ChannelType.SMS).getPath();
+        String path = notificationApiProperties.getConfig(this.getChannelType()).getPath();
         return post(path, requestDto, SmsResponse.class, this::toCommonResponse);
     }
 
