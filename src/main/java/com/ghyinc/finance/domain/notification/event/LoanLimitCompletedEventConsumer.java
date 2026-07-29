@@ -29,7 +29,7 @@ public class LoanLimitCompletedEventConsumer {
 
     @KafkaListener(
             topics = "loan-limit-completed",
-            groupId = "notification-group"
+            groupId = "loan-limit-completed-group"
     )
     public void consume(String payload) {
 

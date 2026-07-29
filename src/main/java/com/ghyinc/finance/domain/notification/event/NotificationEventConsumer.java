@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -41,8 +42,9 @@ public class NotificationEventConsumer {
 
     @KafkaListener(
             topics = "notification.send",
-            groupId = "notification-group"
+            groupId = "notification-send-group"
     )
+    @Transactional
     public void consume(String payload) {
 
         try {
