@@ -25,21 +25,15 @@ public class RetryEventListener {
 
     private void attachListeners(Retry retry) {
         retry.getEventPublisher()
-                .onRetry(event -> {
-                    log.info("[Retry][{}] 재시도 발생 - 시도 횟수{}/{}, 예외: {}",
-                            retry.getName(),
-                            event.getNumberOfRetryAttempts(),
-                            retry.getRetryConfig().getMaxAttempts(),
-                            event.getLastThrowable().getMessage()
-                    );
-                })
-                .onError(event -> {
-                    log.warn("[Retry][{}] 재시도 소진 - 최종 실패. 예외: {}",
-                            retry.getName(), event.getLastThrowable().getMessage());
-                })
-                .onSuccess(event -> {
-                    log.debug("[Retry][{}] 성공 - 총 시도 횟수: {}",
-                            retry.getName(), event.getNumberOfRetryAttempts());
-                });
+                .onRetry(event -> log.info("[Retry][{}] 재시도 발생 - 시도 횟수{}/{}, 예외: {}",
+                        retry.getName(),
+                        event.getNumberOfRetryAttempts(),
+                        retry.getRetryConfig().getMaxAttempts(),
+                        event.getLastThrowable().getMessage()
+                ))
+                .onError(event -> log.warn("[Retry][{}] 재시도 소진 - 최종 실패. 예외: {}",
+                        retry.getName(), event.getLastThrowable().getMessage()))
+                .onSuccess(event -> log.debug("[Retry][{}] 성공 - 총 시도 횟수: {}",
+                        retry.getName(), event.getNumberOfRetryAttempts()));
     }
 }

@@ -15,8 +15,6 @@ import com.ghyinc.finance.domain.loan.factory.LoanLimitAdaptorFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
-import com.ghyinc.finance.global.event.impl.KafkaLoanLimitEventPublisher;
-import com.ghyinc.finance.global.event.impl.SpringLoanLimitEventPublisher;
 import com.ghyinc.finance.global.outbox.entity.OutboxEvent;
 import com.ghyinc.finance.global.outbox.entity.OutboxStatus;
 import com.ghyinc.finance.global.outbox.event.OutboxCreatedEvent;
@@ -70,8 +68,6 @@ public class LoanLimitSenderService {
     private final LoReqtNoGenerator generator;
     private final Executor partnerApiExecutor;
     private final ApplicationEventPublisher applicationEventPublisher;
-    private final SpringLoanLimitEventPublisher springLoanLimitEventPublisher;
-    private final KafkaLoanLimitEventPublisher kafkalLoanLimitEventPublisher;
     private final ObjectMapper objectMapper;
 
     private static final String REQUEST_ID_KEY = "requestId";
