@@ -6,7 +6,6 @@ import com.ghyinc.finance.domain.notification.dto.NotificationSendResponse;
 import com.ghyinc.finance.domain.notification.entity.Notification;
 import com.ghyinc.finance.domain.notification.enums.SendType;
 import com.ghyinc.finance.domain.notification.event.NotificationEvent;
-import com.ghyinc.finance.domain.notification.event.NotificationEventProducer;
 import com.ghyinc.finance.domain.notification.repository.NotificationRepository;
 import com.ghyinc.finance.global.outbox.entity.OutboxEvent;
 import com.ghyinc.finance.global.outbox.entity.OutboxStatus;
@@ -25,7 +24,6 @@ import java.time.LocalDateTime;
 @RequiredArgsConstructor
 public class NotificationService {
     private final NotificationRepository notificationRepository;
-    private final NotificationEventProducer notificationEventProducer;
 
     private final OutboxEventRepository outboxEventRepository;
 
