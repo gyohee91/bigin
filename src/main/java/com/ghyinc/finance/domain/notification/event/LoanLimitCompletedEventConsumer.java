@@ -17,6 +17,8 @@ import org.springframework.stereotype.Service;
 import java.util.Optional;
 import java.util.UUID;
 
+import static com.ghyinc.finance.global.filter.RequestIdFilter.REQUEST_ID_KEY;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -24,8 +26,6 @@ public class LoanLimitCompletedEventConsumer {
     private final NotificationService notificationService;
 
     private final ObjectMapper objectMapper;
-
-    private static final String REQUEST_ID_KEY = "requestId";
 
     @KafkaListener(
             topics = "loan-limit-completed",

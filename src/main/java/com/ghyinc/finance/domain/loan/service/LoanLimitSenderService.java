@@ -1,6 +1,5 @@
 package com.ghyinc.finance.domain.loan.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
@@ -15,17 +14,12 @@ import com.ghyinc.finance.domain.loan.factory.LoanLimitAdaptorFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
-import com.ghyinc.finance.global.outbox.entity.OutboxEvent;
-import com.ghyinc.finance.global.outbox.entity.OutboxStatus;
-import com.ghyinc.finance.global.outbox.event.OutboxCreatedEvent;
-import com.ghyinc.finance.global.outbox.repository.OutboxEventRepository;
+import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
-import org.slf4j.MDC;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -63,14 +57,10 @@ public class LoanLimitSenderService {
     private final LoanLimitAdaptorFactory adaptorFactory;
     private final ProductService productService;
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
-    private final OutboxEventRepository outboxEventRepository;
+    private final OutboxEventWriter outboxEventWriter;
 
     private final LoReqtNoGenerator generator;
     private final Executor partnerApiExecutor;
-    private final ApplicationEventPublisher applicationEventPublisher;
-    private final ObjectMapper objectMapper;
-
-    private static final String REQUEST_ID_KEY = "requestId";
 
     /**
      * 복수 금융사에 대한 한도조회 요청을 병렬로 처리한다.
@@ -236,32 +226,19 @@ public class LoanLimitSenderService {
 
             // 알림 발송 - notification 도메인을 직접 알지 못함
             if(!Objects.equals(InquiryStatus.FAILED, resultStatus)) {
-                // Outbox INSERT (비즈니스 트랜잭션과 원자적)
-                OutboxEvent outboxEvent = OutboxEvent.builder()
-                        .aggregateType("LoanLimitInquiry")
-                        .aggregateId(loanLimitInquiry.getInquiryNo())
-                        .eventType("LOAN_LIMIT_COMPLETED")
-                        .payload(objectMapper.writeValueAsString(
-                                LoanLimitCompletedEvent.builder()
-                                        .inquiryNo(loanLimitInquiry.getInquiryNo())
-                                        .userId(loanLimitInquiry.getUserId())
-                                        .name(loanLimitInquiry.getName())
-                                        .status(loanLimitInquiry.getStatus())
-                                        // MDC requestId를 payload에 포함하여 Kafka Consumer 스레드에서 복원
-                                        .requestId(MDC.get(REQUEST_ID_KEY))
-                                        .build()
-                        ))
-                        .status(OutboxStatus.PENDING)
-                        .build();
-
-                outboxEventRepository.save(outboxEvent);
 
                 //kafkalLoanLimitEventPublisher.publishCompletedEvent(event);
                 //springLoanLimitEventPublisher.publishCompletedEvent(event);
 
                 // Spring 이벤트 발행 (트랜잭션 커밋 후 Kafka 발행 트리거)
-                applicationEventPublisher.publishEvent(
-                        new OutboxCreatedEvent(outboxEvent.getId()));
+                outboxEventWriter.enqueue(
+                        "LoanLimitInquiry",
+                        loanLimitInquiry.getInquiryNo(),
+                        "LOAN_LIMIT_COMPLETED",
+                        LoanLimitCompletedEvent.from(loanLimitInquiry)
+                );
+
+                //applicationEventPublisher.publishEvent(new OutboxCreatedEvent(outboxEvent.getId()));
             }
 
         } catch(Exception e) {

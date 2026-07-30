@@ -1,7 +1,5 @@
 package com.ghyinc.finance.domain.loan.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
@@ -14,11 +12,9 @@ import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.factory.LoanLimitAdaptorFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
+import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.global.exception.ExternalApiFailException;
-import com.ghyinc.finance.global.outbox.entity.OutboxEvent;
-import com.ghyinc.finance.global.outbox.entity.OutboxStatus;
-import com.ghyinc.finance.global.outbox.event.OutboxCreatedEvent;
-import com.ghyinc.finance.global.outbox.repository.OutboxEventRepository;
+import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -27,7 +23,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -59,13 +54,7 @@ class LoanLimitSenderServiceTest {
     private LoanLimitAdaptorFactory adaptorFactory;
 
     @Mock
-    private OutboxEventRepository outboxEventRepository;
-
-    @Mock
-    private ApplicationEventPublisher applicationEventPublisher;
-
-    @Mock
-    private ObjectMapper objectMapper;
+    private OutboxEventWriter outboxEventWriter;
 
     @BeforeEach
     void setUp() {
@@ -100,7 +89,7 @@ class LoanLimitSenderServiceTest {
 
     @Test
     @DisplayName("전송 성공 - LoanLimitResult SUCCESS, Inquiry SUCCESS")
-    void inquiry_sendSuccess() throws JsonProcessingException {
+    void inquiry_sendSuccess() {
         // given
         LoanLimitInquiry inquiry = this.buildInquiry();
         given(loanLimitInquiryRepository.findById(1L)).willReturn(Optional.of(inquiry));
@@ -123,38 +112,27 @@ class LoanLimitSenderServiceTest {
                 .loanType(LoanType.PERSONAL_CREDIT)
                 .build();
 
-        given(objectMapper.writeValueAsString(any()))
-                .willReturn("{\"inquiryNo\":\"LL20260410A3F2C891\"}");
-
-        OutboxEvent savedOutboxEvent = OutboxEvent.builder()
-                .aggregateType("LoanLimitInquiry")
-                .aggregateId("LL20260410A3F2C891")
-                .eventType("LOAN_LIMIT_COMPLETED")
-                .status(OutboxStatus.PENDING)
-                .build();
-        ReflectionTestUtils.setField(savedOutboxEvent, "id", 1L);
-
-        given(outboxEventRepository.save(any(OutboxEvent.class)))
-                .willReturn(savedOutboxEvent);
-
         // when
         loanLimitSenderService.inquiry(1L, List.of(PartnerCode.LINE_BANK), adaptorRequest);
 
         // then
         //then(loanLimitEventPublisher).should().publishCompletedEvent(any());
 
-        // Outbox INSERT 검증
-        ArgumentCaptor<OutboxEvent> outboxCaptor =
-                ArgumentCaptor.forClass(OutboxEvent.class);
-        then(outboxEventRepository).should().save(outboxCaptor.capture());
-
-        OutboxEvent capturedOutbox = outboxCaptor.getValue();
-        assertThat(capturedOutbox.getAggregateType()).isEqualTo("LoanLimitInquiry");
-        assertThat(capturedOutbox.getEventType()).isEqualTo("LOAN_LIMIT_COMPLETED");
-        assertThat(capturedOutbox.getStatus()).isEqualTo(OutboxStatus.PENDING);
+        // Outbox 저장/이벤트 발행 자체는 OutboxEventWriterTest에서 검증하므로
+        // 여기서는 "올바른 인자로 enqueue를 호출했는가"만 검증
+        ArgumentCaptor<String> aggregateIdCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<LoanLimitCompletedEvent> payloadCaptor = ArgumentCaptor.forClass(LoanLimitCompletedEvent.class);
+        then(outboxEventWriter).should().enqueue(
+                eq("LoanLimitInquiry"),
+                aggregateIdCaptor.capture(),
+                eq("LOAN_LIMIT_COMPLETED"),
+                payloadCaptor.capture()
+        );
+        assertThat(aggregateIdCaptor.getValue()).isEqualTo(inquiry.getInquiryNo());
+        assertThat(payloadCaptor.getValue().getStatus()).isEqualTo(InquiryStatus.SUCCESS);
 
         // Spring 이벤트 발행 검증
-        then(applicationEventPublisher).should().publishEvent(any(OutboxCreatedEvent.class));
+        //then(applicationEventPublisher).should().publishEvent(any(OutboxCreatedEvent.class));
 
         assertThat(inquiry.getStatus()).isEqualTo(InquiryStatus.SUCCESS);
         assertThat(inquiry.getResults()).hasSize(1);
