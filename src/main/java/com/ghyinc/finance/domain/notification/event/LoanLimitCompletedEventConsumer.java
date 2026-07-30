@@ -14,11 +14,6 @@ import org.slf4j.MDC;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
 
-import java.util.Optional;
-import java.util.UUID;
-
-import static com.ghyinc.finance.global.filter.RequestIdFilter.REQUEST_ID_KEY;
-
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -35,11 +30,6 @@ public class LoanLimitCompletedEventConsumer {
 
         try {
             LoanLimitCompletedEvent event = objectMapper.readValue(payload, LoanLimitCompletedEvent.class);
-
-            String requestId = Optional.ofNullable(event.getRequestId())
-                    .orElse(UUID.randomUUID().toString());
-
-            MDC.put(REQUEST_ID_KEY, requestId);
             log.info("[Consumer] 한도조회 완료 이벤트 수신. inquiryNo={}", event.getInquiryNo());
 
             notificationService.sendNotification(

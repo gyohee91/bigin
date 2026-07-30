@@ -13,23 +13,11 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Optional;
-import java.util.UUID;
-
-import static com.ghyinc.finance.global.filter.RequestIdFilter.REQUEST_ID_KEY;
-
 /**
  * Kafka Consumer
  * <p>
- * [MDC 전파 핵심 포인트]
- * Kafka Consumer는 별도의 스레드에서 실행된다.
- * HTTP 요청 스레드의 MDC 값은 이 스레드로 자동 전파되지 않는다.
- * <p>
- * 해결책:
- * 1. event.getRequestId()로 payload에서 requestId를 꺼냄.
- * 2. MDC.put()으로 현재 Consumer 스레드의 MDC에 설정
- * 3. 이후 notificationSenderService 로그에도 같은 requestId가 찍힘
- * 4. finally에서 MDC.clear() -> Consumer 스레드 재사용 시 오염 방지
+ * requestId MDC 전파는 KafkaConfig의 RecordInterceptor가 처리한다
+ * (리스너 호출 전 MDC.put, 호출 후 성공/실패 무관하게 MDC.clear)
  */
 @Slf4j
 @Component
@@ -49,18 +37,11 @@ public class NotificationEventConsumer {
 
         try {
             NotificationEvent event = objectMapper.readValue(payload, NotificationEvent.class);
-
-            // payload에서 requestId 복원 -> Consumer 스레드 MDC에 설정
-            String requestId = Optional.ofNullable(event.getRequestId())
-                    .orElse(UUID.randomUUID().toString());  //Producer에서 누락된 경우
-            MDC.put(REQUEST_ID_KEY, requestId);
-
             log.info("[Consumer] 메시지 수신 - id: {}", event.getId());
 
             Notification notification = notificationRepository.findById(event.getId())
                     .orElseThrow();
 
-            //이 호출 내부 로그에도 requestId가 자동으로 찍힘
             ExternalApiResponse response = notificationSenderService.call(notification);
 
             if(response.isSuccess()) {
