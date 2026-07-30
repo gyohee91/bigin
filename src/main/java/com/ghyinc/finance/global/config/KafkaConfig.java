@@ -1,6 +1,7 @@
 package com.ghyinc.finance.global.config;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.ghyinc.finance.global.exception.KafkaMessageDeserializationException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -52,6 +53,7 @@ public class KafkaConfig {
         // 파싱 오류는 재시도 없이 즉시 DLQ (Poison Pill 방지)
         // 재시도해도 계속 실패하는 예외들
         errorHandler.addNotRetryableExceptions(
+                KafkaMessageDeserializationException.class,
                 JsonProcessingException.class,
                 InvalidRequestException.class,
                 IllegalArgumentException.class  // Notification 없음 등
@@ -60,6 +62,15 @@ public class KafkaConfig {
         return errorHandler;
     }
 
+    /**
+     * Kafka 레코드 헤더의 requestId를 MDC에 복원/정리한다
+     * <p>
+     * interceptor()는 리스너 호출 직전, success()/failure()는 호출 직후 (성공/실패 여부와 무관하게
+     * 둘 중 하나는 반드시 호출됨) 실행되어 try/finally 없이도 MDC 오염 방지한다.
+     * <p>
+     * 이 factory를 사용하는 모든 @KafkaListener에 공통 적용된다 - 개별 Consumer는
+     * MDC.put()/MDC.clear()를 직접 다룰 필요가 없다.
+     */
     @Bean
     public RecordInterceptor<String, String> mdcRecordInterceptor() {
         return new RecordInterceptor<>() {
@@ -73,15 +84,6 @@ public class KafkaConfig {
                 return record;
             }
 
-            /**
-             * Kafka 레코드 헤더의 requestId를 MDC에 복원/정리한다
-             * <p>
-             * interceptor()는 리스너 호출 직전, success()/failure()는 호출 직후 (성공/실패 여부와 무관하게
-             * 둘 중 하나는 반드시 호출됨) 실행되어 try/finally 없이도 MDC 오염 방지한다.
-             * <p>
-             * 이 factory를 사용하는 모든 @KafkaListener에 공통 적용된다 - 개별 Consumer는
-             * MDC.put()/MDC.clear()를 직접 다룰 필요가 없다.
-             */
             @Override
             public void success(ConsumerRecord<String, String> record, Consumer<String, String> consumer) {
                 MDC.clear();

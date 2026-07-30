@@ -109,7 +109,6 @@ def jacocoExcludePatterns = [
         // 도메인 어댑터, 전략 (외부 API 포맷 의존)
         '**/adaptor/**',
         '**/strategy/**',
-        '**/notification/**',
         '**/outbox/scheduler/**',
         '**/service/LoanLimitEventHandler*',
         '**/factory/LoanLimitAdaptorFactory*'

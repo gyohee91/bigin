@@ -6,6 +6,7 @@ import com.ghyinc.finance.domain.notification.dto.ExternalApiResponse;
 import com.ghyinc.finance.domain.notification.entity.Notification;
 import com.ghyinc.finance.domain.notification.repository.NotificationRepository;
 import com.ghyinc.finance.domain.notification.service.NotificationSenderService;
+import com.ghyinc.finance.global.exception.KafkaMessageDeserializationException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
@@ -55,7 +56,7 @@ public class NotificationEventConsumer {
         } catch (JsonProcessingException e) {
             // NotRetryableException → DefaultErrorHandler가 즉시 DLQ로 이동
             log.error("[Consumer] 페이로드 파싱 실패. DLQ 이동. payload={}", payload, e);
-            throw new RuntimeException(e);
+            throw new KafkaMessageDeserializationException("notification.send 메시지 역직렬화 실패", e);
         } finally {
             MDC.clear();    //Consumer 스레드 재사용 시 이전 requestId 오염 방지
         }

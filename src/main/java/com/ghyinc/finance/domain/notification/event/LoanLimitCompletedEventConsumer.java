@@ -8,6 +8,7 @@ import com.ghyinc.finance.domain.notification.enums.ChannelType;
 import com.ghyinc.finance.domain.notification.enums.SendType;
 import com.ghyinc.finance.domain.notification.service.NotificationService;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
+import com.ghyinc.finance.global.exception.KafkaMessageDeserializationException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
@@ -44,7 +45,7 @@ public class LoanLimitCompletedEventConsumer {
 
         } catch (JsonProcessingException e) {
             log.error("[Consumer] 페이로드 파싱 실패. DLQ 이동. payload={}", payload, e);
-            throw new RuntimeException(e);
+            throw new KafkaMessageDeserializationException("loan-limit-completed 메시지 역직렬화 실패", e);
         } finally {
             MDC.clear();
         }
