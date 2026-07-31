@@ -22,7 +22,7 @@ import org.springframework.util.backoff.FixedBackOff;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
-import static com.ghyinc.finance.global.filter.RequestIdFilter.REQUEST_ID_KEY;
+import static com.ghyinc.finance.global.common.LoggingConstants.REQUEST_ID_KEY;
 
 /**
  * Spring Kafka 자동 DLQ + Consumer 공통 MDC(requestId) 전파
