@@ -42,7 +42,7 @@ class AbstractNotificationSenderTest {
     @Test
     @DisplayName("정상 응답이면 그대로 반환한다")
     void returnsResponseAsIsWhenSuccessful() {
-        ExternalApiResponse success = ExternalApiResponse.success("req-1", "SUCCESS", "ok");
+        ExternalApiResponse success = ExternalApiResponse.success("SUCCESS", "ok");
         TestSender sender = new TestSender(circuitBreakerRegistry, retryRegistry, notification -> success);
 
         ExternalApiResponse result = sender.send(this.notification());
@@ -56,7 +56,7 @@ class AbstractNotificationSenderTest {
         AtomicInteger callCount = new AtomicInteger();
         TestSender sender = new TestSender(circuitBreakerRegistry, retryRegistry, notification -> {
             callCount.incrementAndGet();
-            return ExternalApiResponse.fail("req-1", "FAIL", "실패");
+            return ExternalApiResponse.fail("FAIL", "실패");
         });
 
         ExternalApiResponse result = sender.send(this.notification());
@@ -71,7 +71,7 @@ class AbstractNotificationSenderTest {
         AtomicInteger callCount = new AtomicInteger();
         TestSender sender = new TestSender(circuitBreakerRegistry, retryRegistry, notification -> {
             callCount.incrementAndGet();
-            return ExternalApiResponse.success("req-1", "SUCCESS", "ok");
+            return ExternalApiResponse.success("SUCCESS", "ok");
         });
 
         circuitBreakerRegistry.circuitBreaker(ChannelType.SMS.name()).transitionToOpenState();

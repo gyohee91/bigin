@@ -34,7 +34,7 @@ class NotificationSenderServiceTest {
                 .recipient("010-1234-5678")
                 .build();
 
-        ExternalApiResponse expected = ExternalApiResponse.success("req-1", "SUCCESS", null);
+        ExternalApiResponse expected = ExternalApiResponse.success("SUCCESS", null);
 
         when(notificationSenderFactory.getSender(ChannelType.SMS)).thenReturn(notificationSender);
         when(notificationSender.send(notification)).thenReturn(expected);

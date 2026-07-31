@@ -17,7 +17,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.nio.charset.StandardCharsets;
 
-import static com.ghyinc.finance.global.filter.RequestIdFilter.REQUEST_ID_KEY;
+import static com.ghyinc.finance.global.common.LoggingConstants.REQUEST_ID_KEY;
 
 /**
  * 트랜잭션 커밋 후 실행

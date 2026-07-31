@@ -12,6 +12,8 @@ import java.io.IOException;
 import java.util.Optional;
 import java.util.UUID;
 
+import static com.ghyinc.finance.global.common.LoggingConstants.REQUEST_ID_KEY;
+
 /**
  * HTTP 요청 진입점에서 requestId를 MDC에 설정
  * <p>
@@ -25,7 +27,6 @@ import java.util.UUID;
  */
 @Component
 public class RequestIdFilter extends OncePerRequestFilter {
-    public static final String REQUEST_ID_KEY = "requestId";
     private static final String REQUEST_ID_HEADER = "X-Request-Id";
 
     @Override

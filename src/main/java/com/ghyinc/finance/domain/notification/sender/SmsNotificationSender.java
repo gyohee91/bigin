@@ -8,7 +8,6 @@ import com.ghyinc.finance.domain.notification.enums.ChannelType;
 import com.ghyinc.finance.global.config.NotificationApiProperties;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.retry.RetryRegistry;
-import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
@@ -17,8 +16,6 @@ import org.springframework.web.client.RestClient;
 @Component
 public class SmsNotificationSender extends AbstractNotificationSender {
     private final NotificationApiProperties notificationApiProperties;
-
-    public static final String REQUEST_ID_KEY = "requestId";
 
     public SmsNotificationSender(
             CircuitBreakerRegistry circuitBreakerRegistry,
@@ -48,11 +45,10 @@ public class SmsNotificationSender extends AbstractNotificationSender {
     }
 
     private ExternalApiResponse toCommonResponse(SmsResponse response) {
-        String requestId = MDC.get(REQUEST_ID_KEY);
         if(response != null && "SUCCESS".equals(response.getResultCode())) {
-            return ExternalApiResponse.success(requestId, response.getResultCode(), response);
+            return ExternalApiResponse.success(response.getResultCode(), response);
         }
         String resultCode = response != null ? response.getResultCode() : "UNKNOWN";
-        return ExternalApiResponse.fail(requestId, resultCode, "error");
+        return ExternalApiResponse.fail(resultCode, "error");
     }
 }

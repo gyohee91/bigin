@@ -60,7 +60,7 @@ class NotificationEventConsumerTest {
         Notification notification = this.buildNotification();
         given(notificationRepository.findById(1L)).willReturn(Optional.of(notification));
         given(notificationSenderService.call(notification))
-                .willReturn(ExternalApiResponse.success("req-1", "SUCCESS", null));
+                .willReturn(ExternalApiResponse.success("SUCCESS", null));
 
         // when
         notificationEventConsumer.consume(payload);
@@ -82,7 +82,7 @@ class NotificationEventConsumerTest {
         Notification notification = this.buildNotification();
         given(notificationRepository.findById(1L)).willReturn(Optional.of(notification));
         given(notificationSenderService.call(notification))
-                .willReturn(ExternalApiResponse.fail("req-1", "PARTNER_ERROR", "외부 API 실패"));
+                .willReturn(ExternalApiResponse.fail("PARTNER_ERROR", "외부 API 실패"));
 
         // when
         notificationEventConsumer.consume(payload);

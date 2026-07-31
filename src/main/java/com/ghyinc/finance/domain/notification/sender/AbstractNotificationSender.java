@@ -13,7 +13,6 @@ import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.MDC;
 import org.springframework.http.*;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -29,8 +28,6 @@ import java.util.function.Supplier;
 @Slf4j
 @RequiredArgsConstructor
 public abstract class AbstractNotificationSender implements NotificationSender {
-    private static final String REQUEST_ID_KEY = "requestId";
-
     private final CircuitBreakerRegistry circuitBreakerRegistry;
     private final RetryRegistry retryRegistry;
     private final RestClient restClient;
@@ -118,6 +115,6 @@ public abstract class AbstractNotificationSender implements NotificationSender {
                     this.getChannelType(), notification.getId(), ex.getMessage());
         }
 
-        return ExternalApiResponse.unavailable(MDC.get(REQUEST_ID_KEY));
+        return ExternalApiResponse.unavailable();
     }
 }
