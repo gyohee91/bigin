@@ -30,7 +30,6 @@ import java.util.function.Supplier;
 public abstract class AbstractNotificationSender implements NotificationSender {
     private final CircuitBreakerRegistry circuitBreakerRegistry;
     private final RetryRegistry retryRegistry;
-    private final RestClient restClient;
 
     protected abstract ExternalApiResponse callApi(Notification notification);
 
@@ -67,6 +66,7 @@ public abstract class AbstractNotificationSender implements NotificationSender {
      * - 4xx -> ExternalApiClientException (재시도 안 함, CB 실패 집계 제외 - 우리 쪽 요청 문제이므로)
      */
     protected final <Req, Res> ExternalApiResponse post(
+            RestClient restClient,
             String path,
             Req requestDto,
             Class<Res> responseType,

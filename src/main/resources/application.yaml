@@ -139,6 +139,8 @@ resilience4j:
         base-config: notification-default
       KAKAOTALK:
         base-config: notification-default
+      PUSH:
+        base-config: notification-default
 
   retry:
     configs:
@@ -170,6 +172,8 @@ resilience4j:
       EMAIL:
         base-config: notification-default
       KAKAOTALK:
+        base-config: notification-default
+      PUSH:
         base-config: notification-default
 
 loan-api:

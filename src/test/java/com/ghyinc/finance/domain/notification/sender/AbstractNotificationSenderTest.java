@@ -9,7 +9,6 @@ import io.github.resilience4j.retry.RetryRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -86,7 +85,7 @@ class AbstractNotificationSenderTest {
         private final Function<Notification, ExternalApiResponse> behavior;
 
         public TestSender(CircuitBreakerRegistry cbRegistry, RetryRegistry retryRegistry, Function<Notification, ExternalApiResponse> behavior) {
-            super(cbRegistry, retryRegistry, RestClient.create());  // post()를 안 쓰므로 최소 인스턴스만 필요
+            super(cbRegistry, retryRegistry);  // post()를 안 쓰므로 최소 인스턴스만 필요
             this.behavior = behavior;
         }
 

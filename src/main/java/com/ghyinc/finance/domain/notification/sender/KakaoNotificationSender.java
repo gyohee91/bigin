@@ -15,6 +15,7 @@ import org.springframework.web.client.RestClient;
 
 @Component
 public class KakaoNotificationSender extends AbstractNotificationSender {
+    private final RestClient restClient;
     private final NotificationApiProperties notificationApiProperties;
 
     public KakaoNotificationSender(
@@ -23,7 +24,8 @@ public class KakaoNotificationSender extends AbstractNotificationSender {
             @Qualifier("kakaotalkRestClient") RestClient restClient,
             NotificationApiProperties notificationApiProperties
     ) {
-        super(circuitBreakerRegistry, retryRegistry, restClient);
+        super(circuitBreakerRegistry, retryRegistry);
+        this.restClient = restClient;
         this.notificationApiProperties = notificationApiProperties;
     }
 
@@ -36,7 +38,7 @@ public class KakaoNotificationSender extends AbstractNotificationSender {
                 .build();
 
         String path = notificationApiProperties.getConfig(this.getChannelType()).getPath();
-        return post(path, requestDto, KakaoResponse.class, this::toCommonResponse);
+        return post(restClient, path, requestDto, KakaoResponse.class, this::toCommonResponse);
     }
 
     @Override
