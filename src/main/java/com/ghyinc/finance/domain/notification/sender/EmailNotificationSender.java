@@ -14,6 +14,7 @@ import org.springframework.web.client.RestClient;
 
 @Component
 public class EmailNotificationSender extends AbstractNotificationSender {
+    private final RestClient restClient;
     private final NotificationApiProperties notificationApiProperties;
 
     public EmailNotificationSender(
@@ -22,7 +23,8 @@ public class EmailNotificationSender extends AbstractNotificationSender {
             @Qualifier("emailRestClient") RestClient restClient,
             NotificationApiProperties notificationApiProperties
     ) {
-        super(circuitBreakerRegistry, retryRegistry, restClient);
+        super(circuitBreakerRegistry, retryRegistry);
+        this.restClient = restClient;
         this.notificationApiProperties = notificationApiProperties;
     }
 
@@ -35,7 +37,7 @@ public class EmailNotificationSender extends AbstractNotificationSender {
                 .build();
 
         String path = notificationApiProperties.getConfig(this.getChannelType()).getPath();
-        return post(path, requestDto, EmailResponse.class, this::toCommonResponse);
+        return post(restClient, path, requestDto, EmailResponse.class, this::toCommonResponse);
     }
 
     @Override
