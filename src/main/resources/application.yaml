@@ -117,7 +117,14 @@ resilience4j:
         ignore-exceptions:
           - org.springframework.web.client.HttpClientErrorException
 
-      # default를 그대로 상속하고 예외 타입만 notification 도메인 것으로 교체
+      # default를 그대로 상속하고 예외 타입만 각 도메인 것으로 교체
+      loan-default:
+        base-config: default
+        record-exceptions:
+          - com.ghyinc.finance.global.exception.ExternalApiServerException
+        ignore-exceptions:
+          - com.ghyinc.finance.global.exception.ExternalApiClientException
+
       notification-default:
         base-config: default
         record-exceptions:
@@ -127,11 +134,11 @@ resilience4j:
 
     instances:
       KAKAO_BANK:
-        base-config: default
+        base-config: loan-default
       TOSS_BANK:
-        base-config: default
+        base-config: loan-default
       LINE_BANK:
-        base-config: default
+        base-config: loan-default
         limit-for-period: 20
       SMS:
         base-config: notification-default
@@ -156,25 +163,9 @@ resilience4j:
           - java.net.ConnectException
           - java.net.SocketTimeoutException
           - java.io.IOException
-
-      notification-default:
-        base-config: default
-        retry-exceptions:
           - com.ghyinc.finance.global.exception.ExternalApiServerException
         ignore-exceptions:
           - com.ghyinc.finance.global.exception.ExternalApiClientException
-
-    instances:
-      default:
-        base-config: default
-      SMS:
-        base-config: notification-default
-      EMAIL:
-        base-config: notification-default
-      KAKAOTALK:
-        base-config: notification-default
-      PUSH:
-        base-config: notification-default
 
 loan-api:
   partners:

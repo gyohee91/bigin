@@ -1,7 +1,8 @@
 package com.ghyinc.finance.global.client;
 
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
-import com.ghyinc.finance.global.exception.ExternalApiFailException;
+import com.ghyinc.finance.global.exception.ExternalApiClientException;
+import com.ghyinc.finance.global.exception.ExternalApiServerException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.ratelimiter.RateLimiter;
@@ -53,10 +54,10 @@ public class RestApiClient implements ApiClient {
                                         .body(request)
                                         .retrieve()
                                         .onStatus(HttpStatusCode::is4xxClientError, (req, res) -> {
-                                            throw new ExternalApiFailException("한도조회_ERROR", partnerCode + " 4xx 오류");
+                                            throw new ExternalApiClientException("한도조회_ERROR", partnerCode + " 4xx 오류");
                                         })
                                         .onStatus(HttpStatusCode::is5xxServerError, (req, res) -> {
-                                            throw new ExternalApiFailException("한도조회_ERROR", partnerCode + " 5xx 오류");
+                                            throw new ExternalApiServerException("한도조회_ERROR", partnerCode + " 5xx 오류");
                                         })
                                         .body(responseType);
                                 })))

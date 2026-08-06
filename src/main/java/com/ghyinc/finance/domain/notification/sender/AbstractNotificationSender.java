@@ -61,7 +61,6 @@ public abstract class AbstractNotificationSender implements NotificationSender {
 
     /**
      * 채널 공통 HTTP POST 배선.
-     * 상태코드 분기 (application.yaml notification-default 설정과 연동)
      * - 5xx / 연결 실패·타임아웃 -> ExternalApiServerException (Retry 대상 + CB 실패 집계)
      * - 4xx -> ExternalApiClientException (재시도 안 함, CB 실패 집계 제외 - 우리 쪽 요청 문제이므로)
      */
