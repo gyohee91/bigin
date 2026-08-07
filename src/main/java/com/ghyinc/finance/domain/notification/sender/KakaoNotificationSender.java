@@ -32,9 +32,9 @@ public class KakaoNotificationSender extends AbstractNotificationSender {
     @Override
     protected ExternalApiResponse callApi(Notification notification) {
         KakaoRequest requestDto = KakaoRequest.builder()
-                .recipient(notification.getRecipient())
+                .talkId(notification.getRecipient())
                 .title(notification.getTitle())
-                .content(notification.getContent())
+                .contents(notification.getContent())
                 .build();
 
         String path = notificationApiProperties.getConfig(this.getChannelType()).getPath();

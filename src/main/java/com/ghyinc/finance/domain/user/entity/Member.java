@@ -26,4 +26,7 @@ public class Member extends BaseTimeEntity {
 
     @Comment("이메일주소")
     private String email;
+
+    @Comment("App Push Token")
+    private String token;
 }

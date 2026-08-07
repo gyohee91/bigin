@@ -7,7 +7,7 @@ import lombok.*;
 @NoArgsConstructor
 @AllArgsConstructor
 public class KakaoRequest {
-    private String recipient;
+    private String talkId;
     private String title;
-    private String content;
+    private String contents;
 }

@@ -7,6 +7,8 @@ import com.ghyinc.finance.domain.notification.enums.ChannelType;
 import com.ghyinc.finance.domain.notification.enums.SendType;
 import com.ghyinc.finance.domain.notification.event.NotificationEvent;
 import com.ghyinc.finance.domain.notification.repository.NotificationRepository;
+import com.ghyinc.finance.domain.user.entity.Member;
+import com.ghyinc.finance.domain.user.repository.MemberRepository;
 import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,6 +18,8 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -29,10 +33,22 @@ class NotificationServiceTest {
     private NotificationService notificationService;
 
     @Mock
+    private MemberRepository memberRepository;
+
+    @Mock
     private NotificationRepository notificationRepository;
 
     @Mock
     private OutboxEventWriter outboxEventWriter;
+
+    private Member member() {
+        return Member.builder()
+                .userId(1L)
+                .name("젠슨황")
+                .mobile("01012341234")
+                .email("github@gmail.com")
+                .build();
+    }
 
     private NotificationSendRequest buildRequest() {
         return NotificationSendRequest.builder()
@@ -51,6 +67,7 @@ class NotificationServiceTest {
         // given
         NotificationSendRequest request = this.buildRequest();
 
+        given(memberRepository.findById(1L)).willReturn(Optional.of(this.member()));
         // 실제 JPA(IDENTITY) 저장 동작 재현: save() 시 같은 인스턴스에 id를 채워 반환
         given(notificationRepository.save(any(Notification.class)))
                 .willAnswer(invocation -> {
@@ -69,7 +86,7 @@ class NotificationServiceTest {
         Notification savedNotification = notificationCaptor.getValue();
         assertThat(savedNotification.getChannelType()).isEqualTo(ChannelType.SMS);
         assertThat(savedNotification.getSendType()).isEqualTo(SendType.IMMEDIATE);
-        assertThat(savedNotification.getRecipient()).isEqualTo("젠슨황");
+        assertThat(savedNotification.getRecipient()).isEqualTo("01012341234");
         assertThat(savedNotification.getTitle()).isEqualTo("한도조회 완료");
         assertThat(savedNotification.getContent()).isEqualTo("한도조회가 완료되었습니다.");
 
@@ -84,7 +101,7 @@ class NotificationServiceTest {
         assertThat(aggregateIdCaptor.getValue()).isEqualTo("1");
         assertThat(payloadCaptor.getValue().getId()).isEqualTo(1L);
         assertThat(payloadCaptor.getValue().getChannelType()).isEqualTo(ChannelType.SMS);
-        assertThat(payloadCaptor.getValue().getRecipient()).isEqualTo("젠슨황");
+        assertThat(payloadCaptor.getValue().getRecipient()).isEqualTo("01012341234");
 
         assertThat(response.getNotificationId()).isEqualTo(1L);
         assertThat(response.getChannelType()).isEqualTo(ChannelType.SMS);
@@ -102,6 +119,7 @@ class NotificationServiceTest {
                 .title("title")
                 .content("content")
                 .build();
+        given(memberRepository.findById(1L)).willReturn(Optional.of(this.member()));
         given(notificationRepository.save(any(Notification.class)))
                 .willAnswer(invocation -> invocation.getArgument(0));
 
@@ -119,6 +137,7 @@ class NotificationServiceTest {
     void sendNotification_immediateType_scheduledAtIsNull() {
         // given
         NotificationSendRequest request = this.buildRequest();
+        given(memberRepository.findById(1L)).willReturn(Optional.of(this.member()));
         given(notificationRepository.save(any(Notification.class)))
                 .willAnswer(invocation -> invocation.getArgument(0));
 

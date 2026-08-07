@@ -32,9 +32,9 @@ public class SmsNotificationSender extends AbstractNotificationSender {
     @Override
     protected ExternalApiResponse callApi(Notification notification) {
         SmsRequest requestDto = SmsRequest.builder()
-                .recipient(notification.getRecipient())
+                .phoneNumber(notification.getRecipient())
                 .title(notification.getTitle())
-                .content(notification.getContent())
+                .contents(notification.getContent())
                 .build();
 
         String path = notificationApiProperties.getConfig(this.getChannelType()).getPath();

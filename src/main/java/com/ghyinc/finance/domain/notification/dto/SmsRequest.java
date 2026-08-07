@@ -8,7 +8,7 @@ import lombok.*;
 @NoArgsConstructor
 @AllArgsConstructor
 public class SmsRequest {
-    private String recipient;
+    private String phoneNumber;
     private String title;
-    private String content;
+    private String contents;
 }

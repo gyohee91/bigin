@@ -31,9 +31,9 @@ public class EmailNotificationSender extends AbstractNotificationSender {
     @Override
     protected ExternalApiResponse callApi(Notification notification) {
         EmailRequest requestDto = EmailRequest.builder()
-                .recipient(notification.getRecipient())
+                .emailAddress(notification.getRecipient())
                 .title(notification.getTitle())
-                .content(notification.getContent())
+                .contents(notification.getContent())
                 .build();
 
         String path = notificationApiProperties.getConfig(this.getChannelType()).getPath();
