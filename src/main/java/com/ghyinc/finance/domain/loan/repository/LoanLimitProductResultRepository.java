@@ -3,6 +3,7 @@ package com.ghyinc.finance.domain.loan.repository;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
+import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -18,6 +19,12 @@ import java.util.Optional;
 public interface LoanLimitProductResultRepository extends JpaRepository<LoanLimitProductResult, Long> {
     Optional<LoanLimitProductResult> findByLoReqtNoAndProductCode(
             @Param("loReqtNo") String loReqtNo,
+            @Param("productCode") String productCode
+    );
+
+    Optional<LoanLimitProductResult> findByLoReqtNoAndPartnerCodeAndProductCode(
+            @Param("loReqtNo") String loReqtNo,
+            @Param("partnerCode") PartnerCode partnerCode,
             @Param("productCode") String productCode
     );
 

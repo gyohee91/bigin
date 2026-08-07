@@ -8,6 +8,9 @@ public record LoanApplyRequest(
         @Schema(description = "고객ID", example = "1")
         String userId,
 
+        @Schema(description = "업무 식별번호", example = "LL2026080700001")
+        String inquiryNo,
+
         @Schema(description = "신청번호", example = "LR20260311A3F2C891")
         String loReqtNo,
 

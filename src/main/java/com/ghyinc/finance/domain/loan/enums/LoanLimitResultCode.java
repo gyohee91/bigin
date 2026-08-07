@@ -1,14 +1,15 @@
 package com.ghyinc.finance.domain.loan.enums;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 
-import java.util.Arrays;
 import java.util.Objects;
 
 /**
  * 한도조회 결과 코드
  */
+@Getter
 @RequiredArgsConstructor
 public enum LoanLimitResultCode {
     SUCCESS("00", "정상"),
