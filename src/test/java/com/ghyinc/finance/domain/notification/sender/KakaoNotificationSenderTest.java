@@ -74,7 +74,7 @@ class KakaoNotificationSenderTest {
     void convertsToSuccessWhenResponseOk() {
         mockServer.expect(requestTo(BASE_URL + PATH))
                 .andExpect(method(HttpMethod.POST))
-                .andExpect(jsonPath("$.recipient").value("010-1234-5678"))
+                .andExpect(jsonPath("$.talkId").value("010-1234-5678"))
                 .andRespond(withSuccess("{\"resultCode\":\"SUCCESS\"}", MediaType.APPLICATION_JSON));
 
         ExternalApiResponse result = sender.send(this.notification());

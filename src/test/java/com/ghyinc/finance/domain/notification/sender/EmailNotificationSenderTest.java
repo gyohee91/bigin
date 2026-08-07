@@ -63,7 +63,7 @@ class EmailNotificationSenderTest {
     private Notification notification() {
         return Notification.builder()
                 .channelType(ChannelType.EMAIL)
-                .recipient("010-1234-5678")
+                .recipient("github@gmail.com")
                 .title("제목")
                 .content("내용")
                 .build();
@@ -74,7 +74,7 @@ class EmailNotificationSenderTest {
     void convertsToSuccessWhenResponseOk() {
         mockServer.expect(requestTo(BASE_URL + PATH))
                 .andExpect(method(HttpMethod.POST))
-                .andExpect(jsonPath("$.recipient").value("010-1234-5678"))
+                .andExpect(jsonPath("$.emailAddress").value("github@gmail.com"))
                 .andRespond(withSuccess("{\"resultCode\":\"SUCCESS\"}", MediaType.APPLICATION_JSON));
 
         ExternalApiResponse result = sender.send(this.notification());

@@ -1,9 +1,10 @@
 [![CI](https://github.com/gyohee91/bigin/actions/workflows/ci.yaml/badge.svg)](https://github.com/gyohee91/bigin/actions/workflows/ci.yaml)
 
-# 🏦 파트너사 제휴 한도조회 플랫폼
+# 🏦 파트너사 제휴 한도조회 플랫폼 · 알림 서비스
 
-> 실무 대출 비교 플랫폼 운영 경험을 바탕으로 설계한 개인 핀테크 포트폴리오 프로젝트.
-> 다수의 금융사와 연동하여 대출 한도조회 및 신청을 처리하는 백엔드 시스템.
+> - 실무 대출 비교 플랫폼 운영 경험을 바탕으로 설계한 개인 핀테크 포트폴리오 프로젝트.
+> - 다수의 금융사와 연동하여 대출 한도조회 및 신청을 처리하는 백엔드 시스템.
+>   - 처리 결과를 채널별(SMS/Email/카카오톡/앱 푸시)로 비동기 알림 발송
 
 <br>
 
@@ -87,6 +88,7 @@ com.ghyinc.finance
 │   │   ├── controller         # API 진입점
 │   │   ├── service            # 비즈니스 로직
 │   │   │   ├── LoanLimitService.java
+│   │   │   ├── ProductService.java            # 금융사별 상품 조회 캐싱 처리
 │   │   │   ├── LoanLimitEventHandler.java     # 한도조회 처리 이벤트 리스너
 │   │   │   ├── LoanLimitSenderService.java    # @Async 비동기 전송
 │   │   │   └── LoanLimitResultService.java    # 콜백 수신 처리
@@ -103,6 +105,10 @@ com.ghyinc.finance
 │   │   ├── service            # 알림 비즈니스 로직
 │   │   │   ├── NotificationService.java
 │   │   │   └── NotificationSenderService.java
+│   │   ├── sender             # 채널별 발송 (Strategy + Template Method)
+│   │   │   ├── AbstractNotificationSender.java     # Template Method (CB/Retry/Fallback 골격)
+│   │   │   ├── NotificationSender.java             # 전략 인터페이스
+│   │   │   └── NotificationSenderFactory.java      # ChannelType → SenderMap 자동 수집
 │   │   ├── event
 │   │   │   ├── NotificationEventConsumer.java       # Kafka Consumer (발송 처리)
 │   │   │   └── LoanLimitCompletedEventConsumer.java # loan-limit-completed 토픽 수신
@@ -128,6 +134,7 @@ com.ghyinc.finance
 │   │   ├── repository
 │   │   │   └── OutboxEventRepository.java
 │   │   ├── service
+│   │   │   ├── OutboxEventWriter.java       # Outbox Insert + 이벤트 발행
 │   │   │   └── OutboxEventService.java      # @TransactionalEventListener
 │   │   └── scheduler
 │   │       └── OutboxEventBatchPublisher.java # @Scheduled 재시도
@@ -171,8 +178,7 @@ FE → POST /api/loan/limit/inquiry
   ├── LoanLimitProductResult INSERT (상품당 1건, PENDING 선저장)
   ├── 금융사별 API 병렬 전송 (CompletableFuture)
   └── 완료 시 알림 이벤트 발행
-      ├── OutboxEvent INSERT (같은 트랜잭션 - 원자적 보장)
-      └── ApplicationEventPublisher.publishEvent(OutboxCreatedEvent)
+      └── OutboxEventWriter.enqueue() — Outbox INSERT + OutboxCreatedEvent 발행 (같은 트랜잭션, 원자적)
          │
          ▼ @TransactionalEventListener(AFTER_COMMIT)
   OutboxEventService.publishAfterCommit()
@@ -185,7 +191,9 @@ FE → POST /api/loan/limit/inquiry
          │
          ▼ Kafka (notification.send)
   NotificationEventConsumer
-  └── 실제 Push/SMS 발송
+  ├── NotificationSenderFactory.getSender(channelType)
+  ├── AbstractNotificationSender.send() — CircuitBreaker + Retry + Fallback
+  └── 채널별 실제 발송 (SMS/Email/카카오톡: RestClient, 앱 푸시: FCM)
 ─────────────────────────────────────────────────────
   Callback (금융사 → 플랫폼)
   금융사 → POST /api/loan/limit/callback
@@ -228,6 +236,9 @@ LoanLimitAdaptorRequest adaptorRequest = strategy.toAdaptorRequest(request, cont
 표준 Layout 금융사 → CommonLoanLimitAdaptor (yml 설정만으로 금융사 추가)
 자체 Layout 금융사 → KakaobankLoanLimitAdaptor / TossBankLoanLimitAdaptor
 ```
+
+#### Strategy + Template Method 패턴 (notification)
+채널(SMS/Email/카카오톡/앱 푸시)별 발송 로직을 캡슐화합니다. 자세한 구조는 아래 `📨 알림 서비스` 섹션에서 다룹니다.
 
 #### 통신 방식별 ApiClient 분리
 
@@ -487,15 +498,120 @@ ExternalDataContext context = strategy.requiresExternalData()
 
 <br>
 
-## 📨 알림 서비스 - Kafka 기반 비동기 처리
+## 📨 알림 서비스 - 채널별 비동기 발송
 
-한도조회 완료 후 고객에게 알림을 발송하는 notification 도메인을 Kafka로 loan 도메인과 분리했습니다.
+한도조회 완료 후 고객에게 결과를 알리는 notification 도메인을 Kafka + Outbox로 loan 도메인과 물리적으로 분리했습니다. loan 도메인은 notification 도메인의 존재 자체를 알지 못하며, `loan-limit-completed` 토픽 발행까지만 책임집니다.
 
-### 도메인 간 Kafka 이벤트 흐름
+### 도메인 모델
+
+Notification (알림 발송 1건)
+├── channelType SMS / EMAIL / KAKAOTALK / PUSH
+├── sendType IMMEDIATE / SCHEDULED
+├── recipient 채널별 수신 대상 (전화번호/이메일/카카오ID/FCM 디바이스 토큰)
+├── title / content
+├── status PENDING → SUCCESS / FAILED
+├── resultCode 파트너/FCM 응답 코드
+└── sentAt
+
+### 채널별 발송 — Strategy + Template Method
+
+`NotificationSender` 전략 인터페이스와 `AbstractNotificationSender`(Template Method)로 채널별 발송을 분리했습니다. `send()`가 CircuitBreaker + Retry + Fallback을 고정 골격으로 두고, 각 채널 구현체는 `callApi()`만 구현합니다.
+
+```java
+@RequiredArgsConstructor
+public abstract class AbstractNotificationSender implements NotificationSender {
+    private final CircuitBreakerRegistry circuitBreakerRegistry;
+    private final RetryRegistry retryRegistry;
+
+    protected abstract ExternalApiResponse callApi(Notification notification);
+
+    @Override
+    public final ExternalApiResponse send(Notification notification) {
+        CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker(this.getChannelType().name());
+        Retry retry = retryRegistry.retry(this.getChannelType().name());
+
+        Supplier<ExternalApiResponse> apiCall = () -> {
+            ExternalApiResponse response = this.callApi(notification);
+            if (!response.isSuccess()) {
+                throw new ExternalApiFailException(response.getResultCode(), "외부 API 실패");
+            }
+            return response;
+        };
+
+        return Decorators.ofSupplier(apiCall)
+                .withCircuitBreaker(circuitBreaker)
+                .withRetry(retry)
+                .withFallback(ex -> this.fallback(notification, ex))
+                .decorate()
+                .get();
+    }
+
+    // REST 기반 채널(SMS/Email/카카오톡)만 사용하는 공용 HTTP POST 헬퍼
+    protected final <Req, Res> ExternalApiResponse post(
+            RestClient restClient, String path, Req requestDto,
+            Class<Res> responseType, Function<Res, ExternalApiResponse> converter
+    ) { ... }
+}
+```
+
+`NotificationSenderFactory`는 `List<NotificationSender>`를 생성자로 주입받아 `ChannelType → NotificationSender` Map을 자동 구성합니다. 채널을 추가해도 Factory 코드는 변경할 필요가 없습니다.
+
+```java
+@Component
+public class NotificationSenderFactory {
+    private final Map<ChannelType, NotificationSender> senderMap;
+
+    public NotificationSenderFactory(List<NotificationSender> senders) {
+        this.senderMap = senders.stream()
+                .collect(Collectors.toMap(NotificationSender::getChannelType, Function.identity()));
+    }
+
+    public NotificationSender getSender(ChannelType channelType) {
+        NotificationSender sender = senderMap.get(channelType);
+        if (sender == null) {
+            throw new IllegalArgumentException("지원하지 않는 채널입니다: " + channelType);
+        }
+        return sender;
+    }
+}
+```
+
+### 채널 구현체
+
+| 채널 | 전송 방식 | 구현체 |
+|---|---|---|
+| SMS / Email / 카카오톡 | Spring `RestClient` (`post()` 헬퍼 재사용) | `SmsNotificationSender` / `EmailNotificationSender` / `KakaoNotificationSender` |
+| 앱 푸시 | Firebase Admin SDK (`FirebaseMessaging`) | `PushNotificationSender` |
+
+```java
+// PushNotificationSender - post() 대신 FCM SDK를 직접 호출
+@Override
+protected ExternalApiResponse callApi(Notification notification) {
+    FirebaseMessaging firebaseMessaging = firebaseMessagingProvider.getObject(); // 실제 발송 시점에 지연 초기화
+    Message message = Message.builder()
+            .setToken(notification.getRecipient())
+            .setNotification(com.google.firebase.messaging.Notification.builder()
+                    .setTitle(notification.getTitle())
+                    .setBody(notification.getContent())
+                    .build())
+            .build();
+
+    try {
+        String messageId = firebaseMessaging.send(message);
+        return ExternalApiResponse.success(requestId, "SUCCESS", messageId);
+    } catch (FirebaseMessagingException e) {
+        throw this.toApiException(e); // FirebaseMessagingException -> ExternalApiServerException / ExternalApiClientException
+    }
+}
+```
+
+### Kafka 기반 비동기 처리 흐름
 
 ```
 [loan 도메인]
 LoanLimitResultService
+  → OutboxEventWriter.enqueue()
+  → OutboxEventService
   → KafkaTemplate.send("loan-limit-completed", inquiryNo, event)
  
         ↓ Kafka (loan-limit-completed 토픽)
@@ -504,30 +620,45 @@ LoanLimitResultService
 LoanLimitCompletedEventConsumer
   → NotificationService.sendNotification()
       → Notification INSERT
+      → OutboxEventWriter.enqueue()
+      → OutboxEventService
       → KafkaTemplate.send("notification.send", id, event)
  
-        ↓ Kafka (notification.send 토픽)
+        ↓ Kafka (notification.send 토픽, groupId: notification-send-group)
  
 NotificationEventConsumer
-  → NotificationSenderService.call()   ← 실제 Push/SMS 발송
-  → 발송 결과 UPDATE
+  → NotificationSenderFactory.getSender(channelType).send(notification) ← 실제 채널별 발송
+  → 발송 결과 markAsSuccess() / markAsFailed()
 ```
 
 ### MDC 전파
 
-Kafka Consumer는 별도 스레드에서 실행되므로 HTTP 요청의 MDC(requestId)가 자동 전파되지 않습니다. payload에 requestId를 포함시켜 Consumer 스레드에서 복원합니다.
+Kafka Consumer는 별도 스레드에서 실행되므로 HTTP 요청의 MDC(requestId)가 자동 전파되지 않습니다. 처음에는 각 Consumer가 개별적으로 `MDC.put()` / `try-finally { MDC.clear() }`를 반복했는데, `KafkaConfig`에 `RecordInterceptor`를 한 번 등록해서 이 보일러플레이트를 전역으로 걷어냈습니다. Producer가 requestId를 Kafka 헤더로 실어 보내고, Interceptor가 리스너 호출 전/후로 MDC를 자동 설정·정리합니다.
 
 ```java
-@KafkaListener(topics = "loan-limit-completed", groupId = "notification-group")
-public void consume(LoanLimitCompletedEvent event) {
-    String requestId = Optional.ofNullable(event.getRequestId())
-            .orElse(UUID.randomUUID().toString());
-    try {
-        MDC.put(REQUEST_ID_KEY, requestId);   // Consumer 스레드 MDC 설정
-        notificationService.sendNotification(...);
-    } finally {
-        MDC.clear();   // Consumer 스레드 재사용 시 오염 방지
-    }
+@Bean
+public RecordInterceptor<String, String> mdcRecordInterceptor() {
+    return new RecordInterceptor<>() {
+        @Override
+        public ConsumerRecord<String, String> intercept(ConsumerRecord<String, String> record, Consumer<String, String> consumer) {
+            Header header = record.headers().lastHeader(REQUEST_ID_KEY);
+            String requestId = header != null
+                    ? new String(header.value(), StandardCharsets.UTF_8)
+                    : UUID.randomUUID().toString();
+            MDC.put(REQUEST_ID_KEY, requestId);
+            return record;
+        }
+
+        @Override
+        public void success(ConsumerRecord<String, String> record, Consumer<String, String> consumer) {
+            MDC.clear();
+        }
+
+        @Override
+        public void failure(ConsumerRecord<String, String> record, Exception exception, Consumer<String, String> consumer) {
+            MDC.clear();
+        }
+    };
 }
 ```
 
@@ -571,6 +702,10 @@ OutboxEventService.publishAfterCommit()
 @Scheduled OutboxEventBatchPublisher
   └── 5분 이상 PENDING 건 재시도 → PUBLISHED or FAILED
 ```
+
+### OutboxEventWriter — 중복 로직 통합
+
+`LoanLimitSenderService`(loan)와 `NotificationService`(notification) 양쪽에 "OutboxEvent 빌드 → save → `OutboxCreatedEvent` 발행"이 동일하게 중복돼 있던 것을 `OutboxEventWriter` 하나로 통합했습니다. 호출자의 기존 트랜잭션에 그대로 참여하며 별도 트랜잭션을 열지 않습니다.
 
 ### OutboxEvent 토픽 분기
 
@@ -840,48 +975,9 @@ Optional<LoanLimitInquiry> findInquiryByLoReqtNoAndProduceCodeWithLock(@Param("l
 | POST | /api/loan/limit/callback | 한도결과 콜백 수신 (금융사 → 플랫폼) |
 | POST | /api/loan/apply | 대출신청 |
 | GET | /api/loan/apply/{applicationNo} | 대출신청 결과 조회 |
+| POST | /api/notification/send | 알림 발송 등록 (즉시/예약) |
 
 <br>
-
-## ⚙️ 로컬 실행
-
-```bash
-# 1. 프로젝트 클론
-git clone https://github.com/your-repo/bigin.git
-
-# 2. 로컬 프로파일로 실행 (H2 DB, Mock Nice DNR)
-./gradlew bootRun --args='--spring.profiles.active=local'
-
-# 3. Swagger UI 접속
-http://localhost:8080/swagger-ui.html
-```
-
-### application-local.yml 주요 설정
-
-```yaml
-spring:
-  datasource:
-    url: jdbc:h2:mem:financedb
-  h2:
-    console:
-      enabled: true
-
-partner-api:
-  partners:
-    KAKAO_BANK:
-      base-url: https://api.kakaobank.com
-      path: /v1/loan/limit
-      connection-type: REST
-```
-
-<br>
-
-## 🧪 테스트
-
-```bash
-# 전체 테스트 실행
-./gradlew test
-```
 
 주요 테스트 대상은 다음과 같습니다.
 
@@ -923,6 +1019,11 @@ partner-api:
 | Kafka DLQ 도입 | Consumer 처리 실패 메시지 유실 방지, Poison Pill과 일시 장애 자동 분류, 지수 백오프 자동 재시도로 운영팀 개입 최소화 |
 | PoisonPillClassifier | 재시도해도 의미 없는 예외(파싱/데이터 오류)를 즉시 DEAD 처리, 파티션 멈춤(lag 무한 증가) 방지 |
 | 지수 백오프 DB 영속화 | spring-retry ExponentialBackOff는 메모리에만 존재 → 서버 재기동 시 재시도 일정 소멸. DlqEvent.nextRetryAt을 DB에 저장하여 재기동 후에도 재시도 일정 유지 |
+| notification 채널 Strategy + Template Method | 채널 추가 시 Factory/기존 코드 변경 없이 구현체만 추가(OCP), CB/Retry/Fallback 골격을 모든 채널이 공유 |
+| AbstractNotificationSender에서 RestClient 생성자 제거 | FCM처럼 REST가 아닌 채널도 같은 Template Method 골격을 재사용할 수 있도록, RestClient를 `post()` 파라미터로 전달받는 방식으로 변경 |
+| ExternalApiServerException / ExternalApiClientException 분리 | resilience4j 설정이 HTTP 클라이언트 라이브러리·전송 방식(RestClient/FCM SDK)에 종속되지 않도록 예외 타입 통일 |
+| OutboxEventWriter 통합 | loan/notification 양쪽에 동일하게 중복돼 있던 "Outbox INSERT + 이벤트 발행" 로직 통합 |
+| RecordInterceptor 기반 MDC 전파 | 각 Kafka Consumer에 중복돼 있던 MDC put/clear 보일러플레이트를 전역 제거, 신규 Consumer 추가 시에도 자동 적용 |
 
 ### 실무 대비 개인 프로젝트 개선 사항
 
