@@ -4,7 +4,6 @@ import com.ghyinc.finance.domain.user.enums.MemberRole;
 import com.ghyinc.finance.global.jwt.enums.TokenType;
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
-import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -14,7 +13,6 @@ import java.util.Date;
 import java.util.UUID;
 
 @Component
-@RequiredArgsConstructor
 public class JwtTokenProvider {
     private final SecretKey secretKey;
 
