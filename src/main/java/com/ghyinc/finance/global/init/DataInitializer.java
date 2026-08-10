@@ -10,12 +10,14 @@ import com.ghyinc.finance.domain.loan.repository.PartnerLoanTypeRepository;
 import com.ghyinc.finance.domain.loan.repository.PartnerRepository;
 import com.ghyinc.finance.domain.loan.repository.ProductRepository;
 import com.ghyinc.finance.domain.user.entity.Member;
+import com.ghyinc.finance.domain.user.enums.MemberRole;
 import com.ghyinc.finance.domain.user.repository.MemberRepository;
 import com.ghyinc.finance.global.crypto.enums.CryptoAlgorithm;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -32,6 +34,8 @@ public class DataInitializer implements ApplicationRunner {
     private final PartnerLoanTypeRepository partnerLoanTypeRepository;
     private final ProductRepository productRepository;
     private final MemberRepository memberRepository;
+
+    private final PasswordEncoder passwordEncoder;
 
     @Override
     public void run(ApplicationArguments args) throws Exception {
@@ -242,6 +246,8 @@ public class DataInitializer implements ApplicationRunner {
                         .name("윤교희")
                         .mobile("01056677055")
                         .email("gyohee91@gmail.com")
+                        .password(passwordEncoder.encode("test1234!"))
+                        .role(MemberRole.USER)
                         .build()
         );
 

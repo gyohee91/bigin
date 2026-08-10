@@ -219,3 +219,6 @@ notification-api:
       path: /send/kakaotalk
       connect-timeout-ms: 3000
       read-timeout-ms: 5000
+
+jwt:
+  secret: bXktc3VwZXItc2VjcmV0LWtleS1tdXN0LWJlLWxvbmc=

@@ -1,10 +1,8 @@
 package com.ghyinc.finance.domain.user.entity;
 
+import com.ghyinc.finance.domain.user.enums.MemberRole;
 import com.ghyinc.finance.global.common.BaseTimeEntity;
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
+import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.Comment;
 
@@ -29,4 +27,12 @@ public class Member extends BaseTimeEntity {
 
     @Comment("App Push Token")
     private String token;
+
+    @Comment("Password")
+    private String password;
+
+    @Enumerated(EnumType.STRING)
+    @Comment("사용자 권한")
+    @Builder.Default
+    private MemberRole role = MemberRole.USER;
 }
