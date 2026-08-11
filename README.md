@@ -1,4 +1,5 @@
 [![CI](https://github.com/gyohee91/bigin/actions/workflows/ci.yaml/badge.svg)](https://github.com/gyohee91/bigin/actions/workflows/ci.yaml)
+[![codecov](https://codecov.io/gh/gyohee91/bigin/branch/main/graph/badge.svg)](https://codecov.io/gh/gyohee91/bigin)
 
 # 🏦 파트너사 제휴 한도조회 플랫폼 · 알림 서비스
 
