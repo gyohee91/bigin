@@ -8,6 +8,27 @@
 
 <br>
 
+## 목차
+
+- [📌 프로젝트 개요](#project-overview)
+- [🛠 기술 스택](#tech-stack)
+- [📁 패키지 구조](#package-structure)
+- [🏗 핵심 아키텍처](#architecture)
+- [🗄 핵심 도메인 모델](#domain-model)
+- [🔒 장애 격리 - Resilience4j](#resilience4j)
+- [🚗 오토담보/주택담보 대출 연동 (Nice DNR, KB부동산 시세)](#external-integration)
+- [📨 알림 서비스 - 채널별 비동기 발송](#notification-service)
+- [📦 Outbox 패턴 - 트랜잭션 보장](#outbox-pattern)
+- [💀 Kafka DLQ (Dead Letter Queue)](#kafka-dlq)
+- [🗃 캐싱 전략](#caching-strategy)
+- [🔄 콜백 동시성 제어](#callback-concurrency)
+- [🔢 업무 식별번호 채번 - Redis INCR](#id-generation)
+- [📋 API 명세](#api-spec)
+- [📝 주요 설계 결정](#design-decisions)
+
+<br>
+
+<a id="project-overview"></a>
 ## 📌 프로젝트 개요
 
 ### 실무 배경
@@ -47,6 +68,7 @@
 
 <br>
 
+<a id="tech-stack"></a>
 ## 🛠 기술 스택
 
 ### 실무 vs 개인 프로젝트 비교
@@ -79,6 +101,7 @@
 
 <br>
 
+<a id="package-structure"></a>
 ## 📁 패키지 구조
 
 ```
@@ -152,6 +175,7 @@ com.ghyinc.finance
 
 <br>
 
+<a id="architecture"></a>
 ## 🏗 핵심 아키텍처
 
 ### 1. 한도조회 비동기 처리 흐름
@@ -249,6 +273,7 @@ REST   → RestApiClient
 
 <br>
 
+<a id="domain-model"></a>
 ## 🗄 핵심 도메인 모델
 
 ```
@@ -298,6 +323,7 @@ inquiry.incrementSuccessCount();  // count 증가 + 상태 자동 결정
 
 <br>
 
+<a id="resilience4j"></a>
 ## 🔒 장애 격리 - Resilience4j
 
 금융사별 독립적인 Circuit Breaker 인스턴스로 특정 금융사 장애 시 격리합니다.
@@ -485,6 +511,7 @@ public CryptoService getCryptoService(PartnerCode partnerCode) { ... }
 
 <br>
 
+<a id="external-integration"></a>
 ## 🚗 오토담보/주택담보 대출 - Nice DNR, KB부동산 시세정보 연동
 
 ```java
@@ -498,12 +525,14 @@ ExternalDataContext context = strategy.requiresExternalData()
 
 <br>
 
+<a id="notification-service"></a>
 ## 📨 알림 서비스 - 채널별 비동기 발송
 
 한도조회 완료 후 고객에게 결과를 알리는 notification 도메인을 Kafka + Outbox로 loan 도메인과 물리적으로 분리했습니다. loan 도메인은 notification 도메인의 존재 자체를 알지 못하며, `loan-limit-completed` 토픽 발행까지만 책임집니다.
 
 ### 도메인 모델
 
+```
 Notification (알림 발송 1건)
 ├── channelType SMS / EMAIL / KAKAOTALK / PUSH
 ├── sendType IMMEDIATE / SCHEDULED
@@ -512,6 +541,7 @@ Notification (알림 발송 1건)
 ├── status PENDING → SUCCESS / FAILED
 ├── resultCode 파트너/FCM 응답 코드
 └── sentAt
+```
 
 ### 채널별 발송 — Strategy + Template Method
 
@@ -664,6 +694,7 @@ public RecordInterceptor<String, String> mdcRecordInterceptor() {
 
 <br>
 
+<a id="outbox-pattern"></a>
 ## 📦 Outbox 패턴 - 트랜잭션 보장
 
 Kafka 발행과 DB 트랜잭션의 원자성을 보장하기 위해 Outbox 패턴을 적용했습니다.
@@ -726,6 +757,7 @@ notification     NotificationService     → 알림 발송 이벤트
 
 <br>
 
+<a id="kafka-dlq"></a>
 ## 💀 Kafka DLQ (Dead Letter Queue)
 
 > Kafka Consumer 처리 실패 메시지를 DLQ로 이동하여 유실 없이 관리하고,
@@ -798,6 +830,7 @@ retryCount=5 → nextRetryAt = now + 32분
 retryCount>5 → DEAD 처리
 ```
 
+<a id="caching-strategy"></a>
 ## 🗃 캐싱 전략
 
 조회 빈도가 높고 변경 빈도가 낮은 데이터에 캐싱을 적용하여 DB 부하를 줄였습니다.
@@ -943,6 +976,7 @@ CaffeineCacheManager → "cryptoService" 캐시, TTL 1시간, 최대 100개
     → 암호화 키: Caffeine JVM 로컬 저장 (직렬화 불필요)
 ```
 
+<a id="callback-concurrency"></a>
 ## 🔄 콜백 동시성 제어
 
 여러 금융사 콜백이 동시에 수신될 때 `LoanLimitInquiry` count 업데이트의 Lost Update를 방지합니다.
@@ -954,6 +988,7 @@ CaffeineCacheManager → "cryptoService" 캐시, TTL 1시간, 최대 100개
 Optional<LoanLimitInquiry> findInquiryByLoReqtNoAndProduceCodeWithLock(@Param("loReqtNo") String loReqtNo, @Param("productCode") String productCode);
 ```
 
+<a id="id-generation"></a>
 ## 🔢 업무 식별번호 채번 - Redis INCR
 
 ```
@@ -966,6 +1001,7 @@ Optional<LoanLimitInquiry> findInquiryByLoReqtNoAndProduceCodeWithLock(@Param("l
 
 <br>
 
+<a id="api-spec"></a>
 ## 📋 API 명세
 
 | Method | URL | 설명 |
@@ -1000,6 +1036,7 @@ Optional<LoanLimitInquiry> findInquiryByLoReqtNoAndProduceCodeWithLock(@Param("l
 
 <br>
 
+<a id="design-decisions"></a>
 ## 📝 주요 설계 결정
 
 | 결정 | 이유                                                                      |

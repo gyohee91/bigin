@@ -48,7 +48,7 @@ public class JwtTokenProvider {
         try {
             this.parseClaims(token);
             return true;
-        } catch (ExpiredJwtException | UnsupportedJwtException | MalformedJwtException | SecurityException e) {
+        } catch (JwtException | IllegalArgumentException e) {
             return false;
         }
     }
