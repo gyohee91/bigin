@@ -104,7 +104,11 @@ def jacocoExcludePatterns = [
         '**/external/**',
         '**/circuitbreaker/**',
         '**/config/**',
+        '**/security/**',
+        '**/controller/**',
 
+        '**/jwt/*EntryPoint*',
+        '**/jwt/*AccessDeniedHandler*',
         '**/event/impl/**',
         '**/*Application*',
 

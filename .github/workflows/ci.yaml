@@ -38,7 +38,10 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
 
       - name: Build, test and verify coverage
-        run: ./gradlew build jacocoTestReport jacocoTestCoverageVerification --scan
+        run: >
+          ./gradlew build jacocoTestReport jacocoTestCoverageVerification --scan
+          -Dscan.terms-of-use.agree=yes
+          -Dscan.terms-of-use.url=https://gradle.com/help/legal-terms-of-use
 
       - name: Upload JaCoCo coverage report
         uses: actions/upload-artifact@v4

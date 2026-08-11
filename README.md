@@ -23,7 +23,6 @@
 - [💀 Kafka DLQ (Dead Letter Queue)](#kafka-dlq)
 - [🗃 캐싱 전략](#caching-strategy)
 - [🔄 콜백 동시성 제어](#callback-concurrency)
-- [🔢 업무 식별번호 채번 - Redis INCR](#id-generation)
 - [📋 API 명세](#api-spec)
 - [📝 주요 설계 결정](#design-decisions)
 
@@ -58,14 +57,7 @@
 - 실무와 동일한 비즈니스 로직 (콜백 기반 비동기 한도조회, 상품별 채번, 디자인 패턴 등)
 - Java 17 + Spring Boot 3.5로 업그레이드하여 최신 기능 적용
 - Layered Architecture → Domain-driven Package Structure로 전환
-- 실무에서 경험한 기술적 한계를 Redis 기반으로 개선
-
-| 개선 항목 | 실무 방식 | bigin 방식 |
-  |---|---|---|
-| 콜백 동시성 제어 | JPA 비관적 락 | Redis 분산락 (Redisson) |
-| 중복 요청 방지 | DB 조건절 조회 | Redis 분산락 (`tryLock(0s)`) |
-| 업무 식별번호 채번 | Oracle Sequence + 채번 테이블 | Redis INCR + Lua 스크립트 |
-| 상품 정보 조회 | DB 직접 조회 | Redis 캐싱 (`@Cacheable`, TTL 6시간) |
+- 또한, 개인 프로젝트에서 설계·검증한 개선 방식 중 실무 환경에 적용 가능하다고 판단된 항목을 실제 운영 시스템에도 반영
 
 <br>
 
@@ -989,17 +981,6 @@ CaffeineCacheManager → "cryptoService" 캐시, TTL 1시간, 최대 100개
 Optional<LoanLimitInquiry> findInquiryByLoReqtNoAndProduceCodeWithLock(@Param("loReqtNo") String loReqtNo, @Param("productCode") String productCode);
 ```
 
-<a id="id-generation"></a>
-## 🔢 업무 식별번호 채번 - Redis INCR
-
-```
-> 실무에서는 Oracle Sequence와 채번 테이블을 조합해서 사용했습니다.
-> Oracle Sequence는 중복 없음을 보장하지만, 날짜 기반 초기화를 위한 별도 채번 테이블 관리가 필요하고
-> 서버 재기동 시 Sequence cache gap이 발생할 수 있습니다.
-> 해당 프로젝트에서는 Redis INCR로 전환하여 Oracle 의존 제거, 날짜 기반 자정 초기화(TTL),
-> gap 없는 연속 채번을 동시에 해결했습니다.
-```
-
 <br>
 
 <a id="api-spec"></a>
@@ -1062,15 +1043,5 @@ Optional<LoanLimitInquiry> findInquiryByLoReqtNoAndProduceCodeWithLock(@Param("l
 | ExternalApiServerException / ExternalApiClientException 분리 | resilience4j 설정이 HTTP 클라이언트 라이브러리·전송 방식(RestClient/FCM SDK)에 종속되지 않도록 예외 타입 통일 |
 | OutboxEventWriter 통합 | loan/notification 양쪽에 동일하게 중복돼 있던 "Outbox INSERT + 이벤트 발행" 로직 통합 |
 | RecordInterceptor 기반 MDC 전파 | 각 Kafka Consumer에 중복돼 있던 MDC put/clear 보일러플레이트를 전역 제거, 신규 Consumer 추가 시에도 자동 적용 |
-
-### 실무 대비 개인 프로젝트 개선 사항
-
-| 항목         | 실무 프로젝트                | 개인 프로젝트                   | 개선 이유                                 |
-|------------|------------------------|---------------------------|---------------------------------------|
-| 콜백 동시성 제어  | JPA 비관적 락              | Redis 분산락 (Redisson)      | 멀티 Pod 환경에서 DB 커넥션 점유 없이 동시성 제어       |
-| 중복 요청 방지   | DB 조건절 (`existsBy...`) | Redis 분산락 (`tryLock(0s)`) | 두 Pod 동시 통과 가능한 race condition 원천 차단  |
-| 업무 식별번호 채번 | Oracle Sequence        | Redis INCR + Lua 스크립트     | Oracle 의존 제거, 서버 재기동 후에도 gap 없는 연속 채번 |
-| 상품 정보 조회   | DB 조회 (`findBy...`)    | Redis 캐싱     | 매 요청마다 금융사별 상품 DB 조회 반복 발생 문제 해결      |
-
 
 <br>
