@@ -47,7 +47,11 @@ class JwtTokenProviderTest {
     @DisplayName("Token이 위조되면 검증에 실패한다")
     void validationToken_shouldReturnFalse_whenTokenIsTampered() {
         String token = jwtTokenProvider.createAccessToken(1L, MemberRole.USER);
-        String tampered = token.substring(0, token.length() - 1) + "X";
+
+        int payloadStart = token.indexOf('.') + 1;
+        char original = token.charAt(payloadStart);
+        char flipped = (original == 'a') ? 'b' : 'a';
+        String tampered = token.substring(0, payloadStart) + flipped + token.substring(payloadStart + 1);
 
         assertThat(jwtTokenProvider.validationToken(tampered)).isFalse();
     }

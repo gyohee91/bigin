@@ -88,7 +88,7 @@
 | API 문서    | SpringDoc OpenAPI (Swagger)             |
 | Build     | Gradle                                  |
 | 메시지큐 | Apache Kafka (Outbox Pattern, DLQ, 지수 백오프 재시도) |
-| 캐싱 | Redis Cache (`@Cacheable`), Caffeine (로컬 캐시) |
+| 캐싱 | Redis Cache (Redisson 분산 락 기반), Caffeine (`@Cacheable`, 로컬 캐시) |
 | 분산처리 | Redis (Redisson 분산락, INCR 채번) |
 
 
@@ -862,7 +862,7 @@ Redis 캐시 적용 후
   Pod B도 다음 조회 시 DB에서 갱신된 데이터 반환 → 정합성 유지
 ```
 
-### 1. 상품 정보 캐싱 — Redis (`@Cacheable`)
+### 1. 상품 정보 캐싱 — Redis 분산 락 기반 수동 캐싱
 
 한도조회 요청 시 금융사별 상품 목록을 조회합니다. 상품 정보는 자주 조회되지만 변경 빈도가 낮아 캐싱 효과가 큽니다.
 
@@ -876,21 +876,64 @@ Redis 캐시 적용 후
   → 캐시 적용 후 첫 조회만 DB, 이후 Redis에서 처리
 ```
 
+#### `@Cacheable(sync = true)`를 쓰지 않은 이유
+
+`@Cacheable`은 캐시 스탬피드(캐시 만료 시점에 동시 요청이 한꺼번에 DB를 때리는 현상)를 막는 `sync = true` 옵션을 제공하지만, `RedisCacheManager` 기반 캐시에서는 이 옵션이 **JVM 로컬 `ReentrantLock` 하나로만** 동작합니다.
+
+```
+멀티 Pod 환경에서 sync = true
+  Pod A에서 캐시 만료 후 동시 요청 유입
+    → Pod A 내부에서는 락으로 직렬화되어 DB 조회 1회만 발생
+  Pod B에서도 같은 시점에 요청 유입
+    → Pod B는 Pod A의 락을 전혀 모름 → 별도로 DB 조회 발생
+  → Pod 수만큼 DB 조회가 동시에 발생 (stampede 방지 실패)
+```
+
+`CryptoFactory`(Caffeine, JVM 로컬 캐시)에서는 `sync = true`가 그대로 유효하지만, `products`는 멀티 Pod 간 공유가 필요한 Redis 캐시라 이 옵션만으로는 stampede를 막을 수 없습니다. 콜백 동시성 제어와 동일하게 Redisson 분산 락으로 double-checked locking을 직접 구현했습니다.
+
 ```java
 // ProductService
-@Cacheable(
-    value = "products",
-    key = "#partnerCode.name() + ':' + #loanType.name()",
-    unless = "#result.isEmpty()"
-)
 public List<ProductCache> getActiveProducts(PartnerCode partnerCode, LoanType loanType) {
-    return productRepository.findActiveByPartnerCodeAndLoanType(partnerCode, loanType)
-            .stream()
-            .map(ProductCache::from)
-            .toList();
+    String key = partnerCode.name() + ':' + loanType.name();
+    Cache cache = cacheManager.getCache("products");
+    if (cache == null) {
+        return loadActiveProducts(partnerCode, loanType);
+    }
+
+    List<ProductCache> cached = cache.get(key, List.class);
+    if (cached != null) {
+        return cached;
+    }
+
+    RLock lock = redissonClient.getLock("lock:products:" + key);
+    try {
+        if (!lock.tryLock(3, 5, TimeUnit.SECONDS)) {
+            // 락 획득 실패 시 캐시 갱신 없이 DB 직접 조회로 Fallback
+            return loadActiveProducts(partnerCode, loanType);
+        }
+
+        // 더블 체크 - 락 대기 중 다른 스레드가 이미 채웠을 수도 있음
+        cached = cache.get(key, List.class);
+        if (cached != null) {
+            return cached;
+        }
+
+        List<ProductCache> result = loadActiveProducts(partnerCode, loanType);
+        if (!result.isEmpty()) {
+            cache.put(key, result);
+        }
+        return result;
+    } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return loadActiveProducts(partnerCode, loanType);
+    } finally {
+        if (lock.isHeldByCurrentThread()) {
+            lock.unlock();
+        }
+    }
 }
 
-// 상품 변경 시 캐시 무효화
+// 상품 변경 시 캐시 무효화 - 캐시를 채우는 방식과 무관하게 그대로 유효
 @CacheEvict(value = "products",
             key = "#product.partnerCode.name() + ':' + #product.loanType.name()")
 public void updateProductStatus(ProductCache product, boolean active) { ... }
@@ -899,6 +942,8 @@ public void updateProductStatus(ProductCache product, boolean active) { ... }
 @CacheEvict(value = "products", allEntries = true)
 public void evictAllProductCache() { ... }
 ```
+
+락 획득에 실패한 요청은 캐시를 갱신하지 않고 DB를 직접 조회해 응답 지연 없이 Fallback합니다.
 
 #### JPA Entity 직렬화 문제 해결
 
@@ -1076,7 +1121,8 @@ private void updateWithDistributedLock(
 | 암호화 키 Caffeine 캐싱 | Caffeine 로컬 캐시로 JVM 내 보관, 직렬화 없이 객체 그대로 캐싱     |
 | ExternalDataContext | 외부 조회 결과 파라미터 고정 (Nice DNR, KB시세 등 확장 시 파라미터 불변)                        |
 | Kafka 알림 연동 | 다중 인스턴스 환경에서 이벤트 소실 방지, loan-notification 도메인 물리적 분리                     |
-| 상품 정보 Redis 캐싱 | 매 한도조회 요청마다 금융사별 상품 DB 조회 반복 → `@Cacheable` + `ProductCache` DTO 변환으로 Redis 캐싱, Entity 직렬화 문제 회피 |
+| 상품 정보 Redis 캐싱 | 매 한도조회 요청마다 금융사별 상품 DB 조회 반복 → `ProductCache` DTO 변환 후 Redis 캐싱, Entity 직렬화 문제 회피 |
+| 상품 캐싱에 Redisson 분산 락 사용 | `@Cacheable(sync=true)`는 `RedisCacheManager`에서 JVM 로컬 락으로만 동작해 멀티 Pod stampede를 못 막음 → double-checked locking + Redisson 분산 락으로 직접 구현 |
 | Kafka DLQ 도입 | Consumer 처리 실패 메시지 유실 방지, Poison Pill과 일시 장애 자동 분류, 지수 백오프 자동 재시도로 운영팀 개입 최소화 |
 | PoisonPillClassifier | 재시도해도 의미 없는 예외(파싱/데이터 오류)를 즉시 DEAD 처리, 파티션 멈춤(lag 무한 증가) 방지 |
 | 지수 백오프 DB 영속화 | spring-retry ExponentialBackOff는 메모리에만 존재 → 서버 재기동 시 재시도 일정 소멸. DlqEvent.nextRetryAt을 DB에 저장하여 재기동 후에도 재시도 일정 유지 |
