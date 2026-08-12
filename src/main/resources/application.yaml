@@ -137,7 +137,7 @@ resilience4j:
         base-config: loan-default
       LINE_BANK:
         base-config: loan-default
-        limit-for-period: 20
+        # limit-for-period: 20
       SMS:
         base-config: notification-default
       EMAIL:
@@ -164,6 +164,27 @@ resilience4j:
           - com.ghyinc.finance.global.exception.ExternalApiServerException
         ignore-exceptions:
           - com.ghyinc.finance.global.exception.ExternalApiClientException
+
+  ratelimiter:
+    configs:
+      default:
+        limit-for-period: 10      # 1주기당 최대 허용 요청 수
+        limit-refresh-period: 1s  # 주기 (1초)
+        timeout-duration: 0       # 대기 없이 즉시 실패 (허용량 초과 시 즉시 RequestNotPermitted)
+    instances:
+      KAKAO_BANK:
+        base-config: default
+      TOSS_BANK:
+        base-config: default
+      LINE_BANK:
+        base-config: default
+      KB_CAPITAL:
+        base-config: default
+        limit-for-period: 20
+      K_BANK:
+        base-config: default
+      SHINHAN_BANK:
+        base-config: default
 
 loan-api:
   partners:

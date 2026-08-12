@@ -376,7 +376,7 @@ public LoanLimitAdaptorResponse inquireLimit(PartnerCode partnerCode,
                                               LoanLimitAdaptorRequest request) {
     try {
         // Circuit Breaker + Retry 적용된 API 호출
-        CommonLimitResponse result = apiClient.post(...);
+        CommonLimitResponse result = apiClient.post("...");
         return LoanLimitAdaptorResponse.success(partnerCode, resTimeMs);
  
     } catch (CallNotPermittedException e) {
@@ -737,7 +737,7 @@ OutboxEventService.publishAfterCommit()
 String topic = switch (outboxEvent.getAggregateType()) {
     case "LoanLimitInquiry" -> "loan-limit-completed";
     case "Notification"     -> "notification.send";
-    default -> throw new InvalidRequestException(...);
+    default -> throw new InvalidRequestException("...");
 };
 ```
 
@@ -840,7 +840,7 @@ retryCount>5 → DEAD 처리
 | TTL | 6시간 | 1시간 |
 
 ```
-멀티 Pod 환경에서 상품 정보를 로컬 캐시로 관리하면
+멀티 인스턴스 환경에서 상품 정보를 로컬 캐시로 관리하면
   Pod A에서 상품 비활성화 → Pod A 캐시만 evict
   Pod B는 여전히 비활성화된 상품을 캐시에서 반환 → 정합성 깨짐
 
@@ -933,7 +933,7 @@ public record ProductCache(
 Redis 대신 Caffeine을 선택한 이유
   → 암호화 키(AES SecretKeySpec, RSA 개인키)는 보안상 외부 저장소에 저장 불가
   → CryptoService 객체 자체가 직렬화 불가 (SecretKeySpec, Cipher 등)
-  → Pod 간 공유가 불필요 (각 Pod에서 독립적으로 동일한 키 보유 가능)
+  → 인스턴스 간 공유가 불필요 (각 서버에서 독립적으로 동일한 키 보유 가능)
   → JVM 내 메모리 접근으로 네트워크 비용 없음
 ```
 
@@ -949,7 +949,7 @@ public CryptoService getCryptoService(PartnerCode partnerCode) { ... }
 ### 3. 캐시 매니저 구성
 
 ```java
-// Redis 캐시 — 상품 정보 (멀티 Pod 정합성)
+// Redis 캐시 — 상품 정보 (멀티 인스턴스 정합성)
 @Primary
 RedisCacheManager → "products" 캐시, TTL 6시간
 
@@ -974,11 +974,37 @@ CaffeineCacheManager → "cryptoService" 캐시, TTL 1시간, 최대 100개
 
 여러 금융사 콜백이 동시에 수신될 때 `LoanLimitInquiry` count 업데이트의 Lost Update를 방지합니다.
 
+초기에는 JPA 비관적 락(`PESSIMISTIC_WRITE`)으로 구현했으나, 멀티 Pod 환경에서 락 대기 중 DB 커넥션이 점유된 채 쌓이는 문제가 있어 Redis 분산락(Redisson)으로 전환했습니다.
+
 ```java
-// LoanLimitProductResultRepository - 비관적 락으로 inquiry 조회
-@Lock(LockModeType.PESSIMISTIC_WRITE)
-@Query("SELECT p.inquiry FROM LoanLimitProductResult p WHERE p.loReqtNo = :loReqtNo")
-Optional<LoanLimitInquiry> findInquiryByLoReqtNoAndProduceCodeWithLock(@Param("loReqtNo") String loReqtNo, @Param("productCode") String productCode);
+// LoanLimitResultService - Redis 분산락으로 동시 콜백 순차 처리
+private void updateWithDistributedLock(
+        PartnerCode partnerCode,
+        LoanLimitResultRequest.LoanApplyResult item,
+        LoanLimitProductResult productResult
+) {
+    String lockKey = "loan:inquiry:lock:" + item.getLoReqtNo();
+    RLock lock = redissonClient.getLock(lockKey);
+
+    try {
+        if (!lock.tryLock(3, 5, TimeUnit.SECONDS)) {
+            log.warn("[{}] 분산 락 획득 실패. loReqtNo={}", partnerCode, item.getLoReqtNo());
+            return;
+        }
+
+        var loanLimitInquiry = loanLimitProductResultRepository
+                .findInquiryByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
+                .orElseThrow(() -> new InvalidRequestException("존재하지 않는 한도조회 이력"));
+
+        loanLimitInquiry.incrementSuccessCount();
+        productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
+
+    } finally {
+        if (lock.isHeldByCurrentThread()) {
+            lock.unlock();
+        }
+    }
+}
 ```
 
 <br>
@@ -1006,15 +1032,16 @@ Optional<LoanLimitInquiry> findInquiryByLoReqtNoAndProduceCodeWithLock(@Param("l
 | LoanLimitResultServiceTest        | 콜백 수신 및 Outbox INSERT 검증                |
 | LoanLimitStrategyFactoryTest      | 대출유형별 전략 검증                             |
 | OutboxEventServiceTest            | Outbox 즉시 발행 / 실패 시 PENDING 유지          |
+| OutboxEventWriterTest             | Outbox Service Layer로 Event 발행          |
 | AesCryptoServiceTest              | AES 암복호화                                |
 | RsaCryptoServiceTest              | RSA 암복호화                                |
 | RestApiClientTest                 | CB 상태 전환 (CLOSED→OPEN→HALF_OPEN→CLOSED) |
 | LoReqtNoGeneratorTest             | 채번 검증                                   |
 | CryptoFactoryTest                 | 파트너별 CryptoService 생성                   |
 | CryptoFactoryCacheIntegrationTest | Caffeine Cache hit 동시성 테스트              |
-| PoisonPillClassifierTest  | Poison Pill 판별 (클래스명/클래스 계층/중첩 예외) |
-| DlqEventConsumerTest      | DEAD/PENDING 자동 분류, Slack 알림 검증        |
-| DlqRetrySchedulerTest     | 재시도 성공/실패/한도 초과, 지수 백오프 검증       |
+| PoisonPillClassifierTest          | Poison Pill 판별 (클래스명/클래스 계층/중첩 예외)      |
+| DlqEventConsumerTest              | DEAD/PENDING 자동 분류, Slack 알림 검증         |
+| DlqRetrySchedulerTest             | 재시도 성공/실패/한도 초과, 지수 백오프 검증              |
 
 <br>
 
