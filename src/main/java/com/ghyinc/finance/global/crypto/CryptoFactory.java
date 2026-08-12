@@ -23,7 +23,8 @@ public class CryptoFactory {
     @Cacheable(
             value = "cryptoService",
             key = "#partnerCode",
-            cacheManager = "caffeineCacheManager"
+            cacheManager = "caffeineCacheManager",
+            sync = true
     )
     public CryptoService getCryptoService(PartnerCode partnerCode) {
         Partner partner = partnerRepository.findByPartnerCodeAndActive(partnerCode, true)

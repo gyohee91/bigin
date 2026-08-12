@@ -23,7 +23,8 @@ public class ProductService {
 
     @Cacheable(
             value = "products",
-            key = "#partnerCode.name() + ':' + #loanType.name()"
+            key = "#partnerCode.name() + ':' + #loanType.name()",
+            unless = "#result.isEmpty()"
     )
     public List<ProductCache> getActiveProducts(PartnerCode partnerCode, LoanType loanType) {
         return productRepository.findActiveByPartnerCodeAndLoanType(partnerCode, loanType)

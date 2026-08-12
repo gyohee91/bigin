@@ -37,12 +37,17 @@ spring:
   #    - org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration
 
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        retries: 2147483647           # Integer.MAX_VALUE - 재시도 횟수가 아니라 delivery.timeout.ms로 시간을 제한
+        delivery.timeout.ms: 360000   # 전체 전송 시도(재시도 포함)의 최대 허용 시간
     consumer:
-      group-id: notification-group
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
 

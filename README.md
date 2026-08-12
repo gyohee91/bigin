@@ -339,7 +339,6 @@ resilience4j:
         automatic-transition-from-open-to-half-open-enabled: true
         # 기록할 예외
         record-exceptions:
-          - com.ghyinc.finance.global.exception.ExternalApiFailException
           - org.springframework.web.client.ResourceAccessException
           - org.springframework.web.client.HttpServerErrorException
           - java.net.ConnectException
@@ -349,6 +348,20 @@ resilience4j:
         ignore-exceptions:
           - org.springframework.web.client.HttpClientErrorException.BadRequest
           - org.springframework.web.client.HttpClientErrorException.Unauthorized
+      
+      loan-default:
+        base-config: default
+        record-exceptions:
+          - com.ghyinc.finance.global.exception.ExternalApiServerException
+        ignore-exceptions:
+          - com.ghyinc.finance.global.exception.ExternalApiClientException
+
+      notification-default:
+        base-config: default
+        record-exceptions:
+          - com.ghyinc.finance.global.exception.ExternalApiServerException
+        ignore-exceptions:
+          - com.ghyinc.finance.global.exception.ExternalApiClientException
     instances:
       KAKAO_BANK:
         base-config: default
@@ -867,7 +880,8 @@ Redis 캐시 적용 후
 // ProductService
 @Cacheable(
     value = "products",
-    key = "#partnerCode.name() + ':' + #loanType.name()"
+    key = "#partnerCode.name() + ':' + #loanType.name()",
+    unless = "#result.isEmpty()"
 )
 public List<ProductCache> getActiveProducts(PartnerCode partnerCode, LoanType loanType) {
     return productRepository.findActiveByPartnerCodeAndLoanType(partnerCode, loanType)
@@ -941,7 +955,8 @@ Redis 대신 Caffeine을 선택한 이유
 @Cacheable(
     value = "cryptoService",
     key = "#partnerCode",
-    cacheManager = "caffeineCacheManager"   // ← 로컬 캐시 명시
+    cacheManager = "caffeineCacheManager",   // ← 로컬 캐시 명시
+    sync = true
 )
 public CryptoService getCryptoService(PartnerCode partnerCode) { ... }
 ```
