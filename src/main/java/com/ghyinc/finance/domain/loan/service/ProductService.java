@@ -78,7 +78,7 @@ public class ProductService {
             unless = "#result.isEmpty()"
     )
     */
-    public List<ProductCache> loadActiveProducts(PartnerCode partnerCode, LoanType loanType) {
+    private List<ProductCache> loadActiveProducts(PartnerCode partnerCode, LoanType loanType) {
         return productRepository.findActiveByPartnerCodeAndLoanType(partnerCode, loanType)
                 .stream()
                 .map(ProductCache::from)
@@ -92,10 +92,7 @@ public class ProductService {
     )
     public void updateProductStatus(ProductCache productCache, boolean active) {
         productRepository.findById(productCache.getId())
-                .ifPresent(product -> {
-                    product.changeActive(active);
-                    productRepository.save(product);
-                });
+                .ifPresent(product -> product.changeActive(active));
     }
 
     @CacheEvict(value = "products", allEntries = true)

@@ -2,9 +2,6 @@ package com.ghyinc.finance.domain.notification.event;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.ghyinc.finance.domain.notification.dto.ExternalApiResponse;
-import com.ghyinc.finance.domain.notification.entity.Notification;
-import com.ghyinc.finance.domain.notification.repository.NotificationRepository;
 import com.ghyinc.finance.domain.notification.service.NotificationSenderService;
 import com.ghyinc.finance.global.exception.KafkaMessageDeserializationException;
 import lombok.RequiredArgsConstructor;
@@ -12,7 +9,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Kafka Consumer
@@ -25,7 +21,6 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class NotificationEventConsumer {
     private final NotificationSenderService notificationSenderService;
-    private final NotificationRepository notificationRepository;
 
     private final ObjectMapper objectMapper;
 
@@ -33,26 +28,13 @@ public class NotificationEventConsumer {
             topics = "notification.send",
             groupId = "notification-send-group"
     )
-    @Transactional
     public void consume(String payload) {
 
         try {
             NotificationEvent event = objectMapper.readValue(payload, NotificationEvent.class);
             log.info("[Consumer] 메시지 수신 - id: {}", event.getId());
 
-            Notification notification = notificationRepository.findById(event.getId())
-                    .orElseThrow();
-
-            ExternalApiResponse response = notificationSenderService.call(notification);
-
-            if(response.isSuccess()) {
-                notification.markAsSuccess(response.getResultCode());
-                log.info("[Consumer] 발송 성공 - id: {}", event.getId());
-            } else {
-                notification.markAsFailed(response.getResultCode());
-                log.warn("[Consumer] 발송 실패. id={}, code={}",
-                        event.getId(), response.getResultCode());
-            }
+            notificationSenderService.sendAndUpdateResult(event.getId());
         } catch (JsonProcessingException e) {
             // NotRetryableException → DefaultErrorHandler가 즉시 DLQ로 이동
             log.error("[Consumer] 페이로드 파싱 실패. DLQ 이동. payload={}", payload, e);
