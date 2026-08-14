@@ -6,18 +6,18 @@ import com.ghyinc.finance.domain.loan.entity.Product;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.repository.ProductRepository;
+import com.ghyinc.finance.global.lock.RedisLockExecutor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.redisson.api.RLock;
-import org.redisson.api.RedissonClient;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 
 import java.util.List;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -36,7 +36,7 @@ class ProductServiceTest {
     private ProductRepository productRepository;
 
     @Mock
-    private RedissonClient redissonClient;
+    private RedisLockExecutor lockExecutor;
 
     @Mock
     private CacheManager cacheManager;
@@ -59,6 +59,26 @@ class ProductServiceTest {
                 .build();
     }
 
+    // 락 획득 성공 상황 - action을 그대로 실행
+    @SuppressWarnings("unchecked")
+    private void stubLockAcquired() {
+        given(lockExecutor.execute(anyString(), anyLong(), anyLong(), any(Supplier.class), any(Supplier.class)))
+                .willAnswer(invocation -> {
+                    Supplier<Object> action = invocation.getArgument(3);
+                    return action.get();
+                });
+    }
+
+    // 락 획득 실패 상황 - onLockUnavailable(fallback)을 실행
+    @SuppressWarnings("unchecked")
+    private void stubLockUnavailable() {
+        given(lockExecutor.execute(anyString(), anyLong(), anyLong(), any(Supplier.class), any(Supplier.class)))
+                .willAnswer(invocation -> {
+                    Supplier<Object> fallback = invocation.getArgument(4);
+                    return fallback.get();
+                });
+    }
+
     @Test
     @DisplayName("캐시 히트 시 락/DB 조회 없이 캐시 값을 반환한다")
     void getActiveProducts_returnsCachedValue_whenCacheHit() {
@@ -71,24 +91,21 @@ class ProductServiceTest {
         // when
         List<ProductCache> result = productService.getActiveProducts(PartnerCode.KAKAO_BANK, LoanType.PERSONAL_CREDIT);
 
-        // then
+        // then - fast-path에서 반환되어 락 자체를 타지 않는다
         assertThat(result).isEqualTo(cached);
-        then(redissonClient).should(never()).getLock(anyString());
+        then(lockExecutor).should(never()).execute(anyString(), anyLong(), anyLong(), any(Supplier.class), any(Supplier.class));
         then(productRepository).should(never()).findActiveByPartnerCodeAndLoanType(any(), any());
     }
 
     @Test
     @DisplayName("캐시 미스 + 락 획득 성공 시 DB 조회 후 캐시에 저장한다")
-    void getActiveProducts_loadsFromDbAndCaches_whenLockAcquired() throws InterruptedException {
+    void getActiveProducts_loadsFromDbAndCaches_whenLockAcquired() {
         // given
         Cache cache = mock(Cache.class);
         given(cacheManager.getCache("products")).willReturn(cache);
-        given(cache.get(CACHE_KEY, List.class)).willReturn(null); // 최초 조회, 더블 체크 모두 미스
+        given(cache.get(CACHE_KEY, List.class)).willReturn(null); // fast-path, 락 안 더블 체크 모두 미스
 
-        RLock rLock = mock(RLock.class);
-        given(redissonClient.getLock(LOCK_KEY)).willReturn(rLock);
-        given(rLock.tryLock(anyLong(), anyLong(), any())).willReturn(true);
-        given(rLock.isHeldByCurrentThread()).willReturn(true);
+        this.stubLockAcquired();
 
         Product product = this.buildProduct();
         given(productRepository.findActiveByPartnerCodeAndLoanType(PartnerCode.KAKAO_BANK, LoanType.PERSONAL_CREDIT))
@@ -101,21 +118,18 @@ class ProductServiceTest {
         assertThat(result).hasSize(1);
         assertThat(result.get(0).getProductCode()).isEqualTo("P001");
         then(cache).should().put(eq(CACHE_KEY), anyList());
-        then(rLock).should().unlock();
+        then(lockExecutor).should().execute(eq(LOCK_KEY), eq(3L), eq(5L), any(Supplier.class), any(Supplier.class));
     }
 
     @Test
     @DisplayName("캐시 미스 + 락 획득 실패 시 캐시 갱신 없이 DB에서 직접 조회한다")
-    void getActiveProducts_fallsBackToDb_whenLockNotAcquired() throws InterruptedException {
+    void getActiveProducts_fallsBackToDb_whenLockNotAcquired() {
         // given
         Cache cache = mock(Cache.class);
         given(cacheManager.getCache("products")).willReturn(cache);
         given(cache.get(CACHE_KEY, List.class)).willReturn(null);
 
-        RLock rLock = mock(RLock.class);
-        given(redissonClient.getLock(LOCK_KEY)).willReturn(rLock);
-        given(rLock.tryLock(anyLong(), anyLong(), any())).willReturn(false);
-        given(rLock.isHeldByCurrentThread()).willReturn(false);
+        this.stubLockUnavailable();
 
         Product product = this.buildProduct();
         given(productRepository.findActiveByPartnerCodeAndLoanType(PartnerCode.KAKAO_BANK, LoanType.PERSONAL_CREDIT))
@@ -127,24 +141,20 @@ class ProductServiceTest {
         // then
         assertThat(result).hasSize(1);
         then(cache).should(never()).put(any(), any());
-        then(rLock).should(never()).unlock();
     }
 
     @Test
     @DisplayName("락 획득 후 더블 체크에서 캐시가 이미 채워져 있으면 DB를 재조회하지 않는다")
-    void getActiveProducts_returnsDoubleCheckedCache_whenAnotherThreadAlreadyFilled() throws InterruptedException {
+    void getActiveProducts_returnsDoubleCheckedCache_whenAnotherThreadAlreadyFilled() {
         // given
         Cache cache = mock(Cache.class);
         List<ProductCache> cachedByOtherThread = List.of(ProductCache.from(this.buildProduct()));
         given(cacheManager.getCache("products")).willReturn(cache);
         given(cache.get(CACHE_KEY, List.class))
-                .willReturn(null)                  // 1차 조회 - 미스
+                .willReturn(null)                  // fast-path 조회 - 미스
                 .willReturn(cachedByOtherThread);   // 락 획득 후 더블 체크 - 다른 스레드가 이미 채움
 
-        RLock rLock = mock(RLock.class);
-        given(redissonClient.getLock(LOCK_KEY)).willReturn(rLock);
-        given(rLock.tryLock(anyLong(), anyLong(), any())).willReturn(true);
-        given(rLock.isHeldByCurrentThread()).willReturn(true);
+        this.stubLockAcquired();
 
         // when
         List<ProductCache> result = productService.getActiveProducts(PartnerCode.KAKAO_BANK, LoanType.PERSONAL_CREDIT);
@@ -170,31 +180,6 @@ class ProductServiceTest {
 
         // then
         assertThat(result).hasSize(1);
-        then(redissonClient).should(never()).getLock(anyString());
-    }
-
-    @Test
-    @DisplayName("분산 락 대기 중 인터럽트 발생 시 DB에서 직접 조회하고 인터럽트 플래그를 복원한다")
-    void getActiveProducts_fallsBackToDb_whenInterrupted() throws InterruptedException {
-        // given
-        Cache cache = mock(Cache.class);
-        given(cacheManager.getCache("products")).willReturn(cache);
-        given(cache.get(CACHE_KEY, List.class)).willReturn(null);
-
-        RLock rLock = mock(RLock.class);
-        given(redissonClient.getLock(LOCK_KEY)).willReturn(rLock);
-        given(rLock.tryLock(anyLong(), anyLong(), any())).willThrow(new InterruptedException());
-
-        Product product = this.buildProduct();
-        given(productRepository.findActiveByPartnerCodeAndLoanType(PartnerCode.KAKAO_BANK, LoanType.PERSONAL_CREDIT))
-                .willReturn(List.of(product));
-
-        // when
-        List<ProductCache> result = productService.getActiveProducts(PartnerCode.KAKAO_BANK, LoanType.PERSONAL_CREDIT);
-
-        // then
-        assertThat(result).hasSize(1);
-        assertThat(Thread.currentThread().isInterrupted()).isTrue();
-        Thread.interrupted(); // 인터럽트 플래그가 이후 테스트로 전파되지 않도록 정리
+        then(lockExecutor).should(never()).execute(anyString(), anyLong(), anyLong(), any(Supplier.class), any(Supplier.class));
     }
 }

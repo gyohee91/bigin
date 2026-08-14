@@ -10,6 +10,7 @@ import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
 import com.ghyinc.finance.domain.loan.enums.*;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepository;
+import com.ghyinc.finance.global.lock.RedisLockExecutor;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,8 +18,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.redisson.api.RLock;
-import org.redisson.api.RedissonClient;
 
 import java.util.List;
 import java.util.Optional;
@@ -28,7 +27,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 
 @ExtendWith(MockitoExtension.class)
 class LoanLimitResultServiceTest {
@@ -43,7 +44,7 @@ class LoanLimitResultServiceTest {
     private LoanLimitProductResultRepository loanLimitProductResultRepository;
 
     @Mock
-    private RedissonClient redissonClient;
+    private RedisLockExecutor lockExecutor;
 
     private LoanLimitInquiry buildInquiry() {
         return LoanLimitInquiry.builder()
@@ -92,29 +93,39 @@ class LoanLimitResultServiceTest {
                 .build();
     }
 
+    // 락 획득 성공 상황 - action(Runnable)을 그대로 실행
+    private void stubLockAcquired() {
+        willAnswer(invocation -> {
+            Runnable action = invocation.getArgument(3);
+            action.run();
+            return null;
+        }).given(lockExecutor).execute(anyString(), anyLong(), anyLong(), any(Runnable.class), any(Runnable.class));
+    }
+
+    // 락 획득 실패 상황 - onLockUnavailable(Runnable)을 실행
+    private void stubLockUnavailable() {
+        willAnswer(invocation -> {
+            Runnable onLockUnavailable = invocation.getArgument(4);
+            onLockUnavailable.run();
+            return null;
+        }).given(lockExecutor).execute(anyString(), anyLong(), anyLong(), any(Runnable.class), any(Runnable.class));
+    }
+
     @Test
     @DisplayName("콜백 정상 수신")
-    void responseCompareLoanResult() throws InterruptedException {
+    void responseCompareLoanResult() {
         // given
         LoanLimitInquiry inquiry = this.buildInquiry();
         LoanLimitProductResult productResult = this.buildProductResult(inquiry, "LR20260410AAA", "P060100206");
         LoanLimitResultRequest.LoanApplyResult preScrResultList = this.buildSuccessItem("LR20260410AAA", "P060100206");
 
-        // Redisson 분산 락 mock 결정
-        RLock rLock = mock(RLock.class);
-        given(redissonClient.getLock(anyString())).willReturn(rLock);
-        given(rLock.tryLock(anyLong(), anyLong(), any())).willReturn(true);
-        given(rLock.isHeldByCurrentThread()).willReturn(true);
+        this.stubLockAcquired();
 
         LoanLimitResultAdaptor adaptor = mock(LoanLimitResultAdaptor.class);
         given(resultAdaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
         given(adaptor.convert(any())).willReturn(this.buildRequestDto(List.of(preScrResultList)));
         given(loanLimitProductResultRepository.findByLoReqtNoAndProductCode("LR20260410AAA", "P060100206"))
                 .willReturn(Optional.of(productResult));
-        //given(loanLimitProductResultRepository.findInquiryByLoReqtNoAndProduceCodeWithLock("LR20260410AAA", "P060100206"))
-        //        .willReturn(Optional.of(inquiry));
-
-        // 비관 락 메서드 → 일반 조회 메서드로 교체
         given(loanLimitProductResultRepository.findInquiryByLoReqtNoAndProductCode("LR20260410AAA", "P060100206"))
                 .willReturn(Optional.of(inquiry));
 
@@ -129,16 +140,13 @@ class LoanLimitResultServiceTest {
 
     @Test
     @DisplayName("분산 락 획득 실패 시 successProductCount 미증가")
-    void concurrentCallbacks_successProductCountConsistency() throws InterruptedException {
+    void concurrentCallbacks_successProductCountConsistency() {
         // given
         LoanLimitInquiry inquiry = this.buildInquiry();
         LoanLimitProductResult productResult = this.buildProductResult(inquiry, "LR20260410AAA", "P060100206");
         LoanLimitResultRequest.LoanApplyResult item = this.buildSuccessItem("LR20260410AAA", "P060100206");
 
-        RLock rLock = mock(RLock.class);
-        given(redissonClient.getLock(anyString())).willReturn(rLock);
-        // 락 획득 실패 시뮬레이션
-        given(rLock.tryLock(anyLong(), anyLong(), any())).willReturn(false);
+        this.stubLockUnavailable();
 
         LoanLimitResultAdaptor adaptor = mock(LoanLimitResultAdaptor.class);
         given(resultAdaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
@@ -152,33 +160,6 @@ class LoanLimitResultServiceTest {
         // then
         assertThat(inquiry.getSuccessProductCount()).isEqualTo(0);
         assertThat(productResult.getStatus()).isEqualTo(PartnerInquiryStatus.SEND_SUCCESS);
-    }
-
-    @Test
-    @DisplayName("분산락 대기 중 인터럽트 발생 시 successProductCount 미증가")
-    void responseCompareLoanResult_interrupted() throws InterruptedException {
-        // given
-        LoanLimitInquiry inquiry = this.buildInquiry();
-        LoanLimitProductResult productResult = this.buildProductResult(inquiry, "LR20260410AAA", "P060100206");
-        LoanLimitResultRequest.LoanApplyResult item = this.buildSuccessItem("LR20260410AAA", "P060100206");
-
-        RLock rLock = mock(RLock.class);
-        given(redissonClient.getLock(anyString())).willReturn(rLock);
-        // 인터럽트 시뮬레이션
-        given(rLock.tryLock(anyLong(), anyLong(), any())).willThrow(new InterruptedException());
-
-        LoanLimitResultAdaptor adaptor = mock(LoanLimitResultAdaptor.class);
-        given(resultAdaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
-        given(adaptor.convert(any())).willReturn(this.buildRequestDto(List.of(item)));
-        given(loanLimitProductResultRepository.findByLoReqtNoAndProductCode("LR20260410AAA", "P060100206"))
-                .willReturn(Optional.of(productResult));
-
-        // when
-        loanLimitResultService.responseCompareLoanResult("LINE_BANK", this.buildRequest(List.of(item)));
-
-        // then
-        assertThat(inquiry.getSuccessProductCount()).isEqualTo(0);
-        assertThat(Thread.currentThread().isInterrupted()).isTrue();    // interrupt 플래그 복원 확인
     }
 
     @Test
@@ -217,9 +198,10 @@ class LoanLimitResultServiceTest {
         // when
         loanLimitResultService.responseCompareLoanResult("LINE_BANK", this.buildRequest(List.of(item)));
 
-        // then - PENDING 상태라 처리 skip, successCount 미증가
+        // then - PENDING 상태라 처리 skip, successCount 미증가, 락 진입 자체를 안 함
         assertThat(inquiry.getSuccessProductCount()).isEqualTo(0);
         assertThat(productResult.getStatus()).isEqualTo(PartnerInquiryStatus.PENDING);
+        then(lockExecutor).should(never()).execute(anyString(), anyLong(), anyLong(), any(Runnable.class), any(Runnable.class));
     }
 
     @Test

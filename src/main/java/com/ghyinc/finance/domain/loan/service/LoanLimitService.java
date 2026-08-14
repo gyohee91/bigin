@@ -11,11 +11,10 @@ import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepositor
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitInquiryCreatedEvent;
+import com.ghyinc.finance.global.lock.RedisLockExecutor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
-import org.redisson.api.RLock;
-import org.redisson.api.RedissonClient;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -23,7 +22,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -60,10 +58,10 @@ public class LoanLimitService {
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
     private final LoanLimitProductResultRepository loanLimitProductResultRepository;
     private final LoanLimitStrategyFactory strategyFactory;
+    private final RedisLockExecutor lockExecutor;
 
     private final LoReqtNoGenerator generator;
     private final ApplicationEventPublisher applicationEventPublisher;
-    private final RedissonClient redissonClient;
 
     /**
      * 비교대출 한도조회 요청을 처리한다.
@@ -95,30 +93,22 @@ public class LoanLimitService {
     public LoanLimitInquiryResponse requestCompareLoan(LoanLimitRequest request) {
         // Redis 분산 락으로 중복 요청 방어
         String lockKey = "loan:request:lock:" + request.userId() + ":" + request.loanType();
-        RLock lock = redissonClient.getLock(lockKey);
-
-        try {
-            if( !lock.tryLock(0, 5, TimeUnit.SECONDS) ) {
-                throw new InvalidRequestException("요청이 처리 중입니다. 잠시 후 다시 시도해 주세요.");
-            }
-
-            // 락 획득 후 중복 체크
-            // 진행 중인 조회가 있으면 중복 요청 방지 (당일 동일 유형 재조회 제한)
-            boolean hasInProgress = loanLimitInquiryRepository.existsByUserIdAndLoanTypeAndStatus(
-                    request.userId(),
-                    request.loanType(),
-                    InquiryStatus.IN_PROGRESS
-            );
-            if(hasInProgress) {
-                throw new InvalidRequestException("진행 중인 한도조회가 있습니다.");
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new InvalidRequestException("요청 처리 중 오류가 발생했습니다.");
-        } finally {
-            if(lock.isHeldByCurrentThread())
-                lock.unlock();
-        }
+        lockExecutor.execute(lockKey, 0, 5,
+                () -> {
+                    // 락 획득 후 중복 체크
+                    // 진행 중인 조회가 있으면 중복 요청 방지 (당일 동일 유형 재조회 제한)
+                    boolean hasInProgress = loanLimitInquiryRepository.existsByUserIdAndLoanTypeAndStatus(
+                            request.userId(),
+                            request.loanType(),
+                            InquiryStatus.IN_PROGRESS
+                    );
+                    if(hasInProgress) {
+                        throw new InvalidRequestException("진행 중인 한도조회가 있습니다.");
+                    }
+                },
+                () -> {
+                    throw new InvalidRequestException("요청이 처리 중입니다. 잠시 후 다시 시도해 주세요.");
+                });
 
         LoanLimitStrategy strategy = strategyFactory.getStrategy(request.loanType());
         // 유효성 검증 (각 상품 type 별)

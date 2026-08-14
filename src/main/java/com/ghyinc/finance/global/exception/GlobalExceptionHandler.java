@@ -87,6 +87,15 @@ public class GlobalExceptionHandler {
                 .body(ErrorResponse.of(HttpStatus.UNAUTHORIZED.getReasonPhrase(), e.getMessage()));
     }
 
+    @ExceptionHandler(LockUnavailableException.class)
+    public ResponseEntity<ErrorResponse> handleLockUnavailableException(LockUnavailableException e) {
+        log.warn("LockUnavailableException: {}", e.getMessage());
+
+        return ResponseEntity
+                .status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(ErrorResponse.of(HttpStatus.SERVICE_UNAVAILABLE.getReasonPhrase(), e.getMessage()));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleException(Exception e) {
         if(e instanceof AsyncRequestNotUsableException) {

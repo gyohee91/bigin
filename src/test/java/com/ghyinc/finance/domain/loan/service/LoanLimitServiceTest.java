@@ -10,6 +10,7 @@ import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepositor
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitInquiryCreatedEvent;
+import com.ghyinc.finance.global.lock.RedisLockExecutor;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,8 +19,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.redisson.api.RLock;
-import org.redisson.api.RedissonClient;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -35,6 +34,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 
@@ -55,31 +55,38 @@ class LoanLimitServiceTest {
 
     @Mock
     private LoanLimitProductResultRepository loanLimitProductResultRepository;
+
+    @Mock
+    private RedisLockExecutor lockExecutor;
     
     @Mock
     private ApplicationEventPublisher applicationEventPublisher;
 
-    @Mock
-    private RedissonClient redissonClient;
+    // requestCompareLoan()의 락 블록은 반환값 없는 Runnable 오버로드를 탄다
+    // (action 람다가 조건부로만 throw하고 정상 흐름에선 값 없이 끝나 Supplier로는 타입이 안 맞음)
+    private void stubLockAcquired() {
+        willAnswer(invocation -> {
+            Runnable action = invocation.getArgument(3);
+            action.run();
+            return null;
+        }).given(lockExecutor).execute(anyString(), anyLong(), anyLong(), any(Runnable.class), any(Runnable.class));
+    }
 
-    private RLock rLock;
-
-    /**
-     * 락 관련 given 설정
-     */
-    private void givenLockAcquired() throws InterruptedException {
-        rLock = mock(RLock.class);
-        given(redissonClient.getLock(anyString())).willReturn(rLock);
-        given(rLock.tryLock(anyLong(), anyLong(), any())).willReturn(true); // 기본: 락 획득 성공
-        given(rLock.isHeldByCurrentThread()).willReturn(true);
+    private void stubLockUnavailable() {
+        willAnswer(invocation -> {
+            Runnable onLockUnavailable = invocation.getArgument(4);
+            onLockUnavailable.run();
+            return null;
+        }).given(lockExecutor).execute(anyString(), anyLong(), anyLong(), any(Runnable.class), any(Runnable.class));
     }
 
     @Test
     @DisplayName("한도조회 요청 정상처리 - 202 Accepted 즉시 응답")
-    void requestCompareLoan_success() throws InterruptedException {
-        // given
-        this.givenLockAcquired();
+    void requestCompareLoan_success() {
+        // 락 획득 성공 - action 그대로 실행
+        this.stubLockAcquired();
 
+        // given
         LoanLimitRequest request = LoanLimitRequest.builder()
                 .userId(1L)
                 .name("윤교희")
@@ -126,10 +133,8 @@ class LoanLimitServiceTest {
 
     @Test
     @DisplayName("활성화된 금융사가 없으면 InvalidRequestException 발생")
-    void requestCompareLoan_noActivePartner_throwException() throws InterruptedException {
+    void requestCompareLoan_noActivePartner_throwException() {
         // given
-        this.givenLockAcquired();
-
         LoanLimitRequest request = LoanLimitRequest.builder()
                 .userId(1L)
                 .name("윤교희")
@@ -158,10 +163,8 @@ class LoanLimitServiceTest {
 
     @Test
     @DisplayName("진행 중인 한도조회 요청이 있으면 중복 요청 방지")
-    void requestCompareLoan_inProgressExists_throwsException() throws InterruptedException {
+    void requestCompareLoan_inProgressExists_throwsException() {
         // given
-        this.givenLockAcquired();
-
         LoanLimitRequest request = LoanLimitRequest.builder()
                 .userId(1L)
                 .name("윤교희")
@@ -171,7 +174,8 @@ class LoanLimitServiceTest {
                 .jobName("오케이")
                 .loanType(LoanType.PERSONAL_CREDIT)
                 .build();
-        
+
+        this.stubLockAcquired();
         given(loanLimitInquiryRepository.existsByUserIdAndLoanTypeAndStatus(1L, LoanType.PERSONAL_CREDIT, InquiryStatus.IN_PROGRESS))
                 .willReturn(true);
 
@@ -186,10 +190,10 @@ class LoanLimitServiceTest {
 
     @Test
     @DisplayName("오토담보 - Nice DNR 조회 성공 시 정상 처리")
-    void requestCompareLoan_auto_niceDnrSuccess() throws InterruptedException {
-        // given
-        this.givenLockAcquired();
+    void requestCompareLoan_auto_niceDnrSuccess() {
+        this.stubLockAcquired();
 
+        // given
         LoanLimitRequest request = LoanLimitRequest.builder()
                 .userId(1L)
                 .name("윤교희")
@@ -234,10 +238,8 @@ class LoanLimitServiceTest {
 
     @Test
     @DisplayName("오토담보 - Nice DNR 조회 실패 시 진행 가능 금융사 없으면 예외")
-    void requestCompareLoan_auto_niceDnrFailed_throwException() throws InterruptedException {
+    void requestCompareLoan_auto_niceDnrFailed_throwException() {
         // given
-        this.givenLockAcquired();
-
         LoanLimitRequest request = LoanLimitRequest.builder()
                 .userId(1L)
                 .name("윤교희")
@@ -272,13 +274,10 @@ class LoanLimitServiceTest {
 
     @Test
     @DisplayName("동시 요청 - 분산 락 확득 실패 시 즉시 예외")
-    void requestCompareLoan_lockFailed_throwsException() throws InterruptedException {
-        // given
-        rLock = mock(RLock.class);
-        given(redissonClient.getLock(anyString())).willReturn(rLock);
-        given(rLock.tryLock(anyLong(), anyLong(), any())).willReturn(false);
-        given(rLock.isHeldByCurrentThread()).willReturn(false);
+    void requestCompareLoan_lockFailed_throwsException() {
+        this.stubLockUnavailable();
 
+        // given
         LoanLimitRequest request = LoanLimitRequest.builder()
                 .userId(1L)
                 .name("윤교희")
@@ -300,32 +299,10 @@ class LoanLimitServiceTest {
         then(applicationEventPublisher).should(never()).publishEvent(any());
     }
 
-    @Test
-    @DisplayName("동시 요청 - 락 대기 중 인터럽트 발생 시 예외")
-    void requestCompareLoan_interrupted_throwsException() throws InterruptedException {
-        // given
-        rLock = mock(RLock.class);
-        given(redissonClient.getLock(anyString())).willReturn(rLock);
-        given(rLock.tryLock(anyLong(), anyLong(), any())).willThrow(new InterruptedException());
-        given(rLock.isHeldByCurrentThread()).willReturn(false);
-
-        LoanLimitRequest request = LoanLimitRequest.builder()
-                .userId(1L)
-                .name("윤교희")
-                .rrno("9102131234556")
-                .ci("wEi9oYSuekQGxT9MV4rKHG4CO+Zrp+onhLIIuembI8jx/0PLF5Ne3oMBxvUFlN4UmsgjeNErZfmpCVUFH")
-                .jobType(JobType.EMPLOYEE)
-                .jobName("오케이")
-                .loanType(LoanType.PERSONAL_CREDIT)
-                .build();
-
-        // when & then
-        assertThatThrownBy(() -> loanLimitService.requestCompareLoan(request))
-                .isInstanceOf(InvalidRequestException.class)
-                .hasMessage("요청 처리 중 오류가 발생했습니다.");
-
-        assertThat(Thread.currentThread().isInterrupted()).isTrue();
-    }
+    // 락 대기 중 인터럽트 발생 시 fallback(onLockUnavailable) 실행 + 인터럽트 플래그 복원 로직은
+    // DistributedLockExecutor 자체의 책임이 되어 DistributedLockExecutorTest로 옮겼다.
+    // (예전엔 인터럽트와 락-실패를 다른 메시지로 구분했지만, executor 도입 후 둘 다
+    // 같은 onLockUnavailable("요청이 처리 중입니다...")로 합쳐졌다)
 
     @Test
     @DisplayName("폴링 - 진행 중 (콜백 미완료) -> productResults 빈 리스트 반환")

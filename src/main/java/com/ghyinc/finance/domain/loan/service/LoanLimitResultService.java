@@ -5,21 +5,18 @@ import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptor;
 import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptorFactory;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResultRequest;
 import com.ghyinc.finance.domain.loan.dto.ResultResponse;
-import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepository;
+import com.ghyinc.finance.global.lock.RedisLockExecutor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
-import org.redisson.api.RLock;
-import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
 
 /**
  * 한도결과 콜백 수신 서비스
@@ -47,9 +44,9 @@ import java.util.concurrent.TimeUnit;
 @Service
 @RequiredArgsConstructor
 public class LoanLimitResultService {
-    private final RedissonClient redissonClient;
     private final LoanLimitResultAdaptorFactory resultAdaptorFactory;
     private final LoanLimitProductResultRepository loanLimitProductResultRepository;
+    private final RedisLockExecutor lockExecutor;
 
     /**
      * 금융사 한도조회 콜백을 수신하여 처리한다
@@ -130,28 +127,16 @@ public class LoanLimitResultService {
      */
     private void updateWithDistributedLock(PartnerCode partnerCode, LoanLimitResultRequest.LoanApplyResult item, LoanLimitProductResult productResult) {
         String lockKey = "loan:inquiry:lock:" + item.getLoReqtNo();
-        RLock lock = redissonClient.getLock(lockKey);
+        lockExecutor.execute(lockKey, 3, 5,
+                () -> {
+                    var loanLimitInquiry = loanLimitProductResultRepository.findInquiryByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
+                            .orElseThrow(() -> new InvalidRequestException("존재하지 않는 한도조회 이력"));
 
-        try {
-            if( !lock.tryLock(3, 5, TimeUnit.SECONDS) ) {
-                log.warn("[{}] 분산 락 획득 실패. loReqtNo={}", partnerCode, item.getLoReqtNo());
-                return;
-            }
-
-            var loanLimitInquiry = loanLimitProductResultRepository.findInquiryByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
-                    .orElseThrow(() -> new InvalidRequestException("존재하지 않는 한도조회 이력"));
-
-            loanLimitInquiry.incrementSuccessCount();
-            productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
-
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.error("[{}] 분산 락 대기 중 인터럽트. loReqtNo={}", partnerCode, item.getLoReqtNo());
-        } finally {
-            if(lock.isHeldByCurrentThread()) {
-                lock.unlock();
-            }
-        }
+                    loanLimitInquiry.incrementSuccessCount();
+                    productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
+                },
+                () -> log.warn("[{}] 분산 락 획득 실패. loReqtNo={}", partnerCode, item.getLoReqtNo())
+        );
 
         // 비관적 Lock으로 동시 수신 시 순차 처리 보장
         //var loanLimitInquiry = loanLimitProductResultRepository.findInquiryByLoReqtNoAndProduceCodeWithLock(item.getLoReqtNo(), item.getProductCode())
@@ -162,28 +147,6 @@ public class LoanLimitResultService {
         // incrementSuccessCount(): Inquiry의 successProductCount 증가
         //loanLimitInquiry.incrementSuccessCount();
         //productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
-    }
-
-    /**
-     * 통합 테스트용 - 분산 락 + successCount 갱신만 단독 검증
-     */
-    public void incrementSuccessCountWithLock(LoanLimitInquiry inquiry, String loReqtNo) {
-        String lockKey = "loan:inquiry:lock:" + loReqtNo;
-        RLock rLock = redissonClient.getLock(lockKey);
-
-        try {
-            if(!rLock.tryLock(3, 5, TimeUnit.SECONDS)) {
-                log.warn("분산 락 획득 실패. loReqtNo={}", loReqtNo);
-                return;
-            }
-            inquiry.incrementSuccessCount();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } finally {
-            if(rLock.isHeldByCurrentThread()) {
-                rLock.unlock();
-            }
-        }
     }
 
 }
