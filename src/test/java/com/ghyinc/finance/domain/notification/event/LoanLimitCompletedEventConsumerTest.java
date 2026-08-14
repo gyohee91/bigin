@@ -10,6 +10,7 @@ import com.ghyinc.finance.domain.notification.enums.SendType;
 import com.ghyinc.finance.domain.notification.service.NotificationService;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.global.exception.KafkaMessageDeserializationException;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,6 +44,10 @@ class LoanLimitCompletedEventConsumerTest {
                 .build();
     }
 
+    private ConsumerRecord<String, String> buildRecord(String payload) {
+        return new ConsumerRecord<>("loan-limit-completed", 0, 0L, "LL20260410A3F2C891", payload);
+    }
+
     @Test
     @DisplayName("SUCCESS 상태이면 성공 안내 문구로 SMS 발송을 요청한다")
     void consume_marksNotificationAsSuccess_whenSendSucceeds() throws JsonProcessingException {
@@ -52,7 +57,7 @@ class LoanLimitCompletedEventConsumerTest {
                 .willReturn(this.buildEvent(InquiryStatus.SUCCESS));
 
         // when
-        loanLimitCompletedEventConsumer.consume(payload);
+        loanLimitCompletedEventConsumer.consume(payload, this.buildRecord(payload));
 
         // then
         ArgumentCaptor<NotificationSendRequest> captor = ArgumentCaptor.forClass(NotificationSendRequest.class);
@@ -74,7 +79,7 @@ class LoanLimitCompletedEventConsumerTest {
                 .willReturn(this.buildEvent(InquiryStatus.FAILED));
 
         // when
-        loanLimitCompletedEventConsumer.consume(payload);
+        loanLimitCompletedEventConsumer.consume(payload, this.buildRecord(payload));
 
         // then
         ArgumentCaptor<NotificationSendRequest> captor = ArgumentCaptor.forClass(NotificationSendRequest.class);
@@ -91,7 +96,7 @@ class LoanLimitCompletedEventConsumerTest {
                 .willReturn(this.buildEvent(InquiryStatus.PARTIAL_SUCCESS));
 
         // when
-        loanLimitCompletedEventConsumer.consume(payload);
+        loanLimitCompletedEventConsumer.consume(payload, this.buildRecord(payload));
 
         // then
         ArgumentCaptor<NotificationSendRequest> captor = ArgumentCaptor.forClass(NotificationSendRequest.class);
@@ -108,7 +113,7 @@ class LoanLimitCompletedEventConsumerTest {
                 .willThrow(new JsonMappingException(null, "파싱 실패"));
 
         // when & then
-        assertThatThrownBy(() -> loanLimitCompletedEventConsumer.consume(payload))
+        assertThatThrownBy(() -> loanLimitCompletedEventConsumer.consume(payload, this.buildRecord(payload)))
                 .isInstanceOf(KafkaMessageDeserializationException.class);
     }
 }

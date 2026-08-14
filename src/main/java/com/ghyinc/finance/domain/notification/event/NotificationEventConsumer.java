@@ -6,6 +6,7 @@ import com.ghyinc.finance.domain.notification.service.NotificationSenderService;
 import com.ghyinc.finance.global.exception.KafkaMessageDeserializationException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.MDC;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
@@ -28,16 +29,18 @@ public class NotificationEventConsumer {
             topics = "notification.send",
             groupId = "notification-send-group"
     )
-    public void consume(String payload) {
+    public void consume(String payload, ConsumerRecord<String, String> record) {
 
         try {
             NotificationEvent event = objectMapper.readValue(payload, NotificationEvent.class);
-            log.info("[Consumer] 메시지 수신 - id: {}", event.getId());
+            log.info("[Consumer] 메시지 수신 - id: {}, partition={}, offset={}",
+                    event.getId(), record.partition(), record.offset());
 
             notificationSenderService.sendAndUpdateResult(event.getId());
         } catch (JsonProcessingException e) {
             // NotRetryableException → DefaultErrorHandler가 즉시 DLQ로 이동
-            log.error("[Consumer] 페이로드 파싱 실패. DLQ 이동. payload={}", payload, e);
+            log.error("[Consumer] 페이로드 파싱 실패. DLQ 이동. topic={}, partition={}, offset={}, payload={}",
+                    record.topic(), record.partition(), record.offset(), payload, e);
             throw new KafkaMessageDeserializationException("notification.send 메시지 역직렬화 실패", e);
         } finally {
             MDC.clear();    //Consumer 스레드 재사용 시 이전 requestId 오염 방지

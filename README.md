@@ -894,43 +894,27 @@ Redis 캐시 적용 후
 ```java
 // ProductService
 public List<ProductCache> getActiveProducts(PartnerCode partnerCode, LoanType loanType) {
-    String key = partnerCode.name() + ':' + loanType.name();
+    String lockKey = partnerCode.name() + ":" + loanType.name();
     Cache cache = cacheManager.getCache("products");
     if (cache == null) {
-        return loadActiveProducts(partnerCode, loanType);
+        return this.loadActiveProducts(partnerCode, loanType);
     }
 
-    List<ProductCache> cached = cache.get(key, List.class);
-    if (cached != null) {
-        return cached;
-    }
+    List<ProductCache> cached = cache.get(lockKey, List.class);
+    if (cached != null) return cached;
 
-    RLock lock = redissonClient.getLock("lock:products:" + key);
-    try {
-        if (!lock.tryLock(3, 5, TimeUnit.SECONDS)) {
-            // 락 획득 실패 시 캐시 갱신 없이 DB 직접 조회로 Fallback
-            return loadActiveProducts(partnerCode, loanType);
-        }
+    return lockExecutor.execute(LOCK_PREFIX + lockKey, 3, 5,
+            () -> {
+                // 더블 체크 - 락 대기 중 다른 Thread가 이미 채웠을 수도 있음
+                List<ProductCache> doubleChecked = cache.get(lockKey, List.class);
+                if (doubleChecked != null) return doubleChecked;
 
-        // 더블 체크 - 락 대기 중 다른 스레드가 이미 채웠을 수도 있음
-        cached = cache.get(key, List.class);
-        if (cached != null) {
-            return cached;
-        }
-
-        List<ProductCache> result = loadActiveProducts(partnerCode, loanType);
-        if (!result.isEmpty()) {
-            cache.put(key, result);
-        }
-        return result;
-    } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-        return loadActiveProducts(partnerCode, loanType);
-    } finally {
-        if (lock.isHeldByCurrentThread()) {
-            lock.unlock();
-        }
-    }
+                List<ProductCache> result = this.loadActiveProducts(partnerCode, loanType);
+                if (!result.isEmpty()) cache.put(lockKey, result);
+                return result;
+            },
+            () -> this.loadActiveProducts(partnerCode, loanType)
+    );
 }
 
 // 상품 변경 시 캐시 무효화 - 캐시를 채우는 방식과 무관하게 그대로 유효
@@ -1038,32 +1022,18 @@ CaffeineCacheManager → "cryptoService" 캐시, TTL 1시간, 최대 100개
 
 ```java
 // LoanLimitResultService - Redis 분산락으로 동시 콜백 순차 처리
-private void updateWithDistributedLock(
-        PartnerCode partnerCode,
-        LoanLimitResultRequest.LoanApplyResult item,
-        LoanLimitProductResult productResult
-) {
+private void updateWithDistributedLock(PartnerCode partnerCode, LoanLimitResultRequest.LoanApplyResult item, LoanLimitProductResult productResult) {
     String lockKey = "loan:inquiry:lock:" + item.getLoReqtNo();
-    RLock lock = redissonClient.getLock(lockKey);
+    lockExecutor.execute(lockKey, 3, 5,
+            () -> {
+                var loanLimitInquiry = loanLimitProductResultRepository.findInquiryByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
+                        .orElseThrow(() -> new InvalidRequestException("존재하지 않는 한도조회 이력"));
 
-    try {
-        if (!lock.tryLock(3, 5, TimeUnit.SECONDS)) {
-            log.warn("[{}] 분산 락 획득 실패. loReqtNo={}", partnerCode, item.getLoReqtNo());
-            return;
-        }
-
-        var loanLimitInquiry = loanLimitProductResultRepository
-                .findInquiryByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
-                .orElseThrow(() -> new InvalidRequestException("존재하지 않는 한도조회 이력"));
-
-        loanLimitInquiry.incrementSuccessCount();
-        productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
-
-    } finally {
-        if (lock.isHeldByCurrentThread()) {
-            lock.unlock();
-        }
-    }
+                loanLimitInquiry.incrementSuccessCount();
+                productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
+            },
+            () -> log.warn("[{}] 분산 락 획득 실패. loReqtNo={}", partnerCode, item.getLoReqtNo())
+    );
 }
 ```
 
@@ -1093,6 +1063,7 @@ private void updateWithDistributedLock(
 | LoanLimitStrategyFactoryTest      | 대출유형별 전략 검증                             |
 | OutboxEventServiceTest            | Outbox 즉시 발행 / 실패 시 PENDING 유지          |
 | OutboxEventWriterTest             | Outbox Service Layer로 Event 발행          |
+| NotificationEventConsumerTest     | Kafka Consumer (알림 서비스) 검증              |
 | AesCryptoServiceTest              | AES 암복호화                                |
 | RsaCryptoServiceTest              | RSA 암복호화                                |
 | RestApiClientTest                 | CB 상태 전환 (CLOSED→OPEN→HALF_OPEN→CLOSED) |
@@ -1102,34 +1073,35 @@ private void updateWithDistributedLock(
 | PoisonPillClassifierTest          | Poison Pill 판별 (클래스명/클래스 계층/중첩 예외)      |
 | DlqEventConsumerTest              | DEAD/PENDING 자동 분류, Slack 알림 검증         |
 | DlqRetrySchedulerTest             | 재시도 성공/실패/한도 초과, 지수 백오프 검증              |
+| RedisLockExecutorTest             | Redis Lock 메커니즘 검증                      |
 
 <br>
 
 <a id="design-decisions"></a>
 ## 📝 주요 설계 결정
 
-| 결정 | 이유                                                                      |
-|---|-------------------------------------------------------------------------|
-| 상품별 loReqtNo 선저장 | 콜백 loReqtNo 유효성 검증, 타임아웃 처리, 대출신청 연결                                    |
-| LoanLimitResult 분리 | 상품 수가 많아도 금융사당 1건만 INSERT/UPDATE                                        |
-| 통신방식별 ApiClient 분리 | REST/전용선 금융사 혼재 대응, OCP 준수                                              |
-| 금융사별 Circuit Breaker | 특정 금융사 장애 시 다른 금융사 영향 없이 격리                                             |
-| Rate Limiter 도입 | 금융사 API Rate Limit 정책 준수, CB 불필요 OPEN 방지, RequestNotPermitted를 CB 실패에서 제외 |
-| Adaptor에서 CB Fallback 처리 | @CircuitBreaker 어노테이션 방식은 금융사별 독립 인스턴스 지정 불가, 수동 catch로 명시적 Fallback 처리 |
-| Partial Failure 패턴 | 특정 금융사 CB OPEN 시 Fallback 응답 반환, 나머지 금융사 정상 진행                          |
-| 타임아웃 계층 분리 | readTimeout(CB 실패 기록) + orTimeout(스레드 강제 해제) 역할 분리                      |
-| 암호화 키 Caffeine 캐싱 | Caffeine 로컬 캐시로 JVM 내 보관, 직렬화 없이 객체 그대로 캐싱     |
-| ExternalDataContext | 외부 조회 결과 파라미터 고정 (Nice DNR, KB시세 등 확장 시 파라미터 불변)                        |
-| Kafka 알림 연동 | 다중 인스턴스 환경에서 이벤트 소실 방지, loan-notification 도메인 물리적 분리                     |
-| 상품 정보 Redis 캐싱 | 매 한도조회 요청마다 금융사별 상품 DB 조회 반복 → `ProductCache` DTO 변환 후 Redis 캐싱, Entity 직렬화 문제 회피 |
-| 상품 캐싱에 Redisson 분산 락 사용 | `@Cacheable(sync=true)`는 `RedisCacheManager`에서 JVM 로컬 락으로만 동작해 멀티 Pod stampede를 못 막음 → double-checked locking + Redisson 분산 락으로 직접 구현 |
-| Kafka DLQ 도입 | Consumer 처리 실패 메시지 유실 방지, Poison Pill과 일시 장애 자동 분류, 지수 백오프 자동 재시도로 운영팀 개입 최소화 |
-| PoisonPillClassifier | 재시도해도 의미 없는 예외(파싱/데이터 오류)를 즉시 DEAD 처리, 파티션 멈춤(lag 무한 증가) 방지 |
-| 지수 백오프 DB 영속화 | spring-retry ExponentialBackOff는 메모리에만 존재 → 서버 재기동 시 재시도 일정 소멸. DlqEvent.nextRetryAt을 DB에 저장하여 재기동 후에도 재시도 일정 유지 |
-| notification 채널 Strategy + Template Method | 채널 추가 시 Factory/기존 코드 변경 없이 구현체만 추가(OCP), CB/Retry/Fallback 골격을 모든 채널이 공유 |
-| AbstractNotificationSender에서 RestClient 생성자 제거 | FCM처럼 REST가 아닌 채널도 같은 Template Method 골격을 재사용할 수 있도록, RestClient를 `post()` 파라미터로 전달받는 방식으로 변경 |
-| ExternalApiServerException / ExternalApiClientException 분리 | resilience4j 설정이 HTTP 클라이언트 라이브러리·전송 방식(RestClient/FCM SDK)에 종속되지 않도록 예외 타입 통일 |
-| OutboxEventWriter 통합 | loan/notification 양쪽에 동일하게 중복돼 있던 "Outbox INSERT + 이벤트 발행" 로직 통합 |
-| RecordInterceptor 기반 MDC 전파 | 각 Kafka Consumer에 중복돼 있던 MDC put/clear 보일러플레이트를 전역 제거, 신규 Consumer 추가 시에도 자동 적용 |
+| 결정 | 이유                                                                                                                                     |
+|---|----------------------------------------------------------------------------------------------------------------------------------------|
+| 상품별 loReqtNo 선저장 | 콜백 loReqtNo 유효성 검증, 타임아웃 처리, 대출신청 연결                                                                                                   |
+| LoanLimitResult 분리 | 상품 수가 많아도 금융사당 1건만 INSERT/UPDATE                                                                                                       |
+| 통신방식별 ApiClient 분리 | REST/전용선 금융사 혼재 대응, OCP 준수                                                                                                             |
+| 금융사별 Circuit Breaker | 특정 금융사 장애 시 다른 금융사 영향 없이 격리                                                                                                            |
+| Rate Limiter 도입 | 금융사 API Rate Limit 정책 준수, CB 불필요 OPEN 방지, RequestNotPermitted를 CB 실패에서 제외                                                              |
+| Adaptor에서 CB Fallback 처리 | @CircuitBreaker 어노테이션 방식은 금융사별 독립 인스턴스 지정 불가, 수동 catch로 명시적 Fallback 처리                                                                |
+| Partial Failure 패턴 | 특정 금융사 CB OPEN 시 Fallback 응답 반환, 나머지 금융사 정상 진행                                                                                         |
+| 타임아웃 계층 분리 | readTimeout(CB 실패 기록) + orTimeout(스레드 강제 해제) 역할 분리                                                                                     |
+| 암호화 키 Caffeine 캐싱 | Caffeine 로컬 캐시로 JVM 내 보관, 직렬화 없이 객체 그대로 캐싱                                                                                             |
+| ExternalDataContext | 외부 조회 결과 파라미터 고정 (Nice DNR, KB시세 등 확장 시 파라미터 불변)                                                                                       |
+| Kafka 알림 연동 | 다중 인스턴스 환경에서 이벤트 소실 방지, loan-notification 도메인 물리적 분리                                                                                   |
+| 상품 정보 Redis 캐싱 | 매 한도조회 요청마다 금융사별 상품 DB 조회 반복 → `ProductCache` DTO 변환 후 Redis 캐싱, Entity 직렬화 문제 회피                                                      |
+| 상품 캐싱에 Redisson 분산 락 사용 | `@Cacheable(sync=true)`는 `RedisCacheManager`에서 JVM 로컬 락으로만 동작해 멀티 인스턴스**** stampede를 못 막음 → double-checked locking + Redisson 분산 락으로 직접 구현 |
+| Kafka DLQ 도입 | Consumer 처리 실패 메시지 유실 방지, Poison Pill과 일시 장애 자동 분류, 지수 백오프 자동 재시도로 운영팀 개입 최소화                                                          |
+| PoisonPillClassifier | 재시도해도 의미 없는 예외(파싱/데이터 오류)를 즉시 DEAD 처리, 파티션 멈춤(lag 무한 증가) 방지                                                                            |
+| 지수 백오프 DB 영속화 | spring-retry ExponentialBackOff는 메모리에만 존재 → 서버 재기동 시 재시도 일정 소멸. DlqEvent.nextRetryAt을 DB에 저장하여 재기동 후에도 재시도 일정 유지                       |
+| notification 채널 Strategy + Template Method | 채널 추가 시 Factory/기존 코드 변경 없이 구현체만 추가(OCP), CB/Retry/Fallback 골격을 모든 채널이 공유                                                              |
+| AbstractNotificationSender에서 RestClient 생성자 제거 | FCM처럼 REST가 아닌 채널도 같은 Template Method 골격을 재사용할 수 있도록, RestClient를 `post()` 파라미터로 전달받는 방식으로 변경                                          |
+| ExternalApiServerException / ExternalApiClientException 분리 | resilience4j 설정이 HTTP 클라이언트 라이브러리·전송 방식(RestClient/FCM SDK)에 종속되지 않도록 예외 타입 통일                                                         |
+| OutboxEventWriter 통합 | loan/notification 양쪽에 동일하게 중복돼 있던 "Outbox INSERT + 이벤트 발행" 로직 통합                                                                       |
+| RecordInterceptor 기반 MDC 전파 | 각 Kafka Consumer에 중복돼 있던 MDC put/clear 보일러플레이트를 전역 제거, 신규 Consumer 추가 시에도 자동 적용                                                        |
 
 <br>

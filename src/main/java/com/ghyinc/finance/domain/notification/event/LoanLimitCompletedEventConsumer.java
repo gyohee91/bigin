@@ -11,6 +11,7 @@ import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.global.exception.KafkaMessageDeserializationException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.MDC;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
@@ -27,11 +28,12 @@ public class LoanLimitCompletedEventConsumer {
             topics = "loan-limit-completed",
             groupId = "loan-limit-completed-group"
     )
-    public void consume(String payload) {
+    public void consume(String payload, ConsumerRecord<String, String> record) {
 
         try {
             LoanLimitCompletedEvent event = objectMapper.readValue(payload, LoanLimitCompletedEvent.class);
-            log.info("[Consumer] 한도조회 완료 이벤트 수신. inquiryNo={}", event.getInquiryNo());
+            log.info("[Consumer] 한도조회 완료 이벤트 수신. inquiryNo={}, partition={}, offset={}",
+                    event.getInquiryNo(), record.partition(), record.offset());
 
             notificationService.sendNotification(
                     NotificationSendRequest.builder()
@@ -44,7 +46,8 @@ public class LoanLimitCompletedEventConsumer {
             );
 
         } catch (JsonProcessingException e) {
-            log.error("[Consumer] 페이로드 파싱 실패. DLQ 이동. payload={}", payload, e);
+            log.error("[Consumer] 페이로드 파싱 실패. DLQ 이동. topic={}, partition={}, offset={}, payload={}",
+                    record.topic(), record.partition(), record.offset(), payload, e);
             throw new KafkaMessageDeserializationException("loan-limit-completed 메시지 역직렬화 실패", e);
         } finally {
             MDC.clear();

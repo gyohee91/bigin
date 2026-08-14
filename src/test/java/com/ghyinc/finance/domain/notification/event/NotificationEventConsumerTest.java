@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.notification.service.NotificationSenderService;
 import com.ghyinc.finance.global.exception.KafkaMessageDeserializationException;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,6 +28,10 @@ class NotificationEventConsumerTest {
     @Mock
     private ObjectMapper objectMapper;
 
+    private ConsumerRecord<String, String> buildRecord(String payload) {
+        return new ConsumerRecord<>("notification.send", 0, 0L, "1", payload);
+    }
+
     @Test
     @DisplayName("정상 payload이면 NotificationSenderService에 처리를 위임한다")
     void consume_delegatesToSenderService() throws JsonProcessingException {
@@ -34,7 +39,7 @@ class NotificationEventConsumerTest {
         given(objectMapper.readValue(payload, NotificationEvent.class))
                 .willReturn(NotificationEvent.builder().id(1L).build());
 
-        notificationEventConsumer.consume(payload);
+        notificationEventConsumer.consume(payload, this.buildRecord(payload));
 
         verify(notificationSenderService).sendAndUpdateResult(1L);
     }
@@ -48,7 +53,7 @@ class NotificationEventConsumerTest {
                 .willThrow(new JsonMappingException(null, "파싱 실패"));
 
         // when & then
-        assertThatThrownBy(() -> notificationEventConsumer.consume(payload))
+        assertThatThrownBy(() -> notificationEventConsumer.consume(payload, this.buildRecord(payload)))
                 .isInstanceOf(KafkaMessageDeserializationException.class);
     }
 }
