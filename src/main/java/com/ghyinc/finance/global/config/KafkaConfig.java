@@ -14,6 +14,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.listener.ConsumerRecordRecoverer;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.listener.RecordInterceptor;
@@ -62,6 +63,15 @@ public class KafkaConfig {
         return errorHandler;
     }
 
+    @Bean
+    public DefaultErrorHandler dlqErrorHandler() {
+        // DLT 컨슈머 자체가 실패해도 더 이상 재발행하지 않음 - 로그만 남기고 offset 커밋
+        ConsumerRecordRecoverer terminalRecoverer = (record, ex) ->
+                log.error("[DLQ-Terminal] DLT 메시지 최종 처리 실패. 재발행 안 함. topic={}, offset={}",
+                        record.topic(), record.offset(), ex);
+        return new DefaultErrorHandler(terminalRecoverer, new FixedBackOff(1000L, 2L));
+    }
+
     /**
      * Kafka 레코드 헤더의 requestId를 MDC에 복원/정리한다
      * <p>
@@ -96,6 +106,9 @@ public class KafkaConfig {
         };
     }
 
+    /**
+     * 일반 비즈니스 Consumer용 - 실패 시 원본 토픽.DLT로 라우팅
+     */
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory(
             ConsumerFactory<String, String> consumerFactory,
@@ -105,7 +118,25 @@ public class KafkaConfig {
         ConcurrentKafkaListenerContainerFactory<String, String> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory);
-        factory.setCommonErrorHandler(errorHandler);    // DLQ ErrorHandler 적용
+        factory.setCommonErrorHandler(errorHandler);
+        factory.setRecordInterceptor(mdcRecordInterceptor);
+        return factory;
+    }
+
+    /**
+     * DLT 토픽 전용 - DlqEventConsumer가 사용.
+     * 여기서 또 실패해도 재발행하지 않는다 (재발행하면 *.DLT.DLT로 무한히 밀려남).
+     */
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, String> dlqKafkaListenerContainerFactory(
+            ConsumerFactory<String, String> consumerFactory,
+            DefaultErrorHandler dlqErrorHandler,
+            RecordInterceptor<String, String> mdcRecordInterceptor
+    ) {
+        ConcurrentKafkaListenerContainerFactory<String, String> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(consumerFactory);
+        factory.setCommonErrorHandler(dlqErrorHandler);
         factory.setRecordInterceptor(mdcRecordInterceptor);
         return factory;
     }

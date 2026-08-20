@@ -25,14 +25,19 @@ public class DlqEventConsumer {
 
     @KafkaListener(
             topics = {"loan-limit-completed.DLT", "notification.send.DLT"},
-            groupId = "notification-dlq-group"
+            groupId = "notification-dlq-group",
+            containerFactory = "dlqKafkaListenerContainerFactory"
     )
     public void consume(
             String payload,
             ConsumerRecord<String, String> record,
-            @Header(KafkaHeaders.EXCEPTION_CAUSE_FQCN) String exceptionClass,
-            @Header(KafkaHeaders.EXCEPTION_MESSAGE) String exceptionMessage
+            @Header(value = KafkaHeaders.EXCEPTION_CAUSE_FQCN, required = false) String exceptionClassFqcn,
+            @Header(value = KafkaHeaders.EXCEPTION_FQCN, required = false) String exceptionFqcn,
+            @Header(value = KafkaHeaders.EXCEPTION_MESSAGE, required = false) String exceptionMessage
     ) {
+        // cause가 있으면 cause를, 없으면 최상위 예외를 분류 기준으로 사용
+        String exceptionClass = exceptionClassFqcn != null ? exceptionClassFqcn : exceptionFqcn;
+
         log.error("[DLQ] 실패 메시지 수신. topic={}, offset={}, cause={}",
                 record.topic(), record.offset(), exceptionMessage);
 
