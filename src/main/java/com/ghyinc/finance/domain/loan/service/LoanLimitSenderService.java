@@ -15,6 +15,7 @@ import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
+import io.github.resilience4j.bulkhead.BulkheadFullException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import lombok.RequiredArgsConstructor;
@@ -172,6 +173,12 @@ public class LoanLimitSenderService {
                                     if(ex.getCause() instanceof RequestNotPermitted) {
                                         log.warn("[{}] RateLimiter 한도 초과 - 요청 제한", partnerCode);
                                         return LoanLimitAdaptorResponse.fail(partnerCode, "RATE_LIMIT_EXCEEDED", 0L);
+                                    }
+
+                                    // Bulkhead 동시 호출 한도 초과 Fallback 추가
+                                    if (ex.getCause() instanceof BulkheadFullException) {
+                                        log.warn("[{}] Bulkhead 포화 - 동시 호출 한도 초과", partnerCode);
+                                        return LoanLimitAdaptorResponse.fail(partnerCode, "BULKHEAD_FULL", 0L);
                                     }
 
                                     // partnerApiExecutor 큐 초과 시 즉시 실패 처리

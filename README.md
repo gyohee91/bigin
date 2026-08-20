@@ -83,7 +83,7 @@
 | ORM       | Spring Data JPA / Hibernate             |
 | DB        | H2 DB                                   |
 | 비동기       | Spring @Async / CompletableFuture       |
-| 장애격리      | Resilience4j Circuit Breaker / Retry / Rate Limiter |
+| 장애격리      | Resilience4j Circuit Breaker / Retry / Rate Limiter / Bulkhead |
 | 암복호화      | AES-256-CBC, AES-256-ECB, RSA-OAEP      |
 | API 문서    | SpringDoc OpenAPI (Swagger)             |
 | Build     | Gradle                                  |
@@ -461,13 +461,6 @@ resilience4j:
         limit-for-period: 10          # 갱신 주기당 최대 허용 요청 수
         limit-refresh-period: 1s      # 갱신 주기 (1초)
         timeout-duration: 0           # 대기 없이 즉시 실패 (0 = 허용량 초과 시 즉시 예외)
-    instances:
-      KAKAO_BANK:
-        base-config: default
-      TOSS_BANK:
-        base-config: default
-      LINE_BANK:
-        base-config: default
 ```
 
 ```
@@ -475,6 +468,27 @@ Retry → Circuit Breaker 순으로 실행
   → Rate Limiter 초과 시 RequestNotPermitted 예외 발생
   → maxAttempts(3) 모두 실패 후 CB 실패로 기록
   → CB OPEN 시 Retry 없이 즉시 Fallback 실행 (ignoreExceptions)
+```
+
+### Bulkhead 설정
+
+Rate Limiter는 "초당 몇 건까지 접수할지"를 제한하지만, 응답이 얼마나 오래 걸리는지는 신경 쓰지 않습니다. 특정 금융사가 느려지면(장애까진 아니라 CB의 `slow-call-rate-threshold`를 안 넘는 수준이어도) Rate Limiter는 계속 요청을 접수시키고, 그 요청들이 응답을 기다리며 쌓여 `partnerApiExecutor`(6개 금융사가 공유하는 스레드 풀)를 잠식할 수 있습니다. Bulkhead는 "지금 동시에 진행 중인 호출이 몇 건인지"를 직접 제한해서 이 문제를 막습니다.
+
+```yaml
+resilience4j:
+  bulkhead:
+    configs:
+      default:
+        max-concurrent-calls: 10   # 동시 진행 허용 건수
+        max-wait-duration: 0       # 대기 없이 즉시 실패
+```
+
+```
+Rate Limiter → Bulkhead → Circuit Breaker → Retry 순으로 실행
+  → Rate Limiter, Bulkhead 둘 다 CB보다 바깥에 위치
+    (우리 쪽 정책으로 거절한 호출은 CB 실패 통계에 잡히면 안 됨)
+  → Bulkhead 한도 초과 시 BulkheadFullException 즉시 발생
+    → 실제 I/O 없이 즉시 반환되어 partnerApiExecutor 스레드를 오래 붙잡지 않음
 ```
 
 <br>
@@ -1087,6 +1101,7 @@ private void updateWithDistributedLock(PartnerCode partnerCode, LoanLimitResultR
 | 통신방식별 ApiClient 분리 | REST/전용선 금융사 혼재 대응, OCP 준수                                                                                                             |
 | 금융사별 Circuit Breaker | 특정 금융사 장애 시 다른 금융사 영향 없이 격리                                                                                                            |
 | Rate Limiter 도입 | 금융사 API Rate Limit 정책 준수, CB 불필요 OPEN 방지, RequestNotPermitted를 CB 실패에서 제외                                                              |
+| Bulkhead 도입 | Rate Limiter는 호출 소요 시간을 모름 → 특정 금융사가 느려지면 응답 대기 요청이 쌓여 partnerApiExecutor 잠식 가능 → 동시 진행 건수 자체를 제한해 스레드 풀 잠식 방지 |
 | Adaptor에서 CB Fallback 처리 | @CircuitBreaker 어노테이션 방식은 금융사별 독립 인스턴스 지정 불가, 수동 catch로 명시적 Fallback 처리                                                                |
 | Partial Failure 패턴 | 특정 금융사 CB OPEN 시 Fallback 응답 반환, 나머지 금융사 정상 진행                                                                                         |
 | 타임아웃 계층 분리 | readTimeout(CB 실패 기록) + orTimeout(스레드 강제 해제) 역할 분리                                                                                     |

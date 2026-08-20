@@ -2,6 +2,10 @@ package com.ghyinc.finance.global.client;
 
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.exception.ExternalApiFailException;
+import io.github.resilience4j.bulkhead.Bulkhead;
+import io.github.resilience4j.bulkhead.BulkheadConfig;
+import io.github.resilience4j.bulkhead.BulkheadFullException;
+import io.github.resilience4j.bulkhead.BulkheadRegistry;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
@@ -32,6 +36,7 @@ class RestApiClientTest {
     private CircuitBreakerRegistry circuitBreakerRegistry;
     private RetryRegistry retryRegistry;
     private RateLimiterRegistry rateLimiterRegistry;
+    private BulkheadRegistry bulkheadRegistry;
 
     @Mock
     private Map<PartnerCode, RestClient> partnerRestClients;
@@ -68,10 +73,18 @@ class RestApiClientTest {
 
         rateLimiterRegistry = RateLimiterRegistry.of(rateLimiterConfig);
 
+        // Bulkhead 초기화
+        BulkheadConfig bulkheadConfig = BulkheadConfig.custom()
+                .maxConcurrentCalls(2)
+                .maxWaitDuration(Duration.ZERO)
+                .build();
+        bulkheadRegistry = BulkheadRegistry.of(bulkheadConfig);
+
         restApiClient = new RestApiClient(
                 circuitBreakerRegistry,
                 retryRegistry,
                 rateLimiterRegistry,
+                bulkheadRegistry,
                 partnerRestClients
         );
     }
@@ -263,5 +276,49 @@ class RestApiClientTest {
         // TOSS_BANK → 정상 호출 가능 (독립적)
         tossRateLimiter.executeSupplier(Object::new);
         assertThat(tossRateLimiter.getMetrics().getAvailablePermissions()).isEqualTo(4);
+    }
+
+    @Test
+    @DisplayName("Bulkhead - 동시 호출 한도(maxConcurrentCalls=2) 초과 시 permit 획득 실패")
+    void post_bulkhead_rejectsWhenMaxConcurrentCallsExceeded() {
+        Bulkhead bulkhead = bulkheadRegistry.bulkhead(PartnerCode.KAKAO_BANK.name());
+
+        // 아직 응답이 안 온 두 건의 호출을 흉내 - permit을 선점만 하고 반납하지 않음
+        assertThat(bulkhead.tryAcquirePermission()).isTrue();
+        assertThat(bulkhead.tryAcquirePermission()).isTrue();
+
+        // 3번째 요청 → 한도 초과 → 즉시 거절 (maxWaitDuration=0이라 대기 없이 바로 실패)
+        assertThat(bulkhead.tryAcquirePermission()).isFalse();
+
+        // 하나가 응답을 받아 permit을 반납하면 다시 획득 가능
+        bulkhead.releasePermission();
+        assertThat(bulkhead.tryAcquirePermission()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Bulkhead - decorateSupplier로 감싼 호출도 한도 초과 시 BulkheadFullException 발생")
+    void post_bulkhead_decorateSupplier_throwsBulkheadFullException() {
+        Bulkhead bulkhead = bulkheadRegistry.bulkhead(PartnerCode.KAKAO_BANK.name());
+        bulkhead.tryAcquirePermission();
+        bulkhead.tryAcquirePermission(); // maxConcurrentCalls(2) 모두 선점
+
+        assertThatThrownBy(() -> Bulkhead.decorateSupplier(bulkhead, Object::new).get())
+                .isInstanceOf(BulkheadFullException.class);
+    }
+
+    @Test
+    @DisplayName("Bulkhead - 금융사별 독립 - KAKAO_BANK 포화가 TOSS_BANK 미영향")
+    void post_bulkhead_independentPerPartner() {
+        Bulkhead kakaoBulkhead = bulkheadRegistry.bulkhead(PartnerCode.KAKAO_BANK.name());
+        Bulkhead tossBulkhead = bulkheadRegistry.bulkhead(PartnerCode.TOSS_BANK.name());
+
+        kakaoBulkhead.tryAcquirePermission();
+        kakaoBulkhead.tryAcquirePermission();
+
+        // KAKAO_BANK → 한도 초과
+        assertThat(kakaoBulkhead.tryAcquirePermission()).isFalse();
+
+        // TOSS_BANK → 정상 획득 가능 (독립적)
+        assertThat(tossBulkhead.tryAcquirePermission()).isTrue();
     }
 }

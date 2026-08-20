@@ -3,6 +3,8 @@ package com.ghyinc.finance.global.client;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.exception.ExternalApiClientException;
 import com.ghyinc.finance.global.exception.ExternalApiServerException;
+import io.github.resilience4j.bulkhead.Bulkhead;
+import io.github.resilience4j.bulkhead.BulkheadRegistry;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.ratelimiter.RateLimiter;
@@ -27,6 +29,7 @@ public class RestApiClient implements ApiClient {
     private final CircuitBreakerRegistry circuitBreakerRegistry;
     private final RetryRegistry retryRegistry;
     private final RateLimiterRegistry rateLimiterRegistry;
+    private final BulkheadRegistry bulkheadRegistry;
 
     private final Map<PartnerCode, RestClient> partnerRestClients;
 
@@ -36,31 +39,34 @@ public class RestApiClient implements ApiClient {
         CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker(partnerCode.name());
         Retry retry = retryRegistry.retry(partnerCode.name());
         RateLimiter rateLimiter = rateLimiterRegistry.rateLimiter(partnerCode.name());
+        Bulkhead bulkhead = bulkheadRegistry.bulkhead(partnerCode.name());
 
 
         // Retry -> Circuit Breaker 순으로 실행 (재시도가 모두 실패해야 Circuit Breaker 실패로 기록)
         // RateLimiter: 금융사별 TPS 제한 (초과 시 RequestNotPermitted 즉시 반환)
+        // Bulkhead: 금융사별 동시 접수 건수 제한
         // CircuitBreaker: 실패율 기반 장애 격리
         // Retry: CircuitBreaker 실패 기록 후 재시도
         return RateLimiter.decorateSupplier(rateLimiter,
-                        CircuitBreaker.decorateSupplier(circuitBreaker,
-                                Retry.decorateSupplier(retry, () -> {
-                                log.info("[{}] Circuit Breaker 상태: {}", partnerCode, circuitBreaker.getState());
+                        Bulkhead.decorateSupplier(bulkhead,
+                                CircuitBreaker.decorateSupplier(circuitBreaker,
+                                        Retry.decorateSupplier(retry, () -> {
+                                            log.info("[{}] Circuit Breaker 상태: {}", partnerCode, circuitBreaker.getState());
 
-                                return partnerRestClients.get(partnerCode)
-                                        .post()
-                                        .uri(path)
-                                        .header("X-Partner-Code", partnerCode.name())
-                                        .body(request)
-                                        .retrieve()
-                                        .onStatus(HttpStatusCode::is4xxClientError, (req, res) -> {
-                                            throw new ExternalApiClientException("한도조회_ERROR", partnerCode + " 4xx 오류");
-                                        })
-                                        .onStatus(HttpStatusCode::is5xxServerError, (req, res) -> {
-                                            throw new ExternalApiServerException("한도조회_ERROR", partnerCode + " 5xx 오류");
-                                        })
-                                        .body(responseType);
-                                })))
+                                            return partnerRestClients.get(partnerCode)
+                                                    .post()
+                                                    .uri(path)
+                                                    .header("X-Partner-Code", partnerCode.name())
+                                                    .body(request)
+                                                    .retrieve()
+                                                    .onStatus(HttpStatusCode::is4xxClientError, (req, res) -> {
+                                                        throw new ExternalApiClientException("한도조회_ERROR", partnerCode + " 4xx 오류");
+                                                    })
+                                                    .onStatus(HttpStatusCode::is5xxServerError, (req, res) -> {
+                                                        throw new ExternalApiServerException("한도조회_ERROR", partnerCode + " 5xx 오류");
+                                                    })
+                                                    .body(responseType);
+                                        }))))
                 .get();
     }
 }

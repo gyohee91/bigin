@@ -193,6 +193,25 @@ resilience4j:
       SHINHAN_BANK:
         base-config: default
 
+  bulkhead:
+    configs:
+      default:
+        max-concurrent-calls: 10   # 동시 진행 허용 건수
+        max-wait-duration: 0       # 대기 없이 즉시 실패 (초과 시 즉시 BulkheadFullException)
+    instances:
+      KAKAO_BANK:
+        base-config: default
+      TOSS_BANK:
+        base-config: default
+      LINE_BANK:
+        base-config: default
+      KB_CAPITAL:
+        base-config: default
+      K_BANK:
+        base-config: default
+      SHINHAN_BANK:
+        base-config: default
+
 loan-api:
   partners:
     KAKAO_BANK:
