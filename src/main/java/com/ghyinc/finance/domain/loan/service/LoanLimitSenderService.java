@@ -158,39 +158,43 @@ public class LoanLimitSenderService {
                                 .build();
 
                         LoanLimitAdaptor adaptor = adaptorFactory.getAdaptor(partnerCode);
-                        return CompletableFuture
-                                .supplyAsync(() -> adaptor.inquireLimit(partnerCode, adaptorRequests), partnerApiExecutor)
-                                .orTimeout(8, TimeUnit.SECONDS)
-                                .exceptionally(ex -> {
-                                    // Circuit Breaker OPEN: Fallback으로 즉시 실패 반환
-                                    // 해당 금융사는 격리되며 나머지 금융사는 정상 진행
-                                    if(ex.getCause() instanceof CallNotPermittedException) {
-                                        log.warn("[{}] Circuit Breaker OPEN - 해당 금융사 격리", partnerCode, ex);
+                        try {
+                            return CompletableFuture
+                                    .supplyAsync(() -> adaptor.inquireLimit(partnerCode, adaptorRequests), partnerApiExecutor)
+                                    .orTimeout(8, TimeUnit.SECONDS)
+                                    .exceptionally(ex -> {
+                                        // Circuit Breaker OPEN: Fallback으로 즉시 실패 반환
+                                        // 해당 금융사는 격리되며 나머지 금융사는 정상 진행
+                                        if(ex.getCause() instanceof CallNotPermittedException) {
+                                            log.warn("[{}] Circuit Breaker OPEN - 해당 금융사 격리", partnerCode, ex);
+                                            return LoanLimitAdaptorResponse.fail(partnerCode, ex.getMessage(), 0L);
+                                        }
+
+                                        // RateLimiter 한도 초과 Fallback 추가
+                                        if(ex.getCause() instanceof RequestNotPermitted) {
+                                            log.warn("[{}] RateLimiter 한도 초과 - 요청 제한", partnerCode);
+                                            return LoanLimitAdaptorResponse.fail(partnerCode, "RATE_LIMIT_EXCEEDED", 0L);
+                                        }
+
+                                        // Bulkhead 동시 호출 한도 초과 Fallback 추가
+                                        if (ex.getCause() instanceof BulkheadFullException) {
+                                            log.warn("[{}] Bulkhead 포화 - 동시 호출 한도 초과", partnerCode);
+                                            return LoanLimitAdaptorResponse.fail(partnerCode, "BULKHEAD_FULL", 0L);
+                                        }
+
+                                        log.error("[{}] 비동기 한도조회 중 에러 발생", partnerCode, ex);
                                         return LoanLimitAdaptorResponse.fail(partnerCode, ex.getMessage(), 0L);
-                                    }
+                                    });
 
-                                    // RateLimiter 한도 초과 Fallback 추가
-                                    if(ex.getCause() instanceof RequestNotPermitted) {
-                                        log.warn("[{}] RateLimiter 한도 초과 - 요청 제한", partnerCode);
-                                        return LoanLimitAdaptorResponse.fail(partnerCode, "RATE_LIMIT_EXCEEDED", 0L);
-                                    }
-
-                                    // Bulkhead 동시 호출 한도 초과 Fallback 추가
-                                    if (ex.getCause() instanceof BulkheadFullException) {
-                                        log.warn("[{}] Bulkhead 포화 - 동시 호출 한도 초과", partnerCode);
-                                        return LoanLimitAdaptorResponse.fail(partnerCode, "BULKHEAD_FULL", 0L);
-                                    }
-
-                                    // partnerApiExecutor 큐 초과 시 즉시 실패 처리
-                                    if (ex.getCause() instanceof RejectedExecutionException) {
-                                        log.error("[{}] partnerApiExecutor 큐 초과", partnerCode);
-                                        return LoanLimitAdaptorResponse.fail(
-                                                partnerCode, "THREAD_POOL_EXHAUSTED", 0L);
-                                    }
-
-                                    log.error("[{}] 비동기 한도조회 중 에러 발생", partnerCode, ex);
-                                    return LoanLimitAdaptorResponse.fail(partnerCode, ex.getMessage(), 0L);
-                                });
+                        } catch (RejectedExecutionException e) {
+                            // 제출 시점 거절 - supplyAsync()가 CompletableFuture에 반환하기 전에
+                            // ThreadPoolExecutor.execute()에서 동기적으로 발생하므로 위 exceptionally()로는 못 잡음.
+                            // 여기서 안 잡으면 예외가 map() 밖으로 튀어나가 전체 요청이 FAILED 처리된다.
+                            log.error("[{}] partnerApiExecutor 큐 초과 (제출 시점)", partnerCode, e);
+                            return CompletableFuture.completedFuture(
+                                    LoanLimitAdaptorResponse.fail(partnerCode, "THREAD_POOL_EXHAUSTED", 0L)
+                            );
+                        }
                     })
                     .toList();
 
@@ -234,7 +238,7 @@ public class LoanLimitSenderService {
             // 알림 발송 - notification 도메인을 직접 알지 못함
             if(!Objects.equals(InquiryStatus.FAILED, resultStatus)) {
 
-                //kafkalLoanLimitEventPublisher.publishCompletedEvent(event);
+                //kafkaLoanLimitEventPublisher.publishCompletedEvent(event);
                 //springLoanLimitEventPublisher.publishCompletedEvent(event);
 
                 // Spring 이벤트 발행 (트랜잭션 커밋 후 Kafka 발행 트리거)
