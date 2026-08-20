@@ -23,9 +23,6 @@ public class NotificationSendRequest {
     @Schema(description = "발송 타입", example = "IMMEDIATE")
     private SendType sendType;
 
-    @Schema(description = "수신자", example = "윤교희")
-    private String recipient;
-
     @Schema(description = "제목", example = "제목1")
     private String title;
 

@@ -55,7 +55,6 @@ class NotificationServiceTest {
                 .userId(1L)
                 .channelType(ChannelType.SMS)
                 .sendType(SendType.IMMEDIATE)
-                .recipient("젠슨황")
                 .title("한도조회 완료")
                 .content("한도조회가 완료되었습니다.")
                 .build();
@@ -115,7 +114,6 @@ class NotificationServiceTest {
                 .userId(1L)
                 .channelType(ChannelType.EMAIL)
                 .sendType(SendType.SCHEDULED)
-                .recipient("test@test.com")
                 .title("title")
                 .content("content")
                 .build();

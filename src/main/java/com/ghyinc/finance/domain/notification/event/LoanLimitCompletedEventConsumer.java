@@ -37,9 +37,9 @@ public class LoanLimitCompletedEventConsumer {
 
             notificationService.sendNotification(
                     NotificationSendRequest.builder()
+                            .userId(event.getUserId())
                             .channelType(ChannelType.SMS)
                             .sendType(SendType.IMMEDIATE)
-                            .recipient(event.getName())
                             .title("한도조회 완료")
                             .content(this.buildContent(event.getStatus()))
                             .build()

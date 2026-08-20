@@ -39,7 +39,6 @@ class LoanLimitCompletedEventConsumerTest {
         return LoanLimitCompletedEvent.builder()
                 .inquiryNo("LL20260410A3F2C891")
                 .userId(1L)
-                .name("빈살만")
                 .status(status)
                 .build();
     }
@@ -64,9 +63,9 @@ class LoanLimitCompletedEventConsumerTest {
         then(notificationService).should().sendNotification(captor.capture());
 
         NotificationSendRequest request = captor.getValue();
+        assertThat(request.getUserId()).isEqualTo(1L);
         assertThat(request.getChannelType()).isEqualTo(ChannelType.SMS);
         assertThat(request.getSendType()).isEqualTo(SendType.IMMEDIATE);
-        assertThat(request.getRecipient()).isEqualTo("빈살만");
         assertThat(request.getContent()).contains("완료되었습니다");
     }
 
