@@ -37,6 +37,28 @@ public class KafkaTopicConfig {
                 .build();
     }
 
+    /**
+     * Audit Log (한도 조회 전송)
+     */
+    @Bean
+    public NewTopic partnerTransmissionAuditTopic() {
+        return TopicBuilder.name("audit.partner-transmission")
+                .partitions(3)
+                .replicas(1)
+                .build();
+    }
+
+    /**
+     * Audit Log (Callback)
+     */
+    @Bean
+    public NewTopic partnerCallbackAuditTopic() {
+        return TopicBuilder.name("audit.partner-callback")
+                .partitions(3)
+                .replicas(1)
+                .build();
+    }
+
     @Bean
     public NewTopic notificationSendDlqTopic() {
         return TopicBuilder.name("notification.send.DLT")
@@ -48,6 +70,22 @@ public class KafkaTopicConfig {
     @Bean
     public NewTopic loanLimitSendDlqTopic() {
         return TopicBuilder.name("loan-limit-completed.DLT")
+                .partitions(3)
+                .replicas(1)
+                .build();
+    }
+
+    @Bean
+    public NewTopic partnerTransmissionAuditDlqTopic() {
+        return TopicBuilder.name("audit.partner-transmission.DLT")
+                .partitions(3)
+                .replicas(1)
+                .build();
+    }
+
+    @Bean
+    public NewTopic partnerCallbackAuditDlqTopic() {
+        return TopicBuilder.name("audit.partner-callback.DLT")
                 .partitions(3)
                 .replicas(1)
                 .build();

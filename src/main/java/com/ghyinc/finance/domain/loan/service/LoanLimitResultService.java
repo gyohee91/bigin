@@ -9,13 +9,16 @@ import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepository;
+import com.ghyinc.finance.global.event.PartnerCallbackAuditEvent;
 import com.ghyinc.finance.global.lock.RedisLockExecutor;
+import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 /**
@@ -47,6 +50,7 @@ public class LoanLimitResultService {
     private final LoanLimitResultAdaptorFactory resultAdaptorFactory;
     private final LoanLimitProductResultRepository loanLimitProductResultRepository;
     private final RedisLockExecutor lockExecutor;
+    private final OutboxEventWriter outboxEventWriter;
 
     /**
      * 금융사 한도조회 콜백을 수신하여 처리한다
@@ -136,6 +140,21 @@ public class LoanLimitResultService {
                     productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
                 },
                 () -> log.warn("[{}] 분산 락 획득 실패. loReqtNo={}", partnerCode, item.getLoReqtNo())
+        );
+
+        // Callback 정상 처리 시
+        outboxEventWriter.enqueue(
+                "PartnerCallback",
+                item.getLoReqtNo(),
+                "PARTNER_CALLBACK_AUDIT",
+                PartnerCallbackAuditEvent.builder()
+                        .loReqtNo(item.getLoReqtNo())
+                        .partnerCode(partnerCode)
+                        .productCode(item.getProductCode())
+                        .processed(true)
+                        .resultCode(item.getResultCode())
+                        .occurredAt(LocalDateTime.now())
+                        .build()
         );
 
         // 비관적 Lock으로 동시 수신 시 순차 처리 보장

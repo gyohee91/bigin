@@ -44,6 +44,8 @@ public class OutboxEventService {
         String topic = switch (outboxEvent.getAggregateType()) {
             case "LoanLimitInquiry" -> "loan-limit-completed";
             case "Notification"     -> "notification.send";
+            case "PartnerTransmission"  -> "audit.partner-transmission";
+            case "PartnerCallback"  -> "audit.partner-callback";
             default -> throw new InvalidRequestException(
                     "알 수 없는 aggregateType: " + outboxEvent.getAggregateType());
         };

@@ -14,6 +14,7 @@ import com.ghyinc.finance.domain.loan.factory.LoanLimitAdaptorFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
+import com.ghyinc.finance.global.event.PartnerTransmissionAuditEvent;
 import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
 import io.github.resilience4j.bulkhead.BulkheadFullException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
@@ -222,6 +223,14 @@ public class LoanLimitSenderService {
                         productResultMap.get(adaptorResponse.partnerCode())
                                 .forEach(LoanLimitProductResult::sendFail);
                     }
+
+                    // 파트너 전송 이력 감사 로그
+                    outboxEventWriter.enqueue(
+                            "PartnerTransmission",
+                            loanLimitInquiry.getInquiryNo(),
+                            "PARTNER_TRANSMISSION",
+                            PartnerTransmissionAuditEvent.from(loanLimitInquiry.getInquiryNo(), adaptorResponse)
+                    );
 
             });
 

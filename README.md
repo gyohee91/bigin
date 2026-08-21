@@ -805,7 +805,7 @@ DefaultErrorHandler (KafkaConfig)
       └── 그 외 예외                 → 1초 간격 3회 재시도 → *.DLT 이동
       │
       ▼
-DlqEventConsumer (DLT 토픽 수신)
+DlqEventConsumer (DLT 토픽 수신, 전용 dlqKafkaListenerContainerFactory 사용)
       │
       ├── PoisonPillClassifier 판별
       │       ├── Poison Pill (파싱/데이터 오류)
@@ -823,6 +823,23 @@ DlqRetryScheduler (30초마다 실행, ShedLock 적용)
       │       └── 실패 → retryCount++ + nextRetryAt 갱신
       └── 5회 초과 → DlqEvent DEAD
 ```
+
+> `DlqEventConsumer`는 일반 Consumer와 다른 전용 `ConcurrentKafkaListenerContainerFactory`를 사용합니다.
+> DLT 토픽을 소비하는 이 Consumer 자체가 또 실패했을 때, 일반 Consumer와 같은 `errorHandler`(DLT 재발행)를
+> 그대로 쓰면 `topic.DLT` → `topic.DLT.DLT` → `topic.DLT.DLT.DLT` 로 무한히 재발행되는 문제가 있습니다.
+> 그래서 DLT 전용 `dlqErrorHandler`는 재시도만 하고, 최종 실패해도 재발행하지 않고 로그만 남긴 뒤 다음
+> 메시지로 넘어갑니다 (DLQ 처리의 "종착지"이므로 더 밀어낼 곳이 없다는 전제).
+
+### 트러블슈팅 — DLT 헤더 부재로 DlqEventConsumer 자체가 실패한 사례
+
+`DlqEventConsumer`는 원래 `@Header(KafkaHeaders.EXCEPTION_CAUSE_FQCN)`를 필수 헤더로 받고 있었는데,
+`Spring Data JPA`의 `findById(null)`처럼 **cause 없이 직접 던져지는 leaf 예외**(`IllegalArgumentException` 등)는
+`DeadLetterPublishingRecoverer`가 `EXCEPTION_CAUSE_FQCN` 헤더를 아예 붙이지 않습니다
+(`exception.getCause() != null`일 때만 추가). 그 결과 `DlqEventConsumer` 자체가
+"Listener method could not be invoked" 예외로 실패하고, 이 실패가 다시 재발행되며 `.DLT.DLT`가 발생했습니다.
+
+`EXCEPTION_CAUSE_FQCN`, `EXCEPTION_FQCN`을 모두 `required = false`로 받아 cause가 있으면 cause를,
+없으면 최상위 예외 타입으로 폴백하도록 수정해 해결했습니다.
 
 ### Poison Pill 판별 기준
 
