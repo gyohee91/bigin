@@ -12,6 +12,7 @@ import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 
+import java.util.concurrent.RejectedExecutionException;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -94,6 +95,21 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(ErrorResponse.of(HttpStatus.SERVICE_UNAVAILABLE.getReasonPhrase(), e.getMessage()));
+    }
+
+    /**
+     * loanLimitExecutor 포화 - 서버 과부하로 요청을 측시 수용할 수 없음
+     */
+    @ExceptionHandler(RejectedExecutionException.class)
+    public ResponseEntity<ErrorResponse> handleRejectedExecutionException(RejectedExecutionException e) {
+        log.warn("RejectedExecutionException: {}", e.getMessage());
+
+        return ResponseEntity
+                .status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header("Retry-After", "5") // 5초 후 재시도 권장
+                .body(ErrorResponse.of(
+                        HttpStatus.SERVICE_UNAVAILABLE.getReasonPhrase(),
+                        "일시적으로 요청이 많아 처리할 수 없습니다. 잠시 후 다시 시도해주세요."));
     }
 
     @ExceptionHandler(Exception.class)
