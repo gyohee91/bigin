@@ -35,21 +35,6 @@
 
 현재 재직 중인 회사에서 **50개 이상의 금융사와 연동하는 대출 비교 플랫폼** 을 개발·운영하고 있습니다.
 
-실무에서는 아래와 같은 제약이 있었습니다.
-
-- Java 8 + Spring Boot 2.7 기반의 레거시 구조 유지
-- Layered Architecture (Controller → Service → Repository)
-- 기존 시스템과의 호환성을 고려한 점진적 개선만 가능
-
-또한 아래와 같은 기술적 한계를 실무에서 직접 경험했습니다.
-
-| 문제 영역 | 실무 방식                                            | 한계                                |
-|---|--------------------------------------------------|-----------------------------------|
-| 콜백 동시성 제어 | JPA 비관적 락 (`PESSIMISTIC_WRITE`)                  | 멀티 인스턴스 환경에서 DB 커넥션 점유 누적 위험      |
-| 중복 요청 방지 | DB 조건절 조회 (`existsByUserIdAndLoanTypeAndStatus`) | 동시 요청 시 두 Pod 모두 통과 가능            |
-| 업무 식별번호 채번 | Oracle Sequence 기반                               | DB 부하가 높은 상황에서 채번 요청도 DB에 집중 |
-| 상품 정보 조회 | DB 조회 (`findActiveByPartnerCodeAndLoanType`) | 매 한도조회 요청마다 금융사 수만큼 반복 DB 조회 발생 |
-
 ### 프로젝트 목적
 
 실무에서 직접 경험한 **제휴 금융사 한도조회 시스템의 핵심 도메인**을 새로운 기술 스택과 아키텍처로 재설계하여 구현했습니다.
@@ -440,6 +425,10 @@ resilience4j:
       default:
         max-attempts: 3          # 최초 1회 + 재시도 2회
         wait-duration: 1s        # 재시도 간격
+        enable-exponential-backoff: true    # 지수 백오프
+        exponential-backoff-multiplier: 2
+        enable-randomized-wait: true        # Jitter
+        randomized-wait-factor: 0.5
         retry-exceptions:
           - java.io.IOException
           - java.util.concurrent.TimeoutException

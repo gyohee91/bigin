@@ -168,6 +168,8 @@ resilience4j:
         enable-exponential-backoff: true
         exponential-backoff-multiplier: 2
         max-wait-duration: 10s
+        enable-randomized-wait: true
+        randomized-wait-factor: 0.5   # 계산된 간격 ±50% 범위로 무작위화
         retry-exceptions:
           - org.springframework.web.client.HttpServerErrorException
           - org.springframework.web.client.ResourceAccessException
