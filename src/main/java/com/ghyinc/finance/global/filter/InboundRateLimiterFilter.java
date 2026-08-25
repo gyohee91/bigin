@@ -1,8 +1,8 @@
 package com.ghyinc.finance.global.filter;
 
-import io.github.resilience4j.ratelimiter.RateLimiter;
-import io.github.resilience4j.ratelimiter.RateLimiterConfig;
-import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
+import io.github.bucket4j.Bucket;
+import io.github.bucket4j.BucketConfiguration;
+import io.github.bucket4j.redis.redisson.cas.RedissonBasedProxyManager;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -14,16 +14,17 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.function.Supplier;
 
 @Component
 @RequiredArgsConstructor
 public class InboundRateLimiterFilter extends OncePerRequestFilter {
-    private final RateLimiterRegistry rateLimiterRegistry;
+    private final RedissonBasedProxyManager<String> bucket4jProxyManager;
 
-    private static final RateLimiterConfig CONFIG = RateLimiterConfig.custom()
-            .limitForPeriod(20)                 // 클라이언트(IP)당 초당 20건
-            .limitRefreshPeriod(Duration.ofSeconds(1))
-            .timeoutDuration(Duration.ZERO)     // 대기 없이 즉시 거절
+    private static final Supplier<BucketConfiguration> CONFIG_SUPPLIER = () -> BucketConfiguration.builder()
+            .addLimit(limit -> limit
+                    .capacity(20)
+                    .refillGreedy(20, Duration.ofSeconds(1)))   // 초당 20건, 클라이언트(IP)당 - 인스턴스 수 무관
             .build();
 
     @Override
@@ -34,9 +35,9 @@ public class InboundRateLimiterFilter extends OncePerRequestFilter {
         }
 
         String clientKey = this.resolveClientKey(request);
-        RateLimiter rateLimiter = rateLimiterRegistry.rateLimiter("inbound:" + clientKey, CONFIG);
+        Bucket bucket = bucket4jProxyManager.builder().build(clientKey, CONFIG_SUPPLIER);
 
-        if (!rateLimiter.acquirePermission()) {
+        if (!bucket.tryConsume(1)) {
             response.setStatus(429);
             response.setHeader("Retry-After", "1");
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
