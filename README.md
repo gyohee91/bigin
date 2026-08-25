@@ -782,78 +782,88 @@ DLQ 미적용 시 문제
   → 처리 실패 메시지 유실
 ```
 
-### 처리 흐름
+### 처리 흐름 (Spring Kafka `@RetryableTopic` 기반 non-blocking 재시도)
 
 ```
-Consumer 예외 발생
-      │
+notification.send (원본 토픽)
+      │  Consumer 예외 발생
       ▼
-DefaultErrorHandler (KafkaConfig)
-      ├── JsonProcessingException    → 즉시 *.DLT 이동 (재시도 없음)
-      ├── IllegalArgumentException   → 즉시 *.DLT 이동 (재시도 없음)
-      └── 그 외 예외                 → 1초 간격 3회 재시도 → *.DLT 이동
+@RetryableTopic
+      ├── exclude 대상(JsonProcessingException 등 파싱/데이터 오류)
+      │     → 재시도 없이 즉시 -dlt 토픽으로 이동
       │
-      ▼
-DlqEventConsumer (DLT 토픽 수신, 전용 dlqKafkaListenerContainerFactory 사용)
-      │
-      ├── PoisonPillClassifier 판별
-      │       ├── Poison Pill (파싱/데이터 오류)
-      │       │     → DlqEvent INSERT (DEAD)
-      │       │
-      │       └── 일시 장애 (DB/외부 API 오류)
-      │             → DlqEvent INSERT (PENDING)
-      │             → 지수 백오프 자동 재시도 예약
-      │
-      ▼
-DlqRetryScheduler (30초마다 실행, ShedLock 적용)
-      ├── nextRetryAt 도래한 PENDING/RETRYING 건 조회 (최대 50건)
-      ├── 원본 토픽 재발행
-      │       ├── 성공 → DlqEvent RESOLVED
-      │       └── 실패 → retryCount++ + nextRetryAt 갱신
-      └── 5회 초과 → DlqEvent DEAD
+      └── 그 외 예외
+            → notification.send-retry-0 (약 1초 뒤, ±jitter)
+                  │ 실패
+                  ▼
+            notification.send-retry-1 (약 2초 뒤, ±jitter)
+                  │ 실패
+                  ▼
+            notification.send-retry-2 (약 4초 뒤, ±jitter)
+                  │ 실패 (최대 attempts 소진)
+                  ▼
+            notification.send-dlt
+                  │
+                  ▼
+            @DltHandler → DlqEvent INSERT (DEAD)
 ```
 
-> `DlqEventConsumer`는 일반 Consumer와 다른 전용 `ConcurrentKafkaListenerContainerFactory`를 사용합니다.
-> DLT 토픽을 소비하는 이 Consumer 자체가 또 실패했을 때, 일반 Consumer와 같은 `errorHandler`(DLT 재발행)를
-> 그대로 쓰면 `topic.DLT` → `topic.DLT.DLT` → `topic.DLT.DLT.DLT` 로 무한히 재발행되는 문제가 있습니다.
-> 그래서 DLT 전용 `dlqErrorHandler`는 재시도만 하고, 최종 실패해도 재발행하지 않고 로그만 남긴 뒤 다음
-> 메시지로 넘어갑니다 (DLQ 처리의 "종착지"이므로 더 밀어낼 곳이 없다는 전제).
+원본 토픽 `notification.send`는 이 과정 내내 멈추지 않습니다 — 실패한 메시지는 즉시 재시도 토픽으로 넘어가고,
+원본 파티션은 바로 다음 메시지를 계속 처리합니다. 각 `-retry-N` 토픽은 독립된 파티션(`numPartitions`)을
+가지므로, 특정 재시도 단계에 적체가 생겨도 그 단계만 컨슈머를 늘려 대응할 수 있습니다.
 
-### 트러블슈팅 — DLT 헤더 부재로 DlqEventConsumer 자체가 실패한 사례
+```java
+@RetryableTopic(
+        attempts = "4",
+        backoff = @Backoff(delayExpression = "1000", multiplierExpression = "2.0",
+                            maxDelayExpression = "10000", random = true),   // ±jitter로 동시 재시도 몰림 방지
+        listenerContainerFactory = "retryableTopicListenerContainerFactory",
+        exclude = { KafkaMessageDeserializationException.class, IllegalArgumentException.class }
+)
+@KafkaListener(topics = "notification.send", groupId = "notification-send-group")
+public void consume(...) { ... }
 
-`DlqEventConsumer`는 원래 `@Header(KafkaHeaders.EXCEPTION_CAUSE_FQCN)`를 필수 헤더로 받고 있었는데,
-`Spring Data JPA`의 `findById(null)`처럼 **cause 없이 직접 던져지는 leaf 예외**(`IllegalArgumentException` 등)는
-`DeadLetterPublishingRecoverer`가 `EXCEPTION_CAUSE_FQCN` 헤더를 아예 붙이지 않습니다
-(`exception.getCause() != null`일 때만 추가). 그 결과 `DlqEventConsumer` 자체가
-"Listener method could not be invoked" 예외로 실패하고, 이 실패가 다시 재발행되며 `.DLT.DLT`가 발생했습니다.
+@DltHandler
+public void handleDlt(...) { ... }  // 재시도 소진 - DlqEvent(DEAD) 기록, 절대 예외를 던지지 않음
+```
 
-`EXCEPTION_CAUSE_FQCN`, `EXCEPTION_FQCN`을 모두 `required = false`로 받아 cause가 있으면 cause를,
-없으면 최상위 예외 타입으로 폴백하도록 수정해 해결했습니다.
+> `@RetryableTopic`이 자체적으로 재시도/DLT 라우팅을 관리하기 때문에, 이 리스너가 쓰는
+> `retryableTopicListenerContainerFactory`에는 커스텀 `commonErrorHandler`를 설정하지 않습니다.
+> 같은 factory에 커스텀 에러 핸들러를 같이 걸면 `@RetryableTopic`의 내부 처리와 충돌합니다.
+> `errorHandler`(지수 백오프+jitter, `.DLT` 라우팅) + `kafkaListenerContainerFactory` 조합은
+> 아직 `@RetryableTopic`으로 전환하지 않은 나머지 Consumer(`AuditLogConsumer` 등)에 계속 쓰입니다.
+
+`@DltHandler`는 재시도 토픽 체인을 전부 소진한 뒤 도달하는 마지막 지점이라, 여기서 다시 예외가 나면
+(`dltStrategy = DltStrategy.FAIL_ON_ERROR`) 같은 메시지를 무한 재처리하게 됩니다. 그래서 내부 로직 전체를
+try-catch로 감싸 어떤 상황에서도 예외를 밖으로 던지지 않도록 구현했습니다.
+
+### 마이그레이션 노트 — DB 폴링 기반 DLQ에서 Kafka 네이티브 재시도 토픽으로
+
+기존에는 실패 메시지를 `DlqEvent` 테이블에 저장하고, `DlqRetryScheduler`가 30초마다(ShedLock, 클러스터
+전체에서 단일 노드) 지수 백오프로 원본 토픽에 재발행하는 구조였습니다. 이 방식은 두 가지 한계가 있었습니다.
+
+첫째, 원본 토픽 컨슈머의 제자리 재시도(`DefaultErrorHandler`의 seek 기반 재시도)가 진행되는 동안 **해당
+파티션의 뒤에 있는 다른 메시지도 함께 멈춥니다.** 둘째, 재시도 자체가 단일 노드·단일 스케줄러(배치 50건/30초)에
+묶여 있어 장애 발생 시 재처리량 자체가 병목이 될 수 있습니다.
+
+`@RetryableTopic`은 재시도를 원본 토픽이 아닌 별도 토픽에서 수행하므로 원본 파티션이 막히지 않고, 재시도
+단계별로 독립적인 파티션/컨슈머를 가져 수평 확장이 가능합니다. 이에 따라 `DlqEventConsumer`,
+`DlqRetryScheduler`, `dlqErrorHandler`/`dlqKafkaListenerContainerFactory`는 `notification.send`/
+`loan-limit-completed` 두 토픽에 대해서는 더 이상 쓰이지 않고, `@DltHandler`가 그 역할(최종 실패 기록)을
+대신합니다. 아직 `@RetryableTopic`으로 전환하지 않은 Consumer가 있다면 기존 DB 폴링 방식이 계속 그 Consumer를
+커버합니다.
 
 ### Poison Pill 판별 기준
 
 ```
-재시도 없이 즉시 DEAD 처리
-  → JsonProcessingException  (페이로드 자체가 깨짐)
+재시도 없이 즉시 DLT 이동 (@RetryableTopic exclude)
+  → KafkaMessageDeserializationException / JsonProcessingException  (페이로드 자체가 깨짐)
   → IllegalArgumentException (데이터 없음 — Notification, Inquiry 조회 실패)
-  → ClassCastException       (타입 불일치)
-  → 위 예외를 감싼 중첩 예외
 
-재시도 후 복구 가능
+재시도 대상 (기본, exclude 미지정)
   → ConnectException   (DB/외부 API 일시 장애)
   → TimeoutException   (일시적 지연)
-  → RuntimeException   (일시적 오류 가능성)
-```
-
-### 지수 백오프 재시도 일정
-
-```
-retryCount=1 → nextRetryAt = now + 2분
-retryCount=2 → nextRetryAt = now + 4분
-retryCount=3 → nextRetryAt = now + 8분
-retryCount=4 → nextRetryAt = now + 16분
-retryCount=5 → nextRetryAt = now + 32분
-retryCount>5 → DEAD 처리
+  → 그 외 대부분의 RuntimeException
 ```
 
 <a id="caching-strategy"></a>

@@ -2,6 +2,7 @@ package com.ghyinc.finance.global.config;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.ghyinc.finance.global.exception.KafkaMessageDeserializationException;
+import com.ghyinc.finance.global.kafka.backoff.JitteredExponentialBackOff;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -47,9 +48,12 @@ public class KafkaConfig {
         );
 
         // 재시도 3회, 1초 간격 후 DLQ로 이동
-        FixedBackOff backOff = new FixedBackOff(1000L, 3L);
+        //FixedBackOff backOff = new FixedBackOff(1000L, 3L);
 
-        DefaultErrorHandler errorHandler = new DefaultErrorHandler(recoverer, backOff);
+        DefaultErrorHandler errorHandler = new DefaultErrorHandler(
+                recoverer,
+                new JitteredExponentialBackOff(1000L, 2.0, 4000L, 3, 0.3)   // ±30% jitter
+        );
 
         // 파싱 오류는 재시도 없이 즉시 DLQ (Poison Pill 방지)
         // 재시도해도 계속 실패하는 예외들
@@ -137,6 +141,22 @@ public class KafkaConfig {
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory);
         factory.setCommonErrorHandler(dlqErrorHandler);
+        factory.setRecordInterceptor(mdcRecordInterceptor);
+        return factory;
+    }
+
+    /**
+     * @RetryableTopic 전용 - 재시도/DLT 라우팅은 @RetryableTopic이 자체 처리하므로
+     * commonErrorHandler를 따로 설정하지 않는다 (커스텀 errorHandler와 충돌 위험).
+     */
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, String> retryableTopicListenerContainerFactory(
+            ConsumerFactory<String, String> consumerFactory,
+            RecordInterceptor<String, String> mdcRecordInterceptor
+    ) {
+        ConcurrentKafkaListenerContainerFactory<String, String> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(consumerFactory);
         factory.setRecordInterceptor(mdcRecordInterceptor);
         return factory;
     }
