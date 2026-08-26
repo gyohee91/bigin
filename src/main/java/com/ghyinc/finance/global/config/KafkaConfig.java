@@ -5,6 +5,7 @@ import com.ghyinc.finance.global.exception.KafkaMessageDeserializationException;
 import com.ghyinc.finance.global.kafka.backoff.JitteredExponentialBackOff;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.InvalidRequestException;
@@ -22,6 +23,7 @@ import org.springframework.kafka.listener.RecordInterceptor;
 import org.springframework.util.backoff.FixedBackOff;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Collection;
 import java.util.UUID;
 
 import static com.ghyinc.finance.global.common.LoggingConstants.REQUEST_ID_KEY;
@@ -124,6 +126,19 @@ public class KafkaConfig {
         factory.setConsumerFactory(consumerFactory);
         factory.setCommonErrorHandler(errorHandler);
         factory.setRecordInterceptor(mdcRecordInterceptor);
+
+        factory.getContainerProperties().setConsumerRebalanceListener(new ConsumerRebalanceListener() {
+            @Override
+            public void onPartitionsRevoked(Collection<TopicPartition> partitions) {
+                log.warn("[리벨런싱] 파티션 반납. partitions={}", partitions);
+                // 오프셋 커밋은 Spring Kafka 컨테이너가 이 콜백 이후 자체적으로 처리 - 여기선 관측만
+            }
+
+            @Override
+            public void onPartitionsAssigned(Collection<TopicPartition> partitions) {
+                log.warn("[리벨런싱] 파티션 할당. partitions={}", partitions);
+            }
+        });
         return factory;
     }
 
