@@ -17,6 +17,7 @@
 - [🏗 핵심 아키텍처](#architecture)
 - [🗄 핵심 도메인 모델](#domain-model)
 - [🔒 장애 격리 - Resilience4j](#resilience4j)
+- [🚦 인바운드 트래픽 방어 - Rate Limiting](#inbound-rate-limiting)
 - [🚗 오토담보/주택담보 대출 연동 (Nice DNR, KB부동산 시세)](#external-integration)
 - [📨 알림 서비스 - 채널별 비동기 발송](#notification-service)
 - [📦 Outbox 패턴 - 트랜잭션 보장](#outbox-pattern)
@@ -478,6 +479,55 @@ Rate Limiter → Bulkhead → Circuit Breaker → Retry 순으로 실행
     (우리 쪽 정책으로 거절한 호출은 CB 실패 통계에 잡히면 안 됨)
   → Bulkhead 한도 초과 시 BulkheadFullException 즉시 발생
     → 실제 I/O 없이 즉시 반환되어 partnerApiExecutor 스레드를 오래 붙잡지 않음
+```
+
+> 위 Resilience4j 구성(CB/Retry/Bulkhead/RateLimiter)은 전부 `RestApiClient` → 금융사 API 호출,
+> 즉 **아웃바운드** 경로에만 적용됩니다. 고객이 우리 API로 보내는 **인바운드** 트래픽 자체를 제한하는
+> 장치는 아래 별도로 둡니다.
+
+<br>
+
+<a id="inbound-rate-limiting"></a>
+## 🚦 인바운드 트래픽 방어 - Rate Limiting
+
+> 클라이언트(IP)별로 초당 요청 수를 제한해, 특정 클라이언트의 트래픽 폭주나 실수로 인한 반복 요청이
+> `loanLimitExecutor`/DB 커넥션 풀 같은 공유 자원을 독점하지 못하도록 컨트롤러 진입 전 단계에서 차단합니다.
+
+### 왜 애플리케이션 레벨에도 두는가
+
+Resilience4j RateLimiter는 파트너사로 나가는 트래픽만 제한할 뿐, 우리 서비스로 **들어오는** 트래픽은
+전혀 방어하지 않습니다. 인바운드 방어는 보통 API Gateway/WAF 같은 인프라 레벨에서 처리하지만, 그 앞단이
+아직 없거나 애플리케이션 자체적으로도 최소한의 방어선을 두고 싶을 때 이 필터가 마지막 안전장치 역할을 합니다.
+
+### 왜 Redis 기반(Bucket4j)인가 - 단일 인스턴스 한도의 한계
+
+애플리케이션 힙에 상태를 두는 방식(Resilience4j `RateLimiterRegistry` 등)은 인스턴스마다 카운터가
+독립적으로 존재합니다. 인스턴스가 N대면 로드밸런서가 트래픽을 분산시키는 순간, 같은 클라이언트가 사실상
+"설정값 × N"의 실효 한도를 갖게 되어 인스턴스를 늘릴수록 방어가 약해지는 역설이 생깁니다. Redis에 카운터를
+두면 모든 인스턴스가 같은 상태를 공유하므로 인스턴스 수와 무관하게 일관된 한도가 유지됩니다. 이미 분산 락에
+쓰고 있는 `RedissonClient`를 그대로 재사용합니다.
+
+### 구성
+
+```java
+@Bean
+public RedissonBasedProxyManager<String> bucket4jProxyManager(RedissonClient redissonClient) {
+    return Bucket4jRedisson.casBasedBuilder(((Redisson) redissonClient).getCommandExecutor())
+            .expirationAfterWrite(
+                    ExpirationAfterWriteStrategy.basedOnTimeForRefillingBucketUpToMax(Duration.ofSeconds(10)))
+            .build();
+}
+```
+
+`InboundRateLimitFilter`(`OncePerRequestFilter`)가 `/api/loan/request-compare-loan` 요청을 가로채,
+클라이언트 IP(`X-Forwarded-For` 우선, 없으면 `getRemoteAddr()`)를 키로 Redis에 저장된 버킷에서
+토큰을 하나 소비합니다. 토큰이 없으면 컨트롤러에 진입하지 않고 그 자리에서 `429 Too Many Requests` +
+`Retry-After` 헤더로 즉시 응답합니다.
+
+```
+클라이언트(IP)당 초당 20건
+  → 초과 시 대기 없이 즉시 429 (컨트롤러/서비스 레이어 진입 자체를 차단)
+  → 버킷 상태는 Redis에 저장 - 인스턴스 수와 무관하게 동일한 한도 적용
 ```
 
 <br>
