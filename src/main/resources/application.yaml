@@ -57,7 +57,7 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       properties:
-        partition.assignment.strategy: org.apache.kafka.clients.customer.CooperativeStickyAssignor
+        partition.assignment.strategy: org.apache.kafka.clients.consumer.CooperativeStickyAssignor
         group.instance.id: ${HOSTNAME:bigin-customer}-${random.uuid}
 
   # Redis 설정
