@@ -52,6 +52,7 @@ class NotificationSenderServiceTest {
     void sendAndUpdateResult_marksNotificationAsSuccess_whenSendSucceeds() {
         // given
         Notification notification = this.buildNotification();
+        given(notificationRepository.claimForSending(1L)).willReturn(1);
         given(notificationRepository.findById(1L)).willReturn(Optional.of(notification));
         given(notificationSenderFactory.getSender(ChannelType.SMS))
                 .willReturn(notificationSender);
@@ -72,6 +73,7 @@ class NotificationSenderServiceTest {
     void sendAndUpdateResult_marksNotificationAsFailed_whenSendFails() {
         // given
         Notification notification = this.buildNotification();
+        given(notificationRepository.claimForSending(1L)).willReturn(1);
         given(notificationRepository.findById(1L)).willReturn(Optional.of(notification));
         given(notificationSenderFactory.getSender(ChannelType.SMS))
                 .willReturn(notificationSender);
@@ -90,6 +92,7 @@ class NotificationSenderServiceTest {
     @Test
     @DisplayName("존재하지 않는 Notification id이면 예외가 발생한다")
     void sendAndUpdateResult_throwsException_whenNotificationNotFound() {
+        given(notificationRepository.claimForSending(999L)).willReturn(1);
         given(notificationRepository.findById(999L)).willReturn(Optional.empty());
 
         // when & then

@@ -8,7 +8,6 @@ import com.ghyinc.finance.domain.notification.sender.NotificationSenderFactory;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
 @Service
@@ -17,8 +16,13 @@ public class NotificationSenderService {
     private final NotificationSenderFactory notificationSenderFactory;
     private final NotificationRepository notificationRepository;
 
-    @Transactional
     public void sendAndUpdateResult(Long notificationId) {
+        int claimed = notificationRepository.claimForSending(notificationId);
+        if(claimed == 0) {
+            log.warn("[Consumer] 이미 처리(중)인 알림이라 재발송 스킵. id={} - Kafka 재전달/중복 소비로 추정", notificationId);
+            return;
+        }
+
         Notification notification = notificationRepository.findById(notificationId)
                 .orElseThrow();
 
@@ -32,6 +36,7 @@ public class NotificationSenderService {
             log.warn("[Consumer] 발송 실패. id={}, code={}",
                     notificationId, response.getResultCode());
         }
+        notificationRepository.save(notification);
     }
 
     public ExternalApiResponse call(Notification notification) {
