@@ -150,6 +150,8 @@ com.ghyinc.finance
 │   │       ├── DlqEventConsumer.java      # DLT 토픽 수신 + Poison Pill 자동 분류
 │   │       ├── DlqRetryScheduler.java     # 지수 백오프 자동 재시도
 │   │       └── PoisonPillClassifier.java  # Poison Pill 판별
+│   ├── metrics
+│   │   └── PartnerSlaMetricsConsumer.java # audit.partner-transmission 독립 구독, 파트너사별 SLA 지표 수집
 ```
 
 <br>
@@ -214,10 +216,20 @@ loan-limit-completed   loan → notification 도메인 간 이벤트 전달
  
 notification.send      notification 도메인 내부 비동기 발송 처리
                         Notification INSERT 후 실제 발송 분리
-                        
+
+audit.partner-transmission   파트너사 API 전송 이력 감사 로그 (inquiryNo가 partition key)
+                              독립된 컨슈머 그룹 2개가 같은 토픽을 병렬 구독:
+                              ├── audit-log-group           → AuditLogConsumer (감사 로그 DB 적재)
+                              └── partner-sla-metrics-group → PartnerSlaMetricsConsumer (Micrometer 지표 수집)
+                              한쪽이 느려지거나 장애가 나도 다른 쪽 처리에 영향 없음 (컨슈머 그룹 단위로 완전히 독립)
+
+audit.partner-callback       파트너사 콜백 수신 이력 감사 로그 (AuditLogConsumer가 구독)
+
 loan-limit-completed.DLT    loan-limit-completed 처리 실패 메시지 보관
 notification.send.DLT       notification.send 처리 실패 메시지 보관
 ```
+
+**파트너사별 SLA 모니터링 (`PartnerSlaMetricsConsumer`)**: `audit.partner-transmission` 이벤트(`PartnerTransmissionAuditEvent`)에는 이미 `partnerCode`/`success`/`resTimeMs`가 담겨 있어, DB 재조회 없이 payload만으로 Micrometer `Counter`(`partner.transmission.count`)와 `Timer`(`partner.transmission.duration`)를 `partner`/`result` 태그로 기록합니다. `/actuator/prometheus`로 그대로 노출되어 파트너사별 실패율·p95 응답시간을 Grafana에서 바로 확인할 수 있습니다. 감사 로그(`AuditLogConsumer`)와 달리 완전성보다 가용성을 우선해 파싱 실패 시에도 예외를 전파하지 않고 로그만 남긴 뒤 다음 메시지로 넘어갑니다(재시도/DLT 없음).
 
 ### 2. 디자인 패턴
 
