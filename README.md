@@ -1098,23 +1098,23 @@ CaffeineCacheManager → "cryptoService" 캐시, TTL 1시간, 최대 100개
 
 여러 금융사 콜백이 동시에 수신될 때 `LoanLimitInquiry` count 업데이트의 Lost Update를 방지합니다.
 
-초기에는 JPA 비관적 락(`PESSIMISTIC_WRITE`)으로 구현했으나, 멀티 Pod 환경에서 락 대기 중 DB 커넥션이 점유된 채 쌓이는 문제가 있어 Redis 분산락(Redisson)으로 전환했습니다.
+락 보유 시간을 최소화하고 중복 콜백에도 안전하도록, 락 획득 직후 `PartnerInquiryStatus` 상태를 확인해 이미 처리됐거나(SUCCESS) 처리 불가 상태인 중복 콜백은 즉시 skip하는 가드를 같이 둡니다.
 
 ```java
-// LoanLimitResultService - Redis 분산락으로 동시 콜백 순차 처리
-private void updateWithDistributedLock(PartnerCode partnerCode, LoanLimitResultRequest.LoanApplyResult item, LoanLimitProductResult productResult) {
-    String lockKey = "loan:inquiry:lock:" + item.getLoReqtNo();
-    lockExecutor.execute(lockKey, 3, 5,
-            () -> {
-                var loanLimitInquiry = loanLimitProductResultRepository.findInquiryByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
-                        .orElseThrow(() -> new InvalidRequestException("존재하지 않는 한도조회 이력"));
+// LoanLimitResultService - 비관적 락(PESSIMISTIC_WRITE)으로 동시 콜백 순차 처리
+var loanLimitInquiry = loanLimitProductResultRepository
+        .findInquiryByLoReqtNoAndProduceCodeWithLock(item.getLoReqtNo(), item.getProductCode())
+        .orElseThrow(() -> new InvalidRequestException("존재하지 않는 한도조회 이력"));
 
-                loanLimitInquiry.incrementSuccessCount();
-                productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
-            },
-            () -> log.warn("[{}] 분산 락 획득 실패. loReqtNo={}", partnerCode, item.getLoReqtNo())
-    );
+// SEND_SUCCESS 상태가 아니면 처리 불가로 간주하고 skip (중복 수신 포함, 락 보유 시간 최소화)
+if (productResult.getStatus() != PartnerInquiryStatus.SEND_SUCCESS) {
+    log.warn("[{}] 처리 불가 상태의 결과 수신. loReqtNo={}, status={}",
+            partnerCode, item.getLoReqtNo(), productResult.getStatus());
+    return;
 }
+
+loanLimitInquiry.incrementSuccessCount();
+productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
 ```
 
 <br>
@@ -1176,6 +1176,7 @@ private void updateWithDistributedLock(PartnerCode partnerCode, LoanLimitResultR
 | Kafka 알림 연동 | 다중 인스턴스 환경에서 이벤트 소실 방지, loan-notification 도메인 물리적 분리                                                                                   |
 | 상품 정보 Redis 캐싱 | 매 한도조회 요청마다 금융사별 상품 DB 조회 반복 → `ProductCache` DTO 변환 후 Redis 캐싱, Entity 직렬화 문제 회피                                                      |
 | 상품 캐싱에 Redisson 분산 락 사용 | `@Cacheable(sync=true)`는 `RedisCacheManager`에서 JVM 로컬 락으로만 동작해 멀티 인스턴스**** stampede를 못 막음 → double-checked locking + Redisson 분산 락으로 직접 구현 |
+| 콜백 동시성 제어 재검토 (Redis 분산락 → 비관적 락 단독) | 콜백 대상 row 경합은 금융사 수(6곳)로 상한이 고정돼 트래픽 증가와 무관하게 락 대기 비용이 커지지 않음 + Redis 분산락은 `leaseTime` 고정 시 GC-pause 중 락 만료로 상호배제가 깨질 수 있음(fencing token 부재) → DB row 단일 자원 보호는 비관적 락 단독이 더 안전하고 왕복 지연도 적음 |
 | Kafka DLQ 도입 | Consumer 처리 실패 메시지 유실 방지, Poison Pill과 일시 장애 자동 분류, 지수 백오프 자동 재시도로 운영팀 개입 최소화                                                          |
 | PoisonPillClassifier | 재시도해도 의미 없는 예외(파싱/데이터 오류)를 즉시 DEAD 처리, 파티션 멈춤(lag 무한 증가) 방지                                                                            |
 | 지수 백오프 DB 영속화 | spring-retry ExponentialBackOff는 메모리에만 존재 → 서버 재기동 시 재시도 일정 소멸. DlqEvent.nextRetryAt을 DB에 저장하여 재기동 후에도 재시도 일정 유지                       |
