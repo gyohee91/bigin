@@ -22,6 +22,9 @@ public class Member extends BaseTimeEntity {
     @Comment("휴대폰번호")
     private String mobile;
 
+    @Comment("CI")
+    private String ci;
+
     @Comment("이메일주소")
     private String email;
 
