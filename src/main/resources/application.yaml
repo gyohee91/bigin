@@ -66,6 +66,19 @@ spring:
       host: localhost
       port: 6379
 
+  batch:
+    jdbc:
+      initialize-schema: always   # 운영은 always -> never + 사전 마이그레이션으로 전환
+    job:
+      enabled: false              # @Scheduled로만 기동, 앱 시작 시 자동 실행 방지
+    jpa:
+      properties:
+        hibernate:
+          jdbc:
+            batch_size: 500       # Notification/Outbox bulk insert 최적화
+          order_inserts: true
+          order_updates: true
+
 server:
   port: 8080
   shutdown: graceful
@@ -280,3 +293,12 @@ notification-api:
 
 jwt:
   secret: bXktc3VwZXItc2VjcmV0LWtleS1tdXN0LWJlLWxvbmc=
+
+kcb:
+  ftp:
+    host: ${KCB_FTP_HOST}
+    port: ${KCB_FTP_PORT:21}
+    remote-dir: /kcb/credit/outbound
+    remote-done-dir: /kcb/credit/outbound/done
+    local-download-dir: /data/kcb/inbound
+    charset: EUC-KR
