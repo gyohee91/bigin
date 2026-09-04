@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.notification.service;
 
+import com.ghyinc.finance.domain.notification.dto.NotificationBulkResponse;
 import com.ghyinc.finance.domain.notification.dto.NotificationSendRequest;
 import com.ghyinc.finance.domain.notification.dto.NotificationSendResponse;
 import com.ghyinc.finance.domain.notification.entity.Notification;
@@ -19,6 +20,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,6 +28,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.times;
 
 @ExtendWith(MockitoExtension.class)
 class NotificationServiceTest {
@@ -146,5 +149,108 @@ class NotificationServiceTest {
         ArgumentCaptor<Notification> captor = ArgumentCaptor.forClass(Notification.class);
         then(notificationRepository).should().save(captor.capture());
         assertThat(captor.getValue().getScheduledAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("sendBulk: 매칭되는 Member 전원에 대해 Notification 저장과 Outbox 적재")
+    void sendBulk_savesNotificationAndEnqueuesOutbox_forAllMatchedMembers() {
+        // given
+        List<NotificationSendRequest> requests = List.of(
+                NotificationSendRequest.builder()
+                        .userId(1L)
+                        .channelType(ChannelType.KAKAOTALK)
+                        .sendType(SendType.IMMEDIATE)
+                        .title("title")
+                        .content("content")
+                        .build(),
+                NotificationSendRequest.builder()
+                        .userId(2L)
+                        .channelType(ChannelType.KAKAOTALK)
+                        .sendType(SendType.IMMEDIATE)
+                        .title("title")
+                        .content("content")
+                        .build()
+        );
+
+        Member member1 = Member.builder()
+                .userId(1L)
+                .name("Tom")
+                .mobile("01012341234")
+                .build();
+        Member member2 = Member.builder()
+                .userId(2L)
+                .name("Json")
+                .mobile("01012341233")
+                .build();
+        
+        given(memberRepository.findAllById(List.of(1L, 2L))).willReturn(List.of(member1, member2));
+        given(notificationRepository.save(any(Notification.class)))
+                .willAnswer(invocation -> invocation.getArgument(0));
+
+        // when
+        NotificationBulkResponse result = notificationService.setBulk(requests);
+
+        // then
+        assertThat(result.notified()).isEqualTo(2L);
+        assertThat(result.skipped()).isEqualTo(0);
+
+        then(notificationRepository).should(times(2)).save(any(Notification.class));
+        then(outboxEventWriter).should(times(2)).enqueue(
+                eq("Notification"), any(), eq("NOTIFICATION_SEND"), any(NotificationEvent.class)
+        );
+    }
+
+    @Test
+    @DisplayName("sendBulk: 매칭되지 않는 Member는 스킵하고 나머지만 발송한다")
+    void sendBulk_skipsUnmatchedMembers() {
+        // given
+        List<NotificationSendRequest> requests = List.of(
+                NotificationSendRequest.builder()
+                        .userId(1L)
+                        .channelType(ChannelType.KAKAOTALK)
+                        .sendType(SendType.IMMEDIATE)
+                        .title("title")
+                        .content("content")
+                        .build(),
+                NotificationSendRequest.builder()
+                        .userId(999L)
+                        .channelType(ChannelType.KAKAOTALK)
+                        .sendType(SendType.IMMEDIATE)
+                        .title("title")
+                        .content("content")
+                        .build()
+        );
+
+        Member member = Member.builder()
+                .userId(1L)
+                .name("Tom")
+                .mobile("01012341234")
+                .build();
+
+        // 999L은 조회 결과에 포함되지 않음 (존재하지 않는 회원)
+        given(memberRepository.findAllById(List.of(1L, 999L))).willReturn(List.of(member));
+        given(notificationRepository.save(any(Notification.class)))
+                .willAnswer(invocation -> invocation.getArgument(0));
+
+        // when
+        NotificationBulkResponse result = notificationService.setBulk(requests);
+
+        // then
+        assertThat(result.notified()).isEqualTo(1L);
+        assertThat(result.skipped()).isEqualTo(1L);
+        then(notificationRepository).should(times(1)).save(any(Notification.class));
+    }
+
+    @Test
+    @DisplayName("sendBulk: 빈 리스트를 넘기면 아무 처리도 하지 않는다")
+    void sendBulk_emptyRequests_doesNothing() {
+        // when
+        NotificationBulkResponse result = notificationService.setBulk(List.of());
+
+        // then
+        assertThat(result.notified()).isEqualTo(0);
+        assertThat(result.skipped()).isEqualTo(0);
+        then(notificationRepository).shouldHaveNoInteractions();
+        then(outboxEventWriter).shouldHaveNoInteractions();
     }
 }
