@@ -295,10 +295,6 @@ jwt:
   secret: bXktc3VwZXItc2VjcmV0LWtleS1tdXN0LWJlLWxvbmc=
 
 kcb:
-  ftp:
-    host: ${KCB_FTP_HOST}
-    port: ${KCB_FTP_PORT:21}
-    remote-dir: /kcb/credit/outbound
-    remote-done-dir: /kcb/credit/outbound/done
-    local-download-dir: /data/kcb/inbound
-    charset: EUC-KR
+  file:
+    local-watch-dir: /kcb/credit/outbound
+    done-dir: /kcb/credit/outbound/done

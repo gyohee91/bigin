@@ -90,26 +90,32 @@ public class NotificationService {
                 continue;
             }
 
-            Notification notification = Notification.builder()
-                    .channelType(request.getChannelType())
-                    .sendType(request.getSendType())
-                    .recipient(request.getChannelType().extractRecipient(member))
-                    .scheduledAt(request.getSendType() == SendType.SCHEDULED ? LocalDateTime.now() : null)
-                    .title(request.getTitle())
-                    .content(request.getContent())
-                    .build();
+            try {
+                Notification notification = Notification.builder()
+                        .channelType(request.getChannelType())
+                        .sendType(request.getSendType())
+                        .recipient(request.getChannelType().extractRecipient(member))
+                        .scheduledAt(request.getSendType() == SendType.SCHEDULED ? LocalDateTime.now() : null)
+                        .title(request.getTitle())
+                        .content(request.getContent())
+                        .build();
 
-            notificationRepository.save(notification);
+                notificationRepository.save(notification);
 
-            // Spring 이벤트 발행 -> AFTER_COMMIT 후 Kafka 발행
-            outboxEventWriter.enqueue(
-                    "Notification",
-                    String.valueOf(notification.getId()),
-                    "NOTIFICATION_SEND",
-                    NotificationEvent.from(notification)
-            );
+                // Spring 이벤트 발행 -> AFTER_COMMIT 후 Kafka 발행
+                outboxEventWriter.enqueue(
+                        "Notification",
+                        String.valueOf(notification.getId()),
+                        "NOTIFICATION_SEND",
+                        NotificationEvent.from(notification)
+                );
 
-            notified++;
+                notified++;
+            } catch (IllegalStateException e) {
+                // 발송 가능한 채널이 전혀 없는 회원 -> 이 건만 스킵
+                log.warn("[Bulk] 발송 채널 정보 없음, 스킵. userId={}", request.getUserId(), e);
+                skipped++;
+            }
         }
 
         return NotificationBulkResponse.from(notified, skipped);
