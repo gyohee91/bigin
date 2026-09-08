@@ -4,6 +4,7 @@ import com.ghyinc.finance.domain.kcbcredit.dto.KcbCreditRecord;
 import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
+import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
@@ -12,6 +13,7 @@ import org.springframework.batch.item.file.builder.FlatFileItemReaderBuilder;
 import org.springframework.batch.item.file.mapping.BeanWrapperFieldSetMapper;
 import org.springframework.batch.item.file.mapping.DefaultLineMapper;
 import org.springframework.batch.item.file.transform.FixedLengthTokenizer;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.FileSystemResource;
@@ -36,15 +38,15 @@ public class KcbCreditBatchConfig {
     public Job kcbCreditJob() {
         return new JobBuilder("kcbCreditJob", jobRepository)
                 .listener(jobListener)
-                .start(this.kcbCreditStep(null))
+                .start(this.kcbCreditStep())
                 .build();
     }
 
     @Bean
-    public Step kcbCreditStep(String filePath) {
+    public Step kcbCreditStep() {
         return new StepBuilder("kcbCreditStep", jobRepository)
                 .<KcbCreditRecord, KcbCreditRecord>chunk(CHUNK_SIZE, transactionManager)
-                .reader(this.kcbCreditReader(filePath))
+                .reader(this.kcbCreditReader(null))
                 .processor(itemProcessor)
                 .writer(itemWriter)
                 .faultTolerant()
@@ -54,7 +56,8 @@ public class KcbCreditBatchConfig {
     }
 
     @Bean
-    public FlatFileItemReader<KcbCreditRecord> kcbCreditReader(String filePath) {
+    @StepScope
+    public FlatFileItemReader<KcbCreditRecord> kcbCreditReader(@Value("#{jobParameters['filePath']}") String filePath) {
         return new FlatFileItemReaderBuilder<KcbCreditRecord>()
                 .name("kcbCreditReader")
                 .resource(new FileSystemResource(filePath))
