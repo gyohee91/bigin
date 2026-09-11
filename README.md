@@ -15,6 +15,7 @@
 - [🛠 기술 스택](#tech-stack)
 - [📁 패키지 구조](#package-structure)
 - [🏗 핵심 아키텍처](#architecture)
+- [⚙️ 스레드풀 구성과 동시성 제어](#thread-pool-concurrency)
 - [🗄 핵심 도메인 모델](#domain-model)
 - [🔒 장애 격리 - Resilience4j](#resilience4j)
 - [🚦 인바운드 트래픽 방어 - Rate Limiting](#inbound-rate-limiting)
@@ -261,6 +262,57 @@ LoanLimitAdaptorRequest adaptorRequest = strategy.toAdaptorRequest(request, cont
 REST   → RestApiClient
 전용선 → LeaseLineApiClient (고정길이 전문, EUC-KR 인코딩)
 ```
+
+<br>
+
+<a id="thread-pool-concurrency"></a>
+## ⚙️ 스레드풀 구성과 동시성 제어
+
+### Executor 사이징 근거
+
+`loanLimitExecutor`(요청당 1스레드 점유, core 10 / max 30 / queue 50)와 `partnerApiExecutor`(금융사별 병렬 호출 전담, core 50 / max 150 / queue 300)의 초기값은 감으로 잡지 않고, 서로 다른 두 자원 관점에서 상한을 각각 계산한 뒤 더 작은 쪽을 채택하는 방식으로 정했습니다.
+
+1. **코어 수 기준 이론적 상한** — 인스턴스 스펙(8 core)을 기준으로 산출. 외부 API 호출 대기가 대부분인 I/O-bound 작업이라 스레드 수를 코어 수보다 훨씬 크게 잡을 여지는 있지만, 무한정 늘리면 컨텍스트 스위칭 비용이 커지므로 이 관점에서의 상한을 먼저 계산합니다.
+2. **메모리 기준 현실적 상한** — 서버 메모리(32GB)에서 JVM 힙, 다른 스레드풀(`loanLimitExecutor` 등), DB 커넥션 풀 등 기존 점유량을 제외한 여유분을 스레드당 예상 메모리 사용량으로 나눠 산출. 코어 수 기준 상한만 보면 실제로는 메모리 부족으로 OOM이나 GC 압박이 먼저 발생할 수 있어서 별도로 계산합니다.
+3. 두 상한 중 더 작은 값을 기준으로 `corePoolSize`/`maxPoolSize`를 설정합니다 — 한쪽 자원만 보고 정하면 다른 자원이 실제 병목이 될 수 있기 때문에, 보수적인 값을 채택하는 쪽이 안전합니다.
+4. 오픈 후에는 이 초기값을 그대로 두지 않고, 실제 부하 테스트로 처리량이 꺾이기 시작하는 지점을 확인해 값을 미세 조정했습니다.
+
+두 풀 모두 큐가 가득 차면 `AbortPolicy`로 즉시 실패시킵니다. 무한정 큐잉으로 지연을 숨기기보다, 포화 상태를 호출부에 빠르게 알려 장애를 조기에 드러내는 쪽을 택했습니다.
+
+```java
+@Bean(name = "partnerApiExecutor")
+public Executor partnerApiExecutor() {
+    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    executor.setCorePoolSize(50);
+    executor.setMaxPoolSize(150);
+    executor.setQueueCapacity(300);
+    executor.setTaskDecorator(new MdcTaskDecorator());
+    executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+    executor.initialize();
+    return executor;
+}
+```
+
+### 스레드 전환 시 컨텍스트 전파
+
+`@Async`/`CompletableFuture`로 스레드가 바뀌면 호출 스레드의 MDC(requestId)가 유실됩니다. `MdcTaskDecorator`가 작업 제출 시점의 MDC 스냅샷을 복사해뒀다가 실행 스레드에 복원하고, 종료 후에는 반드시 `MDC.clear()`로 정리합니다 — 스레드풀 스레드는 재사용되므로 정리를 빠뜨리면 이전 요청의 requestId가 다음 요청 로그에 섞여 나갈 수 있습니다. Kafka Consumer 스레드의 MDC 복원은 별도 메커니즘(`RecordInterceptor`)을 쓰는데, 자세한 내용은 [MDC 전파](#mdc-propagation) 섹션에서 다룹니다.
+
+### 동시성 이슈 방어 지점
+
+| 지점 | 문제 | 방어 방식 |
+|---|---|---|
+| 콜백 수신 (다수 금융사 동시 응답) | `LoanLimitInquiry` count Lost Update | DB `PESSIMISTIC_WRITE` — [콜백 동시성 제어](#callback-concurrency) |
+| 상품 정보 캐싱 | 캐시 미스 시 다수 스레드의 중복 조회(Cache Stampede) | Redis 분산 락(Redisson) — [캐싱 전략](#caching-strategy) |
+| 인바운드 트래픽 | 멀티 인스턴스 환경에서 로컬 Rate Limiter로는 전체 TPS 제한 불가 | Redis 공유 카운터 기반 Bucket4j — [인바운드 트래픽 방어](#inbound-rate-limiting) |
+| 파트너사 API 호출(outbound) | Resilience4j RateLimiter는 인스턴스-로컬이라 인스턴스 수만큼 계약 TPS 초과 가능 | **알려진 한계** — 인바운드와 동일한 Bucket4j+Redis 공유 카운터 구조로 전환 검토 중 |
+
+마지막 행은 의도적으로 "해결됨"이 아니라 "알려진 한계"로 남겨뒀습니다. 인바운드는 이미 Redis 기반으로 전환했지만 outbound(파트너사 호출)는 아직 Resilience4j RateLimiter를 쓰고 있어 동일한 갭이 존재합니다.
+
+### HTTP 커넥션 풀
+
+파트너사 호출에 쓰는 `RestClient`는 현재 `SimpleClientHttpRequestFactory`(JDK `HttpURLConnection` 기반)를 씁니다. 이 구현은 커넥션 재사용 한도가 JVM 전역 시스템 프로퍼티(`http.maxConnections`, 기본값 5)로만 제어되고, `RestClient` 인스턴스별·파트너별로 다르게 줄 방법이 없습니다. `partnerApiExecutor`가 스레드를 최대 150개까지 띄워도, 같은 파트너사 목적지로 나가는 실제 동시 커넥션은 기본 설정상 5개로 묶여 있을 수 있어 스레드는 늘어나도 커넥션을 기다리며 블로킹되는 병목 가능성이 있습니다.
+
+이를 해소하기 위해 `PoolingHttpClientConnectionManager`(Apache HttpClient5) 기반으로 전환하는 설계를 마쳤습니다 — 전체 파트너가 공유하는 커넥션 풀(`maxTotal`) 위에 파트너별 상한(`maxPerRoute`)을 `HttpRoute` 단위로 얹고, 풀이 고갈됐을 때는 무한 대기 대신 `connectionRequestTimeout`으로 빠르게 실패하도록 해서 Executor의 `AbortPolicy`와 동일한 "포화 시 빠른 실패" 원칙을 커넥션 풀 레벨까지 확장합니다.
 
 <br>
 
@@ -732,6 +784,7 @@ NotificationEventConsumer
   → 발송 결과 markAsSuccess() / markAsFailed()
 ```
 
+<a id="mdc-propagation"></a>
 ### MDC 전파
 
 Kafka Consumer는 별도 스레드에서 실행되므로 HTTP 요청의 MDC(requestId)가 자동 전파되지 않습니다. 처음에는 각 Consumer가 개별적으로 `MDC.put()` / `try-finally { MDC.clear() }`를 반복했는데, `KafkaConfig`에 `RecordInterceptor`를 한 번 등록해서 이 보일러플레이트를 전역으로 걷어냈습니다. Producer가 requestId를 Kafka 헤더로 실어 보내고, Interceptor가 리스너 호출 전/후로 MDC를 자동 설정·정리합니다.

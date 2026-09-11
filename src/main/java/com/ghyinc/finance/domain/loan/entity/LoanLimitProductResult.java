@@ -9,6 +9,7 @@ import lombok.*;
 import org.hibernate.annotations.Comment;
 
 @Entity
+@Table(indexes = {  @Index(name = "idx_product_result_inquiry_id", columnList = "inquiry_id")   })
 @Getter
 @Builder
 @NoArgsConstructor(access = AccessLevel.PROTECTED)

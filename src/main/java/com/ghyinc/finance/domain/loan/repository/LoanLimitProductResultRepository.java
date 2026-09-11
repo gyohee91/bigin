@@ -1,6 +1,7 @@
 package com.ghyinc.finance.domain.loan.repository;
 
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
+import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultResponse;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
@@ -13,6 +14,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -55,4 +57,19 @@ public interface LoanLimitProductResultRepository extends JpaRepository<LoanLimi
             ORDER BY t.amount DESC NULLS LAST
             """)
     Page<LoanLimitProductResultDto> findProductResultsByInquiryId(@Param("inquiryId") Long inquiryId, Pageable pageable);
+
+    @Query("""
+            SELECT new com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultResponse(
+                t.loReqtNo,
+                t.partnerCode,
+                t.productCode,
+                t.status,
+                t.resultCode,
+                t.amount,
+                t.interestRate
+            )
+            FROM LoanLimitProductResult t
+            WHERE t.loanLimitInquiry.id = :inquiryId
+            """)
+    List<LoanLimitProductResultResponse> findAllByInquiryNo(@Param("inquiryId") Long inquiryId);
 }
