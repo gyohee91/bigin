@@ -1,9 +1,11 @@
 package com.ghyinc.finance.global.config;
 
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.global.common.ConnectionType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hc.client5.http.HttpRoute;
+import org.apache.hc.client5.http.config.ConnectionConfig;
 import org.apache.hc.client5.http.config.RequestConfig;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
@@ -15,6 +17,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.net.URI;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -42,14 +45,33 @@ public class PartnerConnectionPoolConfig {
         connectionManager.setMaxTotal(200);
         connectionManager.setDefaultMaxPerRoute(10);
 
+        ConnectionConfig fallbackConnectionConfig = ConnectionConfig.custom()
+                .setConnectTimeout(Timeout.ofMilliseconds(3000))
+                .build();
+        Map<HttpRoute, ConnectionConfig> routeConnectionConfigs = new HashMap<>();
+
         for(Map.Entry<PartnerCode, PartnerApiProperties.PartnerApiConfig> entry : partnerApiProperties.getPartners().entrySet()) {
             PartnerCode partnerCode = entry.getKey();
             PartnerApiProperties.PartnerApiConfig config = entry.getValue();
 
+            // REST가 아닌 파트너는 이 풀을 쓰지 않음.
+            if (partnerCode.getConnectionType() != ConnectionType.REST) {
+                continue;
+            }
+
             HttpHost host = this.resolveHost(config);
-            connectionManager.setMaxPerRoute(new HttpRoute(host), config.getMaxPerRoute());
+            HttpRoute route = new HttpRoute(host);
+
+            connectionManager.setMaxPerRoute(route, config.getMaxPerRoute());
+            routeConnectionConfigs.put(route, ConnectionConfig.custom()
+                    .setConnectTimeout(Timeout.ofMilliseconds(config.getConnectTimeoutMs()))
+                    .build());
             log.info("[{}] HTTP 커넥션 풀 설정 host={}, maxPerRoute={}", partnerCode, host, config.getMaxPerRoute());
         }
+
+        // nice-api/notification-api처럼 loan-api.partners에 없는 호스트는 fallbackConnectionConfig로 분리
+        connectionManager.setConnectionConfigResolver(httpRoute ->
+                routeConnectionConfigs.getOrDefault(httpRoute, fallbackConnectionConfig));
 
         return connectionManager;
     }
@@ -63,11 +85,9 @@ public class PartnerConnectionPoolConfig {
      */
     public CloseableHttpClient buildPartnerHttpClient(
             PoolingHttpClientConnectionManager connectionManager,
-            int connectionTimeoutMs,
             int readTimeoutMs
     ) {
         RequestConfig requestConfig = RequestConfig.custom()
-                .setConnectTimeout(Timeout.ofMilliseconds(connectionTimeoutMs))
                 .setResponseTimeout(Timeout.ofMilliseconds(readTimeoutMs))
                 // 풀에 여유 커넥션이 없을 때 무한 대기 대신 빠르게 실패
                 // (스레드가 커넥션 기다리며 블로킹되는 것 방지)
@@ -78,6 +98,7 @@ public class PartnerConnectionPoolConfig {
                 .setConnectionManager(connectionManager)
                 .setConnectionManagerShared(true)
                 .setDefaultRequestConfig(requestConfig)
+                .evictExpiredConnections()
                 .evictIdleConnections(TimeValue.ofSeconds(30))
                 .build();
     }

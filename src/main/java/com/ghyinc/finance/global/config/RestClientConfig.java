@@ -80,7 +80,7 @@ public class RestClientConfig {
      */
     private RestClient buildRestClient(String baseUrl, int connectTimeoutMs, int readTimeoutMs) {
         CloseableHttpClient httpClient = partnerConnectionPoolConfig.buildPartnerHttpClient(
-                partnerConnectionManager, connectTimeoutMs, readTimeoutMs
+                partnerConnectionManager, readTimeoutMs
         );
         HttpComponentsClientHttpRequestFactory factory =
                 new HttpComponentsClientHttpRequestFactory(httpClient);
