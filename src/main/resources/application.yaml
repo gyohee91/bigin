@@ -239,22 +239,24 @@ resilience4j:
 loan-api:
   partners:
     KAKAO_BANK:
-      base-url: http://localhost:8090
+      base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 3000
       read-timeout-ms: 7000
     TOSS_BANK:
-      base-url: http://localhost:8090
+      base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 3000
       read-timeout-ms: 7000
     KB_CAPITAL:
-      base-url: http://localhost:8090
+      base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 3000
       read-timeout-ms: 7000
+      max-per-route: 20   # resilience4j.ratelimiter.instances.KB_CAPITAL과 동일하게 20
+      # 나머지 파트너는 기본값(10) 사용
     LINE_BANK:
-      base-url: http://localhost:8090
+      base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 3000
       read-timeout-ms: 7000
@@ -267,7 +269,7 @@ loan-api:
 
 nice-api:
   dnr:
-    base-url: http://localhost:8090
+    base-url: http://localhost:8091
     path: /send/sms
     connect-timeout-ms: 3000
     read-timeout-ms: 7000
@@ -276,17 +278,17 @@ nice-api:
 notification-api:
   channels:
     SMS:
-      base-url: http://localhost:8090
+      base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 3000
       read-timeout-ms: 5000
     EMAIL:
-      base-url: http://localhost:8090
+      base-url: http://localhost:8091
       path: /send/email
       connect-timeout-ms: 3000
       read-timeout-ms: 5000
     KAKAOTALK:
-      base-url: http://localhost:8090
+      base-url: http://localhost:8091
       path: /send/kakaotalk
       connect-timeout-ms: 3000
       read-timeout-ms: 5000

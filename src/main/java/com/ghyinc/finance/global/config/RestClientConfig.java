@@ -5,11 +5,13 @@ import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.notification.enums.ChannelType;
 import com.ghyinc.finance.global.interceptor.LoggingRequestInterceptor;
 import lombok.RequiredArgsConstructor;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManager;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 import java.util.Map;
@@ -22,6 +24,8 @@ public class RestClientConfig {
     private final PartnerApiProperties partnerApiProperties;
     private final NiceApiProperties niceApiProperties;
     private final NotificationApiProperties notificationApiProperties;
+    private final PoolingHttpClientConnectionManager partnerConnectionManager;
+    private final PartnerConnectionPoolConfig partnerConnectionPoolConfig;
 
     /**
      * 금융사별 전용 RestClient Map
@@ -70,10 +74,20 @@ public class RestClientConfig {
         return this.buildRestClient(config.getBaseUrl(), config.getConnectTimeoutMs(), config.getReadTimeoutMs());
     }
 
+    /**
+     * 현재 병렬 호출 병목이 실제로 발생하는 지점은
+     * partnerApiExecutor가 동시에 때리는 파트너사 쪽이라, 우선 그쪽만 전환.
+     */
     private RestClient buildRestClient(String baseUrl, int connectTimeoutMs, int readTimeoutMs) {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(connectTimeoutMs);
-        factory.setReadTimeout(readTimeoutMs);
+        CloseableHttpClient httpClient = partnerConnectionPoolConfig.buildPartnerHttpClient(
+                partnerConnectionManager, connectTimeoutMs, readTimeoutMs
+        );
+        HttpComponentsClientHttpRequestFactory factory =
+                new HttpComponentsClientHttpRequestFactory(httpClient);
+
+        // SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        // factory.setConnectTimeout(connectTimeoutMs);
+        // factory.setReadTimeout(readTimeoutMs);
 
         return RestClient.builder()
                 .baseUrl(baseUrl)
