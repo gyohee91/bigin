@@ -46,7 +46,7 @@ public class PartnerConnectionPoolConfig {
         connectionManager.setDefaultMaxPerRoute(10);
 
         ConnectionConfig fallbackConnectionConfig = ConnectionConfig.custom()
-                .setConnectTimeout(Timeout.ofMilliseconds(3000))
+                .setConnectTimeout(Timeout.ofMilliseconds(1000))
                 .build();
         Map<HttpRoute, ConnectionConfig> routeConnectionConfigs = new HashMap<>();
 
@@ -91,7 +91,7 @@ public class PartnerConnectionPoolConfig {
                 .setResponseTimeout(Timeout.ofMilliseconds(readTimeoutMs))
                 // 풀에 여유 커넥션이 없을 때 무한 대기 대신 빠르게 실패
                 // (스레드가 커넥션 기다리며 블로킹되는 것 방지)
-                .setConnectionRequestTimeout(Timeout.ofSeconds(2))
+                .setConnectionRequestTimeout(Timeout.ofMilliseconds(500))
                 .build();
 
         return HttpClients.custom()

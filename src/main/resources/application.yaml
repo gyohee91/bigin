@@ -130,9 +130,9 @@ resilience4j:
         sliding-window-size: 10
         minimum-number-of-calls: 5
         failure-rate-threshold: 50
-        slow-call-duration-threshold: 7s
+        slow-call-duration-threshold: 3s    # readTimeout과 동일하게 (느린 호출도 실패로 count)
         slow-call-rate-threshold: 50
-        wait-duration-in-open-state: 60s
+        wait-duration-in-open-state: 60s    # readTimeout보다 충분히 길게 - 파트너 회복 시간 확보
         permitted-number-of-calls-in-half-open-state: 3
         automatic-transition-from-open-to-half-open-enabled: true
         max-wait-duration-in-half-open-state: 10s
@@ -179,13 +179,13 @@ resilience4j:
   retry:
     configs:
       default:
-        max-attempts: 3
-        wait-duration: 1s
+        max-attempts: 2
+        wait-duration: 300ms
         enable-exponential-backoff: true
         exponential-backoff-multiplier: 2
-        max-wait-duration: 10s
+        max-wait-duration: 1s
         enable-randomized-wait: true
-        randomized-wait-factor: 0.5   # 계산된 간격 ±50% 범위로 무작위화
+        randomized-wait-factor: 0.3   # 계산된 간격 ±30% 범위로 무작위화
         retry-exceptions:
           - org.springframework.web.client.HttpServerErrorException
           - org.springframework.web.client.ResourceAccessException
@@ -199,7 +199,7 @@ resilience4j:
   ratelimiter:
     configs:
       default:
-        limit-for-period: 10      # 1주기당 최대 허용 요청 수
+        limit-for-period: 20      # 1주기당 최대 허용 요청 수 (maxPerRtoute의 2~3배)
         limit-refresh-period: 1s  # 주기 (1초)
         timeout-duration: 0       # 대기 없이 즉시 실패 (허용량 초과 시 즉시 RequestNotPermitted)
     instances:
@@ -241,31 +241,31 @@ loan-api:
     KAKAO_BANK:
       base-url: http://localhost:8091
       path: /send/sms
-      connect-timeout-ms: 3000
-      read-timeout-ms: 7000
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
     TOSS_BANK:
       base-url: http://localhost:8091
       path: /send/sms
-      connect-timeout-ms: 3000
-      read-timeout-ms: 7000
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
     KB_CAPITAL:
       base-url: http://localhost:8091
       path: /send/sms
-      connect-timeout-ms: 3000
-      read-timeout-ms: 7000
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
       max-per-route: 20   # resilience4j.ratelimiter.instances.KB_CAPITAL과 동일하게 20
       # 나머지 파트너는 기본값(10) 사용
     LINE_BANK:
       base-url: http://localhost:8091
       path: /send/sms
-      connect-timeout-ms: 3000
-      read-timeout-ms: 7000
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
     SHINHAN_BANK:
       base-url: 127.0.0.1
       port: 9001
       path: /loan/inquiry
-      connect-timeout-ms: 3000
-      read-timeout-ms: 10000
+      connect-timeout-ms: 1000
+      read-timeout-ms: 3000
 
 nice-api:
   dnr:
@@ -280,17 +280,17 @@ notification-api:
     SMS:
       base-url: http://localhost:8091
       path: /send/sms
-      connect-timeout-ms: 3000
+      connect-timeout-ms: 1500
       read-timeout-ms: 5000
     EMAIL:
       base-url: http://localhost:8091
       path: /send/email
-      connect-timeout-ms: 3000
+      connect-timeout-ms: 1500
       read-timeout-ms: 5000
     KAKAOTALK:
       base-url: http://localhost:8091
       path: /send/kakaotalk
-      connect-timeout-ms: 3000
+      connect-timeout-ms: 1500
       read-timeout-ms: 5000
 
 jwt:
