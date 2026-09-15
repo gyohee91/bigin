@@ -310,9 +310,15 @@ public Executor partnerApiExecutor() {
 
 ### HTTP 커넥션 풀
 
-파트너사 호출에 쓰는 `RestClient`는 현재 `SimpleClientHttpRequestFactory`(JDK `HttpURLConnection` 기반)를 씁니다. 이 구현은 커넥션 재사용 한도가 JVM 전역 시스템 프로퍼티(`http.maxConnections`, 기본값 5)로만 제어되고, `RestClient` 인스턴스별·파트너별로 다르게 줄 방법이 없습니다. `partnerApiExecutor`가 스레드를 최대 150개까지 띄워도, 같은 파트너사 목적지로 나가는 실제 동시 커넥션은 기본 설정상 5개로 묶여 있을 수 있어 스레드는 늘어나도 커넥션을 기다리며 블로킹되는 병목 가능성이 있습니다.
+파트너사 호출에 쓰던 `RestClient`는 원래 `SimpleClientHttpRequestFactory`(JDK `HttpURLConnection` 기반)를 썼습니다. 이 구현은 커넥션 재사용 한도가 JVM 전역 시스템 프로퍼티(`http.maxConnections`, 기본값 5)로만 제어되고, `RestClient` 인스턴스별·파트너별로 다르게 줄 방법이 없었습니다. `partnerApiExecutor`가 스레드를 최대 150개까지 띄워도, 같은 파트너사 목적지로 나가는 실제 동시 커넥션은 기본 설정상 5개로 묶여 있어 스레드는 늘어나도 커넥션을 기다리며 블로킹되는 병목이 될 수 있었습니다.
 
-이를 해소하기 위해 `PoolingHttpClientConnectionManager`(Apache HttpClient5) 기반으로 전환하는 설계를 마쳤습니다 — 전체 파트너가 공유하는 커넥션 풀(`maxTotal`) 위에 파트너별 상한(`maxPerRoute`)을 `HttpRoute` 단위로 얹고, 풀이 고갈됐을 때는 무한 대기 대신 `connectionRequestTimeout`으로 빠르게 실패하도록 해서 Executor의 `AbortPolicy`와 동일한 "포화 시 빠른 실패" 원칙을 커넥션 풀 레벨까지 확장합니다.
+이를 해소하기 위해 `PoolingHttpClientConnectionManager`(Apache HttpClient5)로 전환했습니다(`PartnerConnectionPoolConfig`). 전체 파트너가 공유하는 커넥션 풀(`maxTotal=200`) 위에 파트너별 상한(`maxPerRoute`)을 `HttpRoute` 단위로 얹고, 풀이 고갈됐을 때는 무한 대기 대신 `connectionRequestTimeout(2초)`으로 빠르게 실패하도록 해서 Executor의 `AbortPolicy`와 동일한 "포화 시 빠른 실패" 원칙을 커넥션 풀 레벨까지 확장했습니다.
+
+전환 과정에서 두 가지를 놓치기 쉬웠습니다. 첫째, `SHINHAN_BANK`는 전용선(`ConnectionType.LEASE_LINE`)이라 `base-url`에 스킴이 없는데(`127.0.0.1`), 이걸 걸러내지 않고 전체 파트너를 순회하며 `HttpHost`를 만들면 기동 시점에 `PoolingHttpClientConnectionManager` 빈 생성 자체가 예외로 실패합니다 — `ConnectionType.REST`인 파트너만 대상으로 걸러야 합니다. 둘째, HttpClient5에서는 커넥션 연결(connect) 타임아웃이 `RequestConfig`가 아니라 `ConnectionConfig` 소관입니다(연결 타임아웃은 새 물리 커넥션을 맺는 순간에만 의미가 있는 값이라, 풀에서 커넥션을 재사용하는 구조에서는 요청 단위가 아니라 커넥션 단위 설정이 맞다는 게 HttpClient5의 설계 의도). `PoolingHttpClientConnectionManager`엔 라우트별 `setConnectionConfig()`가 없어서, `setConnectionConfigResolver(Resolver<HttpRoute, ConnectionConfig>)`로 파트너별 connect timeout을 매핑하고 목록에 없는 라우트는 폴백 값으로 처리하도록 구성했습니다.
+
+만료 커넥션 정리는 `evictExpiredConnections()`(서버가 Keep-Alive 헤더로 명시한 만료 시각 경과)와 `evictIdleConnections()`(일정 시간 유휴 상태) 둘 다 등록해뒀습니다 — 판단 기준이 달라 하나만 켜두면 다른 한쪽이 놓친 stale 커넥션이 재사용될 수 있습니다.
+
+풀 상태(leased/pending/available/max)는 `PartnerConnectionPoolMetrics`가 Micrometer Gauge로 전체·파트너별 태그를 붙여 노출합니다 — 이번 전환이 실제로 병목을 해소했는지는 이 지표로 실측 검증할 예정입니다.
 
 <br>
 
