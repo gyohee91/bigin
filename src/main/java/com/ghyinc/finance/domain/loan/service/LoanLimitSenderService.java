@@ -25,6 +25,7 @@ import org.apache.kafka.common.errors.InvalidRequestException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -63,6 +64,7 @@ public class LoanLimitSenderService {
 
     private final LoReqtNoGenerator generator;
     private final Executor partnerApiExecutor;
+    private final Map<PartnerCode, Duration> partnerOrTimeouts;
 
     /**
      * 복수 금융사에 대한 한도조회 요청을 병렬로 처리한다.
@@ -162,7 +164,7 @@ public class LoanLimitSenderService {
                         try {
                             return CompletableFuture
                                     .supplyAsync(() -> adaptor.inquireLimit(partnerCode, adaptorRequests), partnerApiExecutor)
-                                    .orTimeout(12, TimeUnit.SECONDS)
+                                    .orTimeout(partnerOrTimeouts.get(partnerCode).toMillis(), TimeUnit.SECONDS)
                                     .exceptionally(ex -> {
                                         // Circuit Breaker OPEN: Fallback으로 즉시 실패 반환
                                         // 해당 금융사는 격리되며 나머지 금융사는 정상 진행

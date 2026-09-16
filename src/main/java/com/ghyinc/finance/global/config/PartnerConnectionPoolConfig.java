@@ -35,6 +35,8 @@ import java.util.Map;
 public class PartnerConnectionPoolConfig {
     private final PartnerApiProperties partnerApiProperties;
 
+    public static final long CONNECTION_REQUEST_TIMEOUT_MS = 500;
+
     /**
      * partnerApiExecutor(max 150 스레드)가 만들어낼 수 있는 최대 동시 호출 수보다
      * 여유를 둔 전체 상한 + 파트너별(HttpRoute) 상한을 함께 등록한다.
@@ -91,7 +93,7 @@ public class PartnerConnectionPoolConfig {
                 .setResponseTimeout(Timeout.ofMilliseconds(readTimeoutMs))
                 // 풀에 여유 커넥션이 없을 때 무한 대기 대신 빠르게 실패
                 // (스레드가 커넥션 기다리며 블로킹되는 것 방지)
-                .setConnectionRequestTimeout(Timeout.ofMilliseconds(500))
+                .setConnectionRequestTimeout(Timeout.ofMilliseconds(CONNECTION_REQUEST_TIMEOUT_MS))
                 .build();
 
         return HttpClients.custom()
