@@ -17,14 +17,15 @@ class RateLimiterConfigTest {
     @Autowired
     private RateLimiterRegistry rateLimiterRegistry;
 
-    // 라이브러리 기본 값(limitForPeriod=50)이 아니라 application.yaml의 default(10)가 적용됐는지 확인
+    // 라이브러리 기본 값(limitForPeriod=50)이 아니라 application.yaml의 default(20)가 적용됐는지 확인
+    // (20 = maxPerRoute의 2~3배 원칙으로 설정된 값. 값이 바뀌면 이 테스트도 함께 갱신할 것)
     @ParameterizedTest
     @DisplayName("파트너별 RateLimiter가 application.yaml의 default 설정을 사용한다")
     @EnumSource(value = PartnerCode.class, names = {"KAKAO_BANK", "TOSS_BANK", "LINE_BANK"})
     void ratelimiter_shouldUseConfiguredLimit_notLibraryDefault(PartnerCode partnerCode) {
         RateLimiter rateLimiter = rateLimiterRegistry.rateLimiter(partnerCode.name());
 
-        assertThat(rateLimiter.getRateLimiterConfig().getLimitForPeriod()).isEqualTo(10);
+        assertThat(rateLimiter.getRateLimiterConfig().getLimitForPeriod()).isEqualTo(20);
     }
 
     @Test
@@ -32,11 +33,11 @@ class RateLimiterConfigTest {
     void ratelimiter_shouldActuallyRejectCallsBeyondLimit() {
         RateLimiter rateLimiter = rateLimiterRegistry.rateLimiter(PartnerCode.KAKAO_BANK.name());
 
-        for(int i = 0; i < 10; i++) {
+        for(int i = 0; i < 20; i++) {
             assertThat(rateLimiter.acquirePermission()).isTrue();
         }
 
-        // 같은 1초 주기 안에서 11번째 요청은 거부되어야 한다.
+        // 같은 1초 주기 안에서 21번째 요청은 거부되어야 한다.
         assertThat(rateLimiter.acquirePermission()).isFalse();
     }
 }

@@ -164,7 +164,7 @@ public class LoanLimitSenderService {
                         try {
                             return CompletableFuture
                                     .supplyAsync(() -> adaptor.inquireLimit(partnerCode, adaptorRequests), partnerApiExecutor)
-                                    .orTimeout(partnerOrTimeouts.get(partnerCode).toMillis(), TimeUnit.SECONDS)
+                                    .orTimeout(partnerOrTimeouts.get(partnerCode).toMillis(), TimeUnit.MILLISECONDS)
                                     .exceptionally(ex -> {
                                         // Circuit Breaker OPEN: Fallback으로 즉시 실패 반환
                                         // 해당 금융사는 격리되며 나머지 금융사는 정상 진행

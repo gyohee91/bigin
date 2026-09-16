@@ -26,7 +26,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -63,6 +65,16 @@ class LoanLimitSenderServiceTest {
         executor.setMaxPoolSize(4);
         executor.initialize();
         ReflectionTestUtils.setField(loanLimitSenderService, "partnerApiExecutor", executor);
+
+        // orTimeout()이 partnerOrTimeouts.get(partnerCode)를 조회하므로
+        // 테스트에서 사용하는 모든 PartnerCode에 대해 값을 채워준다.
+        Map<PartnerCode, Duration> partnerOrTimeouts = Map.of(
+                PartnerCode.KAKAO_BANK, Duration.ofSeconds(5),
+                PartnerCode.TOSS_BANK, Duration.ofSeconds(5),
+                PartnerCode.LINE_BANK, Duration.ofSeconds(5),
+                PartnerCode.KB_CAPITAL, Duration.ofSeconds(5)
+        );
+        ReflectionTestUtils.setField(loanLimitSenderService, "partnerOrTimeouts", partnerOrTimeouts);
     }
 
     private LoanLimitInquiry buildInquiry() {

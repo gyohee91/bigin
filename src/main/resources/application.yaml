@@ -124,13 +124,12 @@ resilience4j:
     configs:
       default:
         register-health-indicator: true
-        limit-refresh-period: 1s
         timeout-duration: 0s
         sliding-window-type: COUNT_BASED
         sliding-window-size: 10
         minimum-number-of-calls: 5
         failure-rate-threshold: 50
-        slow-call-duration-threshold: 3s    # readTimeout과 동일하게 (느린 호출도 실패로 count)
+        slow-call-duration-threshold: 7s    # readTimeout과 동일하게 (느린 호출도 실패로 count)
         slow-call-rate-threshold: 50
         wait-duration-in-open-state: 60s    # readTimeout보다 충분히 길게 - 파트너 회복 시간 확보
         permitted-number-of-calls-in-half-open-state: 3
@@ -211,7 +210,6 @@ resilience4j:
         base-config: default
       KB_CAPITAL:
         base-config: default
-        limit-for-period: 20
       K_BANK:
         base-config: default
       SHINHAN_BANK:
@@ -231,6 +229,7 @@ resilience4j:
         base-config: default
       KB_CAPITAL:
         base-config: default
+        max-concurrent-calls: 20   # Bulkhead.max-concurrent-calls = max-per-route
       K_BANK:
         base-config: default
       SHINHAN_BANK:

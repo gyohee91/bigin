@@ -44,7 +44,7 @@ public class PartnerConnectionPoolConfig {
     @Bean
     public PoolingHttpClientConnectionManager partnerConnectionManager() {
         PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager();
-        connectionManager.setMaxTotal(200);
+        connectionManager.setMaxTotal(350);
         connectionManager.setDefaultMaxPerRoute(10);
 
         ConnectionConfig fallbackConnectionConfig = ConnectionConfig.custom()

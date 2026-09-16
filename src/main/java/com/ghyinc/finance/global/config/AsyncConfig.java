@@ -38,9 +38,9 @@ public class AsyncConfig {
     @Bean(name = "partnerApiExecutor")
     public Executor partnerApiExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(800);   // Σ(파트너별 Bulkhead max-concurrent-calls)
-        executor.setMaxPoolSize(1000);   // 순간 버스트 대비, corePoolSize의 10~20%
-        executor.setQueueCapacity(100);  // 짧은 버스트만 흡수
+        executor.setCorePoolSize(250);   // Σ(파트너별 Bulkhead max-concurrent-calls)
+        executor.setMaxPoolSize(300);   // 순간 버스트 대비, corePoolSize의 10~20%
+        executor.setQueueCapacity(30);  // 짧은 버스트만 흡수
         executor.setThreadNamePrefix("partner-api-");
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(30);
