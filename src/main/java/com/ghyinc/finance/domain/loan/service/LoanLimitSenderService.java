@@ -19,6 +19,7 @@ import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
 import io.github.resilience4j.bulkhead.BulkheadFullException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.ratelimiter.RequestNotPermitted;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
@@ -65,6 +66,7 @@ public class LoanLimitSenderService {
     private final LoReqtNoGenerator generator;
     private final Executor partnerApiExecutor;
     private final Map<PartnerCode, Duration> partnerOrTimeouts;
+    private final MeterRegistry meterRegistry;
 
     /**
      * 복수 금융사에 대한 한도조회 요청을 병렬로 처리한다.
@@ -194,6 +196,8 @@ public class LoanLimitSenderService {
                             // ThreadPoolExecutor.execute()에서 동기적으로 발생하므로 위 exceptionally()로는 못 잡음.
                             // 여기서 안 잡으면 예외가 map() 밖으로 튀어나가 전체 요청이 FAILED 처리된다.
                             log.error("[{}] partnerApiExecutor 큐 초과 (제출 시점)", partnerCode, e);
+                            // 파트너별로 큐 초과가 얼마나 자주 나는지, 임계값(maxPoolSize + queueCapacity)이 실제로 얼마나 자주 근접/초과하는지 대시보드로 확인
+                            meterRegistry.counter("partner.api.executor.rejected", "partner", partnerCode.name());
                             return CompletableFuture.completedFuture(
                                     LoanLimitAdaptorResponse.fail(partnerCode, "THREAD_POOL_EXHAUSTED", 0L)
                             );
