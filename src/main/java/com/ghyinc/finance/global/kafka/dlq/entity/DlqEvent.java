@@ -28,7 +28,7 @@ public class DlqEvent {
     @Comment("원본 메시지")
     private String payload;
 
-    @Column(nullable = false)
+    @Column(nullable = false, length = 2000)
     @Comment("실패 원인")
     private String errorMessage;
 
