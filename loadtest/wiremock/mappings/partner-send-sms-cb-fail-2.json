@@ -1,0 +1,19 @@
+{
+  "priority": 20,
+  "scenarioName": "cb-failure-cycle",
+  "requiredScenarioState": "STEP_2",
+  "newScenarioState": "STEP_3",
+  "request": {
+    "method": "POST",
+    "urlPath": "/send/sms"
+  },
+  "response": {
+    "status": 500,
+    "headers": { "Content-Type": "application/json" },
+    "fixedDelayMilliseconds": 300,
+    "jsonBody": {
+      "resultCode": "SERVER_ERROR",
+      "message": "cb-failure-cycle 2/3 fail"
+    }
+  }
+}

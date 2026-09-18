@@ -1,0 +1,16 @@
+{
+  "priority": 10,
+  "request": {
+    "method": "POST",
+    "urlPath": "/send/sms"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "fixedDelayMilliseconds": 9000,
+    "jsonBody": {
+      "resultCode": "SUCCESS",
+      "message": "OK (delayed)"
+    }
+  }
+}

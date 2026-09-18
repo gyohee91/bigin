@@ -1,0 +1,18 @@
+# 로컬 설치된 Prometheus로 bigin 앱을 스크레이핑하기 위한 최소 설정.
+# Docker 없이: 이 폴더에서 `prometheus --config.file=prometheus.yml` 로 실행.
+#
+# 확인 대상 3계열:
+#   1) executor_*                    - TaskExecutorMetrics (loanLimitExecutor / partnerApiExecutor)
+#   2) partner_http_pool_connections - PartnerConnectionPoolMetrics (커넥션 풀 leased/pending/available/max)
+#   3) resilience4j_*                - resilience4j-micrometer 자동 노출 (CB/Retry/RateLimiter/Bulkhead)
+
+global:
+  scrape_interval: 5s        # 부하테스트 중엔 짧게 - 짧은 포화 구간도 그래프에 잡히게
+
+scrape_configs:
+  - job_name: 'bigin'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['localhost:8080']
+        labels:
+          application: 'bigin'

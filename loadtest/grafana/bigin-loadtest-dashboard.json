@@ -1,0 +1,233 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" }
+  ],
+  "title": "bigin - loadtest (Executor / Connection Pool / Resilience4j)",
+  "uid": "bigin-loadtest",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "timezone": "",
+  "time": { "from": "now-15m", "to": "now" },
+  "refresh": "5s",
+  "templating": {
+    "list": [
+      {
+        "name": "partner",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(resilience4j_bulkhead_max_allowed_concurrent_calls, name)",
+        "description": "circuitbreaker_state 기준으로 뽑으면 SMS/EMAIL/KAKAOTALK/PUSH(알림 채널 CB)까지 섞여 들어와서 bulkhead 기준으로 바꿈 - bulkhead는 대출 파트너 6개(KAKAO_BANK/TOSS_BANK/LINE_BANK/KB_CAPITAL/K_BANK/SHINHAN_BANK)만 설정돼 있음. CB는 이 중 KAKAO_BANK/TOSS_BANK/LINE_BANK 3개만 있어서 CB 패널엔 나머지 3개가 그냥 안 나옴(정상).",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "1. Executor (2번 부하테스트로 병목 아님이 확인됨 - 기본 접힘, 회귀 감시용으로만 유지)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "collapsed": true,
+      "panels": [
+        {
+          "id": 1,
+          "type": "timeseries",
+          "title": "Active Threads vs Max Pool Size",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+          "targets": [
+            { "expr": "executor_active_threads{name=\"partnerApiExecutor\"}", "legendFormat": "active - partnerApiExecutor", "refId": "A" },
+            { "expr": "executor_pool_max_threads{name=\"partnerApiExecutor\"}", "legendFormat": "max - partnerApiExecutor", "refId": "B" },
+            { "expr": "executor_active_threads{name=\"loanLimitExecutor\"}", "legendFormat": "active - loanLimitExecutor", "refId": "C" },
+            { "expr": "executor_pool_max_threads{name=\"loanLimitExecutor\"}", "legendFormat": "max - loanLimitExecutor", "refId": "D" }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "timeseries",
+          "title": "Queued Tasks (큐 적체)",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+          "targets": [
+            { "expr": "executor_queued_tasks{name=\"partnerApiExecutor\"}", "legendFormat": "queued - partnerApiExecutor", "refId": "A" },
+            { "expr": "executor_queued_tasks{name=\"loanLimitExecutor\"}", "legendFormat": "queued - loanLimitExecutor", "refId": "B" }
+          ]
+        },
+        {
+          "id": 3,
+          "type": "timeseries",
+          "title": "Auto-tuner 동작 이력 (PartnerApiExecutorAutoTuner 미적용 시 항상 No data - 정상)",
+          "description": "chat에만 설계했던 컴포넌트라 아직 프로젝트에 없으면 No data가 맞음. 어차피 Executor는 병목이 아니라서 지금은 우선순위 낮음.",
+          "gridPos": { "h": 6, "w": 24, "x": 0, "y": 9 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "bars", "fillOpacity": 60 } }, "overrides": [] },
+          "targets": [
+            { "expr": "increase(partner_api_executor_autotune_total[1m])", "legendFormat": "{{direction}}", "refId": "A" }
+          ]
+        }
+      ]
+    },
+
+    { "type": "row", "title": "2. HTTP 커넥션 풀 (PartnerConnectionPoolConfig)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }, "id": 200, "collapsed": false, "panels": [] },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "파트너별 Leased / Max",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "expr": "partner_http_pool_connections{scope=\"partner\", state=\"leased\"}", "legendFormat": "leased - {{partner}}", "refId": "A" },
+        { "expr": "partner_http_pool_connections{scope=\"partner\", state=\"max\"}", "legendFormat": "max - {{partner}}", "refId": "B" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Pending (커넥션 대기 중인 요청) - 0이 정상",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "line", "fillOpacity": 20 }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "targets": [
+        { "expr": "partner_http_pool_connections{scope=\"partner\", state=\"pending\"}", "legendFormat": "pending - {{partner}}", "refId": "A" }
+      ]
+    },
+
+    { "type": "row", "title": "3. Resilience4j (CB / RateLimiter / Bulkhead / Retry)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 }, "id": 300, "collapsed": false, "panels": [] },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Circuit Breaker 상태 (0=CLOSED, 1=OPEN, 2=HALF_OPEN)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 0 }, "min": 0, "max": 2 }, "overrides": [] },
+      "targets": [
+        { "expr": "resilience4j_circuitbreaker_state{name=~\"$partner\"}", "legendFormat": "{{name}} - {{state}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "RateLimiter 잔여 허용량 (0에 붙으면 그 순간 거부 중)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "expr": "resilience4j_ratelimiter_available_permissions{name=~\"$partner\"}", "legendFormat": "{{name}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Bulkhead 잔여 동시 호출 슬롯",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 33 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "expr": "resilience4j_bulkhead_available_concurrent_calls{name=~\"$partner\"}", "legendFormat": "{{name}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Retry 발생률 (30s rate)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 33 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(resilience4j_retry_calls_total{kind=~\"successful_with_retry|failed_with_retry\"}[30s])", "legendFormat": "{{name}} - {{kind}}", "refId": "A" }
+      ]
+    },
+
+    {
+      "type": "row",
+      "title": "4. Hikari 커넥션 풀 - 현재 가장 유력한 병목 후보 (Spring Boot 자동 노출, 코드 추가 불필요)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 },
+      "id": 350,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Active vs Max (max=60인데 active가 계속 붙어있으면 그게 병목)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "expr": "hikaricp_connections_active{pool=\"bigin-hikari\"}", "legendFormat": "active", "refId": "A" },
+        { "expr": "hikaricp_connections_max{pool=\"bigin-hikari\"}", "legendFormat": "max", "refId": "B" },
+        { "expr": "hikaricp_connections_idle{pool=\"bigin-hikari\"}", "legendFormat": "idle", "refId": "C" }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Pending (커넥션 기다리는 스레드 수) - 0이 정상, 여기가 뜨면 확정",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 41 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "line", "fillOpacity": 20 }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "targets": [
+        { "expr": "hikaricp_connections_pending{pool=\"bigin-hikari\"}", "legendFormat": "pending", "refId": "A" }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "커넥션 획득 타임아웃 발생 횟수 (connection-timeout=3000ms 초과) - 증가하면 스모킹건",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 49 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "bars", "fillOpacity": 60 } }, "overrides": [] },
+      "targets": [
+        { "expr": "increase(hikaricp_connections_timeout_total{pool=\"bigin-hikari\"}[1m])", "legendFormat": "timeout count", "refId": "A" }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "커넥션 평균 점유 시간 (길면 @Transactional이 join()까지 물고 있다는 증거)",
+      "description": "기본 설정으론 Timer의 _bucket이 안 나와서 histogram_quantile은 못 씀 - sum/count로 평균만. 정확한 p95가 필요하면 management.metrics.distribution.percentiles-histogram.hikaricp.connections.usage=true를 application.yaml에 추가.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 49 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(hikaricp_connections_usage_seconds_sum{pool=\"bigin-hikari\"}[1m]) / rate(hikaricp_connections_usage_seconds_count{pool=\"bigin-hikari\"}[1m])", "legendFormat": "avg usage", "refId": "A" }
+      ]
+    },
+
+    { "type": "row", "title": "5. k6 측 지표 (Prometheus remote-write 안 쓰는 경우 참고용, 비어있을 수 있음)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 57 }, "id": 400, "collapsed": true, "panels": [
+      {
+        "id": 10,
+        "type": "timeseries",
+        "title": "poll_to_complete_ms (p95/p99) - K6_PROMETHEUS_RW_TREND_STATS=p(95),p(99) 필요",
+        "description": "기본값(K6_PROMETHEUS_RW_TREND_STATS 미지정)이면 k6_poll_to_complete_ms_p99만 생성됨. p95를 보려면 k6 실행 시 K6_PROMETHEUS_RW_TREND_STATS=p(95),p(99),min,max 환경변수를 같이 줘야 함.",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 42 },
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+        "targets": [
+          { "expr": "k6_poll_to_complete_ms_p95", "legendFormat": "p95", "refId": "A" },
+          { "expr": "k6_poll_to_complete_ms_p99", "legendFormat": "p99", "refId": "B" }
+        ]
+      }
+    ] }
+  ]
+}
