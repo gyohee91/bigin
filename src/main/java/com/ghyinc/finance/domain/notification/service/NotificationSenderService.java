@@ -5,6 +5,7 @@ import com.ghyinc.finance.domain.notification.entity.Notification;
 import com.ghyinc.finance.domain.notification.repository.NotificationRepository;
 import com.ghyinc.finance.domain.notification.sender.NotificationSender;
 import com.ghyinc.finance.domain.notification.sender.NotificationSenderFactory;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -16,6 +17,7 @@ public class NotificationSenderService {
     private final NotificationSenderFactory notificationSenderFactory;
     private final NotificationRepository notificationRepository;
 
+    @Transactional
     public void sendAndUpdateResult(Long notificationId) {
         int claimed = notificationRepository.claimForSending(notificationId);
         if(claimed == 0) {

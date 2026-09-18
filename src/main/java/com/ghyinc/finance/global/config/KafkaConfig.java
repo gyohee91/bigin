@@ -175,4 +175,22 @@ public class KafkaConfig {
         factory.setRecordInterceptor(mdcRecordInterceptor);
         return factory;
     }
+
+    /**
+     * 배치 리스너 전용 - AuditLogConsumer처럼 poll() 단위로 묶어서 saveAll() 하는 컨슈머용.
+     * RecordInterceptor(MDC 전파)는 배치 모드에서 지원되지 않아 붙이지 않는다.
+     * 실패 시 처리는 errorHandler와 동일하게 <topic>.DLT로 라우팅한다.
+     */
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, String> batchKafkaListenerContainerFactory(
+            ConsumerFactory<String, String> consumerFactory,
+            DefaultErrorHandler errorHandler
+    ) {
+        ConcurrentKafkaListenerContainerFactory<String, String> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(consumerFactory);
+        factory.setCommonErrorHandler(errorHandler);
+        factory.setBatchListener(true);
+        return factory;
+    }
 }

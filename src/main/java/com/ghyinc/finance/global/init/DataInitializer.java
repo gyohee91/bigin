@@ -175,10 +175,7 @@ public class DataInitializer implements ApplicationRunner {
                         .partnerType(PartnerType.BANK).active(true).algorithm(CryptoAlgorithm.AES_256_CBC)
                         .cryptoKey("59eNm0qYZiHmWve2fpo2JkGhfPYbJOuD").build(),
 
-                // 캐피탈
-                Partner.builder().partnerCode(PartnerCode.KB_CAPITAL).partnerName(PartnerCode.KB_CAPITAL.getPartnerName())
-                        .partnerType(PartnerType.CAPITAL).active(true).algorithm(CryptoAlgorithm.AES_256_CBC)
-                        .cryptoKey("Daz0NFs8w6kYQClFBXRBRbiVQ9q88tUT").build(),
+                // 캐피탈 (KB_CAPITAL은 상단에 RSA_OAEP로 이미 등록되어 있어 제외)
                 Partner.builder().partnerCode(PartnerCode.HYUNDAI_CAPITAL).partnerName(PartnerCode.HYUNDAI_CAPITAL.getPartnerName())
                         .partnerType(PartnerType.CAPITAL).active(true).algorithm(CryptoAlgorithm.AES_256_CBC)
                         .cryptoKey("DSZ5AycxHu1cyvVYVhkosWTLPfxuGxxs").build(),
