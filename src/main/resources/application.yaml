@@ -166,6 +166,105 @@ resilience4j:
       LINE_BANK:
         base-config: loan-default
         # limit-for-period: 20
+      KB_CAPITAL:
+        base-config: loan-default
+      K_BANK:
+        base-config: loan-default
+      SHINHAN_BANK:
+        base-config: loan-default
+      # 시중은행
+      KB_BANK:
+        base-config: loan-default
+      WOORI_BANK:
+        base-config: loan-default
+      HANA_BANK:
+        base-config: loan-default
+      NH_BANK:
+        base-config: loan-default
+      IBK_BANK:
+        base-config: loan-default
+      SC_BANK:
+        base-config: loan-default
+      CITI_BANK:
+        base-config: loan-default
+      # 지방은행
+      DGB_BANK:
+        base-config: loan-default
+      BUSAN_BANK:
+        base-config: loan-default
+      KYONGNAM_BANK:
+        base-config: loan-default
+      GWANGJU_BANK:
+        base-config: loan-default
+      JEONBUK_BANK:
+        base-config: loan-default
+      JEJU_BANK:
+        base-config: loan-default
+      # 캐피탈
+      HYUNDAI_CAPITAL:
+        base-config: loan-default
+      SHINHAN_CAPITAL:
+        base-config: loan-default
+      LOTTE_CAPITAL:
+        base-config: loan-default
+      HANA_CAPITAL:
+        base-config: loan-default
+      WOORI_FINANCIAL_CAPITAL:
+        base-config: loan-default
+      DGB_CAPITAL:
+        base-config: loan-default
+      JB_WOORI_CAPITAL:
+        base-config: loan-default
+      BNK_CAPITAL:
+        base-config: loan-default
+      IBK_CAPITAL:
+        base-config: loan-default
+      MERITZ_CAPITAL:
+        base-config: loan-default
+      ORIX_CAPITAL:
+        base-config: loan-default
+      MIRAE_ASSET_CAPITAL:
+        base-config: loan-default
+      ACUON_CAPITAL:
+        base-config: loan-default
+      KOREA_INVESTMENT_CAPITAL:
+        base-config: loan-default
+      DB_CAPITAL:
+        base-config: loan-default
+      # 저축은행
+      SBI_SAVINGS_BANK:
+        base-config: loan-default
+      OK_SAVINGS_BANK:
+        base-config: loan-default
+      WELCOME_SAVINGS_BANK:
+        base-config: loan-default
+      PEPPER_SAVINGS_BANK:
+        base-config: loan-default
+      ACUON_SAVINGS_BANK:
+        base-config: loan-default
+      KOREA_INVESTMENT_SAVINGS_BANK:
+        base-config: loan-default
+      DAISHIN_SAVINGS_BANK:
+        base-config: loan-default
+      YUJIN_SAVINGS_BANK:
+        base-config: loan-default
+      JT_CHINAE_SAVINGS_BANK:
+        base-config: loan-default
+      MOA_SAVINGS_BANK:
+        base-config: loan-default
+      # 카드사
+      SHINHAN_CARD:
+        base-config: loan-default
+      SAMSUNG_CARD:
+        base-config: loan-default
+      KB_CARD:
+        base-config: loan-default
+      HYUNDAI_CARD:
+        base-config: loan-default
+      LOTTE_CARD:
+        base-config: loan-default
+      WOORI_CARD:
+        base-config: loan-default
       SMS:
         base-config: notification-default
       EMAIL:
@@ -214,6 +313,99 @@ resilience4j:
         base-config: default
       SHINHAN_BANK:
         base-config: default
+      # 시중은행
+      KB_BANK:
+        base-config: default
+      WOORI_BANK:
+        base-config: default
+      HANA_BANK:
+        base-config: default
+      NH_BANK:
+        base-config: default
+      IBK_BANK:
+        base-config: default
+      SC_BANK:
+        base-config: default
+      CITI_BANK:
+        base-config: default
+      # 지방은행
+      DGB_BANK:
+        base-config: default
+      BUSAN_BANK:
+        base-config: default
+      KYONGNAM_BANK:
+        base-config: default
+      GWANGJU_BANK:
+        base-config: default
+      JEONBUK_BANK:
+        base-config: default
+      JEJU_BANK:
+        base-config: default
+      # 캐피탈
+      HYUNDAI_CAPITAL:
+        base-config: default
+      SHINHAN_CAPITAL:
+        base-config: default
+      LOTTE_CAPITAL:
+        base-config: default
+      HANA_CAPITAL:
+        base-config: default
+      WOORI_FINANCIAL_CAPITAL:
+        base-config: default
+      DGB_CAPITAL:
+        base-config: default
+      JB_WOORI_CAPITAL:
+        base-config: default
+      BNK_CAPITAL:
+        base-config: default
+      IBK_CAPITAL:
+        base-config: default
+      MERITZ_CAPITAL:
+        base-config: default
+      ORIX_CAPITAL:
+        base-config: default
+      MIRAE_ASSET_CAPITAL:
+        base-config: default
+      ACUON_CAPITAL:
+        base-config: default
+      KOREA_INVESTMENT_CAPITAL:
+        base-config: default
+      DB_CAPITAL:
+        base-config: default
+      # 저축은행
+      SBI_SAVINGS_BANK:
+        base-config: default
+      OK_SAVINGS_BANK:
+        base-config: default
+      WELCOME_SAVINGS_BANK:
+        base-config: default
+      PEPPER_SAVINGS_BANK:
+        base-config: default
+      ACUON_SAVINGS_BANK:
+        base-config: default
+      KOREA_INVESTMENT_SAVINGS_BANK:
+        base-config: default
+      DAISHIN_SAVINGS_BANK:
+        base-config: default
+      YUJIN_SAVINGS_BANK:
+        base-config: default
+      JT_CHINAE_SAVINGS_BANK:
+        base-config: default
+      MOA_SAVINGS_BANK:
+        base-config: default
+      # 카드사
+      SHINHAN_CARD:
+        base-config: default
+      SAMSUNG_CARD:
+        base-config: default
+      KB_CARD:
+        base-config: default
+      HYUNDAI_CARD:
+        base-config: default
+      LOTTE_CARD:
+        base-config: default
+      WOORI_CARD:
+        base-config: default
 
   bulkhead:
     configs:
@@ -233,6 +425,99 @@ resilience4j:
       K_BANK:
         base-config: default
       SHINHAN_BANK:
+        base-config: default
+      # 시중은행
+      KB_BANK:
+        base-config: default
+      WOORI_BANK:
+        base-config: default
+      HANA_BANK:
+        base-config: default
+      NH_BANK:
+        base-config: default
+      IBK_BANK:
+        base-config: default
+      SC_BANK:
+        base-config: default
+      CITI_BANK:
+        base-config: default
+      # 지방은행
+      DGB_BANK:
+        base-config: default
+      BUSAN_BANK:
+        base-config: default
+      KYONGNAM_BANK:
+        base-config: default
+      GWANGJU_BANK:
+        base-config: default
+      JEONBUK_BANK:
+        base-config: default
+      JEJU_BANK:
+        base-config: default
+      # 캐피탈
+      HYUNDAI_CAPITAL:
+        base-config: default
+      SHINHAN_CAPITAL:
+        base-config: default
+      LOTTE_CAPITAL:
+        base-config: default
+      HANA_CAPITAL:
+        base-config: default
+      WOORI_FINANCIAL_CAPITAL:
+        base-config: default
+      DGB_CAPITAL:
+        base-config: default
+      JB_WOORI_CAPITAL:
+        base-config: default
+      BNK_CAPITAL:
+        base-config: default
+      IBK_CAPITAL:
+        base-config: default
+      MERITZ_CAPITAL:
+        base-config: default
+      ORIX_CAPITAL:
+        base-config: default
+      MIRAE_ASSET_CAPITAL:
+        base-config: default
+      ACUON_CAPITAL:
+        base-config: default
+      KOREA_INVESTMENT_CAPITAL:
+        base-config: default
+      DB_CAPITAL:
+        base-config: default
+      # 저축은행
+      SBI_SAVINGS_BANK:
+        base-config: default
+      OK_SAVINGS_BANK:
+        base-config: default
+      WELCOME_SAVINGS_BANK:
+        base-config: default
+      PEPPER_SAVINGS_BANK:
+        base-config: default
+      ACUON_SAVINGS_BANK:
+        base-config: default
+      KOREA_INVESTMENT_SAVINGS_BANK:
+        base-config: default
+      DAISHIN_SAVINGS_BANK:
+        base-config: default
+      YUJIN_SAVINGS_BANK:
+        base-config: default
+      JT_CHINAE_SAVINGS_BANK:
+        base-config: default
+      MOA_SAVINGS_BANK:
+        base-config: default
+      # 카드사
+      SHINHAN_CARD:
+        base-config: default
+      SAMSUNG_CARD:
+        base-config: default
+      KB_CARD:
+        base-config: default
+      HYUNDAI_CARD:
+        base-config: default
+      LOTTE_CARD:
+        base-config: default
+      WOORI_CARD:
         base-config: default
 
 loan-api:
