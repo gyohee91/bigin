@@ -16,8 +16,8 @@ spring:
     password:
     hikari:
       pool-name: bigin-hikari
-      maximum-pool-size: 20
-      minimum-idle: 10
+      maximum-pool-size: 40
+      minimum-idle: 15
       connection-timeout: 3000    # 커넥션 획득 대기 3초 초과 시 빠르게 실패 (원인 파악 쉽게)
       max-lifetime: 1800000       # 30분마다 커넥션 재생성
   jpa:
@@ -265,6 +265,235 @@ loan-api:
       path: /loan/inquiry
       connect-timeout-ms: 1000
       read-timeout-ms: 3000
+    # 시중은행
+    KB_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    WOORI_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    HANA_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    NH_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    IBK_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    SC_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    CITI_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+
+    # 지방은행
+    DGB_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    BUSAN_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    KYONGNAM_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    GWANGJU_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    JEONBUK_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    JEJU_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+
+    # 캐피탈
+    HYUNDAI_CAPITAL:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    SHINHAN_CAPITAL:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    LOTTE_CAPITAL:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    HANA_CAPITAL:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    WOORI_FINANCIAL_CAPITAL:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    DGB_CAPITAL:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    JB_WOORI_CAPITAL:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    BNK_CAPITAL:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    IBK_CAPITAL:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    MERITZ_CAPITAL:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    ORIX_CAPITAL:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    MIRAE_ASSET_CAPITAL:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    ACUON_CAPITAL:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    KOREA_INVESTMENT_CAPITAL:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    DB_CAPITAL:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+
+    # 저축은행
+    SBI_SAVINGS_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    OK_SAVINGS_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    WELCOME_SAVINGS_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    PEPPER_SAVINGS_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    ACUON_SAVINGS_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    KOREA_INVESTMENT_SAVINGS_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    DAISHIN_SAVINGS_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    YUJIN_SAVINGS_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    JT_CHINAE_SAVINGS_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    MOA_SAVINGS_BANK:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+
+    # 카드사
+    SHINHAN_CARD:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    SAMSUNG_CARD:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    KB_CARD:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    HYUNDAI_CARD:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    LOTTE_CARD:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
+    WOORI_CARD:
+      base-url: http://localhost:8091
+      path: /send/sms
+      connect-timeout-ms: 1000
+      read-timeout-ms: 2000
 
 nice-api:
   dnr:
