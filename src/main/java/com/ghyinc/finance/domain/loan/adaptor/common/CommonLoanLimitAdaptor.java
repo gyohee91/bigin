@@ -13,7 +13,9 @@ import com.ghyinc.finance.global.client.ApiClientFactory;
 import com.ghyinc.finance.global.config.PartnerApiProperties;
 import com.ghyinc.finance.global.crypto.CryptoFactory;
 import com.ghyinc.finance.global.crypto.CryptoService;
+import io.github.resilience4j.bulkhead.BulkheadFullException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -98,16 +100,11 @@ public class CommonLoanLimitAdaptor implements LoanLimitAdaptor {
                     resTimeMs
             );
         }
-        catch (CallNotPermittedException e) {
-            // Circuit Breaker OPEN Fallback
-            // -> 해당 금융사 격리, 나머지 금융사 정상 진행 (Partial Success)
-            long resTimeMs = System.currentTimeMillis() - startTime;
-            log.warn("[{}] Circuit Breaker OPEN -> Fallback 실행", partnerCode);
-            return LoanLimitAdaptorResponse.fail(
-                    partnerCode,
-                    "CB_OPEN",
-                    resTimeMs
-            );
+        catch (CallNotPermittedException | RequestNotPermitted | BulkheadFullException e) {
+            // CB OPEN / RateLimiter 한도 초과 / Bulkhead 포화는 여기서 변환하지 않고 그대로 던진다.
+            // LoanLimitSenderService.exceptionally()가 CompletableFuture 레벨 단일 지점에서
+            // CB_OPEN / RATE_LIMIT_EXCEEDED / BULKHEAD_FULL fallback을 처리한다 (중복 처리 방지).
+            throw e;
         }
         catch (Exception e) {
             long resTimeMs = System.currentTimeMillis() - startTime;

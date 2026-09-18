@@ -172,7 +172,7 @@ public class LoanLimitSenderService {
                                         // 해당 금융사는 격리되며 나머지 금융사는 정상 진행
                                         if(ex.getCause() instanceof CallNotPermittedException) {
                                             log.warn("[{}] Circuit Breaker OPEN - 해당 금융사 격리", partnerCode, ex);
-                                            return LoanLimitAdaptorResponse.fail(partnerCode, ex.getMessage(), 0L);
+                                            return LoanLimitAdaptorResponse.fail(partnerCode, "CB_OPEN", 0L);
                                         }
 
                                         // RateLimiter 한도 초과 Fallback 추가
