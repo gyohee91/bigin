@@ -38,19 +38,33 @@ public class PartnerConnectionPoolConfig {
     public static final long CONNECTION_REQUEST_TIMEOUT_MS = 500;
 
     /**
-     * partnerApiExecutor(max 150 스레드)가 만들어낼 수 있는 최대 동시 호출 수보다
-     * 여유를 둔 전체 상한 + 파트너별(HttpRoute) 상한을 함께 등록한다.
+     * partnerApiExecutor(max 300 스레드, 50개 파트너 동시 팬아웃 기준 재산정)가 만들어낼 수 있는
+     * 최대 동시 호출 수보다 여유를 둔 전체 상한 + 파트너별(HttpRoute) 상한을 함께 등록한다.
+     * <p>
+     * 목표 20 req/s × 최대 49개 REST 파트너 팬아웃 × 응답시간 ~300ms 가정 시
+     * Little's Law로 필요한 동시 커넥션 수 ≈ 20 × 49 × 0.3 ≈ 294 - maxTotal 400이면 여유 있음.
      */
     @Bean
     public PoolingHttpClientConnectionManager partnerConnectionManager() {
         PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager();
-        connectionManager.setMaxTotal(350);
+        int maxTotal = 400;
+        connectionManager.setMaxTotal(maxTotal);
         connectionManager.setDefaultMaxPerRoute(10);
 
         ConnectionConfig fallbackConnectionConfig = ConnectionConfig.custom()
                 .setConnectTimeout(Timeout.ofMilliseconds(1000))
                 .build();
         Map<HttpRoute, ConnectionConfig> routeConnectionConfigs = new HashMap<>();
+
+        // HttpRoute의 동등성은 scheme/host/port 기준이다. 로컬 부하테스트처럼 여러 PartnerCode가
+        // 물리적으로 같은 호스트(예: 전부 http://localhost:8091)를 공유하면 서로 다른 파트너라도
+        // 같은 HttpRoute로 충돌한다. 예전엔 setMaxPerRoute(route, n)을 파트너 순회마다 그냥 호출해서
+        // 마지막에 처리된 파트너의 maxPerRoute로 나머지 전부가 덮어써졌다 - 그래서 49개 파트너가
+        // 공유하는 라우트인데도 실제 허용 커넥션 수는 15~20개뿐이었고, 나머지는 커넥션을 못 빌려서
+        // DeadlineTimeoutException으로 계속 실패했다. 충돌 시 개별 상한을 "덮어쓰기"가 아니라
+        // "합산"해서 해당 라우트가 실제로 필요로 하는 총 동시 커넥션 수를 반영하고, maxTotal을 넘지
+        // 않도록 캡을 씌운다.
+        Map<HttpRoute, Integer> maxPerRouteSum = new HashMap<>();
 
         for(Map.Entry<PartnerCode, PartnerApiProperties.PartnerApiConfig> entry : partnerApiProperties.getPartners().entrySet()) {
             PartnerCode partnerCode = entry.getKey();
@@ -64,11 +78,18 @@ public class PartnerConnectionPoolConfig {
             HttpHost host = this.resolveHost(config);
             HttpRoute route = new HttpRoute(host);
 
-            connectionManager.setMaxPerRoute(route, config.getMaxPerRoute());
+            int aggregatedMaxPerRoute = maxPerRouteSum.merge(route, config.getMaxPerRoute(), Integer::sum);
+            int cappedMaxPerRoute = Math.min(aggregatedMaxPerRoute, maxTotal);
+            connectionManager.setMaxPerRoute(route, cappedMaxPerRoute);
+
+            // 같은 라우트를 공유하는 파트너끼리 connectTimeoutMs가 다르면 마지막 값으로 덮어써진다.
+            // 현재는 전부 동일한 로컬 mock 호스트를 쓰므로 실질적 영향은 없지만, 서로 다른 실제
+            // 호스트를 쓰게 되면(=충돌이 안 생기면) 이 이슈 자체가 발생하지 않는다.
             routeConnectionConfigs.put(route, ConnectionConfig.custom()
                     .setConnectTimeout(Timeout.ofMilliseconds(config.getConnectTimeoutMs()))
                     .build());
-            log.info("[{}] HTTP 커넥션 풀 설정 host={}, maxPerRoute={}", partnerCode, host, config.getMaxPerRoute());
+            log.info("[{}] HTTP 커넥션 풀 설정 host={}, maxPerRoute(라우트 합산 후 캡 적용)={}",
+                    partnerCode, host, cappedMaxPerRoute);
         }
 
         // nice-api/notification-api처럼 loan-api.partners에 없는 호스트는 fallbackConnectionConfig로 분리

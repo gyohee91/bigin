@@ -16,8 +16,11 @@ spring:
     password:
     hikari:
       pool-name: bigin-hikari
-      maximum-pool-size: 40
-      minimum-idle: 15
+      # loanLimitExecutor(max=40)의 각 스레드가 inquiry() 트랜잭션 동안 커넥션 1개씩
+      # 붙잡을 수 있어서, maximum-pool-size는 최소 그 값 + 콜백(@Lock PESSIMISTIC_WRITE)/
+      # 아웃박스 배치 발행/기타 트랜잭션 경로 여유분을 더해서 잡는다.
+      maximum-pool-size: 60
+      minimum-idle: 20
       connection-timeout: 3000    # 커넥션 획득 대기 3초 초과 시 빠르게 실패 (원인 파악 쉽게)
       max-lifetime: 1800000       # 30분마다 커넥션 재생성
   jpa:
