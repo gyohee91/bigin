@@ -17,15 +17,15 @@ class RateLimiterConfigTest {
     @Autowired
     private RateLimiterRegistry rateLimiterRegistry;
 
-    // 라이브러리 기본 값(limitForPeriod=50)이 아니라 application.yaml의 default(20)가 적용됐는지 확인
-    // (20 = maxPerRoute의 2~3배 원칙으로 설정된 값. 값이 바뀌면 이 테스트도 함께 갱신할 것)
+    // 라이브러리 기본 값(limitForPeriod=50)이 아니라 application.yaml의 default(40)가 적용됐는지 확인
+    // (40 = maxPerRoute의 2~3배 원칙으로 설정된 값. 값이 바뀌면 이 테스트도 함께 갱신할 것)
     @ParameterizedTest
     @DisplayName("파트너별 RateLimiter가 application.yaml의 default 설정을 사용한다")
     @EnumSource(value = PartnerCode.class, names = {"KAKAO_BANK", "TOSS_BANK", "LINE_BANK"})
     void ratelimiter_shouldUseConfiguredLimit_notLibraryDefault(PartnerCode partnerCode) {
         RateLimiter rateLimiter = rateLimiterRegistry.rateLimiter(partnerCode.name());
 
-        assertThat(rateLimiter.getRateLimiterConfig().getLimitForPeriod()).isEqualTo(20);
+        assertThat(rateLimiter.getRateLimiterConfig().getLimitForPeriod()).isEqualTo(40);
     }
 
     @Test
