@@ -16,12 +16,13 @@ public class AsyncConfig {
      * LoanLimitSenderService.inquiry() 처리
      * 한도조회 요청 1건 1스레드 점유
      * <p>
-     * 주의: inquiry()는 @Transactional이라 이 스레드가 Hikari 커넥션 1개를 붙잡은 채로
-     * partnerApiExecutor에서 도는 파트너 팬아웃(최대 49개 병렬 호출)의 완료까지 기다린다.
-     * 즉 이 풀의 maxPoolSize가 곧 "동시에 점유 가능한 Hikari 커넥션 수의 상한"이기도 하다 -
-     * Hikari maximum-pool-size를 올릴 땐 이 값도 같이 고려해야 한다(반대도 마찬가지).
-     * 별도 트랜잭션 분리(선저장 트랜잭션 / 팬아웃-대기 / 결과반영 트랜잭션)로 커넥션 점유 시간을
-     * 줄이는 리팩터링이 근본적으로는 더 맞지만, 지금은 사이징만 맞춘다.
+     * (2026-09 갱신) inquiry()는 더 이상 @Transactional이 아니다 - 선저장 트랜잭션(짧게, commit) /
+     * 파트너 팬아웃 대기(무트랜잭션) / 결과반영 트랜잭션(짧게, 새 트랜잭션)으로 분리했다
+     * (LoanLimitInquiryPersistenceService 참고). 예전엔 이 스레드가 Hikari 커넥션 1개를 붙잡은 채
+     * partnerApiExecutor의 파트너 팬아웃(최대 49개 병렬 호출) 완료까지 기다렸는데, 부하가 걸려
+     * 파트너 응답이 느려질수록 커넥션 점유시간도 늘어나 Hikari 풀이 고갈되는 피드백 루프가
+     * 근본 원인이었다. 지금은 이 풀의 maxPoolSize가 더 이상 "동시 점유 가능한 Hikari 커넥션 수의
+     * 상한"이 아니다 - 순수하게 초당 유입되는 inquiry 요청을 처리할 스레드 수만 고려하면 된다.
      * <p>
      * 목표 20 req/s, 파트너 호출(300ms) 기준 W≈1s로 잡으면 Little's Law로 L=20×1=20 -
      * 버스트 여유를 감안해 max=40으로 설정.

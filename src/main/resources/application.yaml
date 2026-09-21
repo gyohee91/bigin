@@ -300,7 +300,7 @@ resilience4j:
   ratelimiter:
     configs:
       default:
-        limit-for-period: 20      # 1주기당 최대 허용 요청 수 (maxPerRtoute의 2~3배)
+        limit-for-period: 40      # 1주기당 최대 허용 요청 수 (maxPerRtoute의 2~3배)
         limit-refresh-period: 1s  # 주기 (1초)
         timeout-duration: 0       # 대기 없이 즉시 실패 (허용량 초과 시 즉시 RequestNotPermitted)
     instances:
@@ -413,7 +413,7 @@ resilience4j:
   bulkhead:
     configs:
       default:
-        max-concurrent-calls: 10   # 동시 진행 허용 건수
+        max-concurrent-calls: 20   # 동시 진행 허용 건수 (Bulkhead.max-concurrent-calls = max-per-route)
         max-wait-duration: 0       # 대기 없이 즉시 실패 (초과 시 즉시 BulkheadFullException)
     instances:
       KAKAO_BANK:
@@ -424,7 +424,6 @@ resilience4j:
         base-config: default
       KB_CAPITAL:
         base-config: default
-        max-concurrent-calls: 20   # Bulkhead.max-concurrent-calls = max-per-route
       K_BANK:
         base-config: default
       SHINHAN_BANK:
