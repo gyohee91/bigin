@@ -42,12 +42,12 @@ public class DataInitializer implements ApplicationRunner {
 
     private final PasswordEncoder passwordEncoder;
 
-    private static final int TARGET_COUNT = 200;
+    private static final int TARGET_COUNT = 1000;
 
-    private static final String[] SURNAMES = {"김", "이", "박", "최", "정", "강", "조", "윤", "장", "임"};
+    private static final String[] SURNAMES = {"김", "이", "박", "최", "정", "강", "조", "윤", "장", "임", "서문", "남궁", "초", "차", "독고", "연"};
     private static final String[] GIVEN_NAMES = {
-            "민준", "서연", "예준", "지우", "도윤", "하은", "시우", "지호", "수아", "은서",
-            "지안", "서준", "하윤", "예은", "주원", "채원", "우진", "다은", "현우", "소율"
+            "민준", "서연", "예준", "지우", "도윤", "하은", "시우", "지호", "수아", "은서", "진우", "태희", "혜교", "윤서",
+            "지안", "서준", "하윤", "예은", "주원", "채원", "우진", "다은", "현우", "소율", "지현", "수연", "서현", "제하"
     };
 
     @Override
@@ -272,7 +272,7 @@ public class DataInitializer implements ApplicationRunner {
                         .cryptoKey("az2rrilKbghANEnbYb7m79avZppA4zP8").build(),
                 Partner.builder().partnerCode(PartnerCode.WOORI_CARD).partnerName(PartnerCode.WOORI_CARD.getPartnerName())
                         .partnerType(PartnerType.CARD).active(true).algorithm(CryptoAlgorithm.AES_256_CBC)
-                        .cryptoKey("생성된_44번째_키를_여기에_배치").build()
+                        .cryptoKey("mEjKfXzN3Rp8QvLdHwTsYuBcAgOi2Vqy").build()
         );
         partnerRepository.saveAll(initialPartner);
 

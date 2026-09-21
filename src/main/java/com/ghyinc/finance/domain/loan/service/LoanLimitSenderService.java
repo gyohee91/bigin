@@ -3,38 +3,25 @@ package com.ghyinc.finance.domain.loan.service;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
+import com.ghyinc.finance.domain.loan.dto.PreparedFanout;
 import com.ghyinc.finance.domain.loan.dto.RequestProduct;
-import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
-import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
-import com.ghyinc.finance.domain.loan.entity.LoanLimitResult;
-import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
-import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.factory.LoanLimitAdaptorFactory;
-import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
-import com.ghyinc.finance.global.common.LoReqtNoGenerator;
-import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
-import com.ghyinc.finance.global.event.PartnerTransmissionAuditEvent;
-import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
 import io.github.resilience4j.bulkhead.BulkheadFullException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.common.errors.InvalidRequestException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
+import java.time.Duration;
 
 /**
  * 한도조회 비동기 전송 서비스
@@ -51,7 +38,16 @@ import java.util.stream.Collectors;
  *          스레드 풀 분리로 {@code loanLimitExecutor} DeadLock 방지</li>
  * </ul>
  *
+ * <p><b>트랜잭션 경계 분리 (2026-09):</b> 이 메서드는 더 이상 {@code @Transactional}이 아니다.
+ * 과거엔 선저장 → 파트너 팬아웃 대기(join) → 결과반영이 전부 하나의 트랜잭션이라, 파트너 응답을
+ * 기다리는 동안(최대 partnerOrTimeout, 수 초) {@code loanLimitExecutor} 스레드가 Hikari
+ * 커넥션을 계속 붙잡고 있었다. 부하가 걸려 파트너 응답이 느려질수록 커넥션 점유시간도 늘어나고,
+ * 그만큼 더 많은 동시 커넥션이 필요해지는 피드백 루프로 Hikari 풀이 고갈되는 근본 원인이었다.
+ * 지금은 DB 트랜잭션이 필요한 두 구간만 {@link LoanLimitInquiryPersistenceService}로 분리했고,
+ * 팬아웃 대기(join) 구간은 트랜잭션/커넥션 없이 수행한다.</p>
+ *
  * @see LoanLimitService
+ * @see LoanLimitInquiryPersistenceService
  * @see com.ghyinc.finance.global.outbox.service.OutboxEventService
  */
 @Slf4j
@@ -59,11 +55,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class LoanLimitSenderService {
     private final LoanLimitAdaptorFactory adaptorFactory;
-    private final ProductService productService;
-    private final LoanLimitInquiryRepository loanLimitInquiryRepository;
-    private final OutboxEventWriter outboxEventWriter;
+    private final LoanLimitInquiryPersistenceService persistenceService;
 
-    private final LoReqtNoGenerator generator;
     private final Executor partnerApiExecutor;
     private final Map<PartnerCode, Duration> partnerOrTimeouts;
     private final MeterRegistry meterRegistry;
@@ -73,85 +66,39 @@ public class LoanLimitSenderService {
      *
      * <h3>처리 순서</h3>
      * <ol>
-     *     <li>LoanLimitResult 선저장 (금융사당 1건)</li>
-     *     <li>Product 조회 → 신청번호 채번 → LoanLimitProductResult 선저장 (상품당 1건)</li>
-     *     <li>금융사별 RequestProduct 구성 후 {@code partnerApiExecutor}에서 병렬 전송</li>
-     *     <li>전송 결과 집계 → Result/ProductResult 상태 UPDATE</li>
-     *     <li>Inquiry 최종 상태 결정 (SUCCESS / PARTIAL_SUCCESS / FAILED)</li>
-     *     <li>Outbox INSERT → Spring 이벤트 발행 (알림 발송 트리거)</li>
+     *     <li>선저장 트랜잭션(짧게, commit): LoanLimitResult/LoanLimitProductResult 선저장,
+     *          Inquiry IN_PROGRESS 전이 - {@link LoanLimitInquiryPersistenceService#preSave}</li>
+     *     <li>팬아웃(무트랜잭션): 금융사별 RequestProduct 구성 후 {@code partnerApiExecutor}에서
+     *          병렬 전송 및 응답 대기 - 이 구간은 Hikari 커넥션을 점유하지 않는다</li>
+     *     <li>결과반영 트랜잭션(짧게, 새 트랜잭션): 전송 결과 집계 → Result/ProductResult 상태
+     *          UPDATE → Inquiry 최종 상태 결정 → Outbox INSERT
+     *          - {@link LoanLimitInquiryPersistenceService#applyResults}</li>
      * </ol>
+     *
+     * <p>세 단계 중 어디서든 예상치 못한 예외가 발생하면 별도의 짧은 트랜잭션으로 Inquiry를
+     * FAILED 처리한다({@link LoanLimitInquiryPersistenceService#markFailed}).</p>
      *
      * @param id                LoanLimitInquiry PK
      * @param partnerCodes      한도조회 대상 금융사 목록
      * @param adaptorRequest    금융사 전송용 공통 요청 DTO
      */
-    @Transactional
     public void inquiry(
             long id,
             List<PartnerCode> partnerCodes,
             LoanLimitAdaptorRequest adaptorRequest
     ) {
-        // 새 트랜잭션에서 inquiry 조회 (호출 측 트랜잭션과 완전 분리)
-        LoanLimitInquiry loanLimitInquiry = loanLimitInquiryRepository.findById(id)
-                .orElseThrow(() -> new InvalidRequestException("존재하지 않는 조회 이력: " + id));
-
-        loanLimitInquiry.updateInquiryStatus(InquiryStatus.IN_PROGRESS);
-
+        PreparedFanout prepared;
         try {
-            // 각 금융사에 대한 Result 선저장
-            // partnerCode -> 해당 금융사 코드
-            Map<PartnerCode, LoanLimitResult> resultMap = partnerCodes.stream()
-                    .collect(Collectors.toMap(
-                            partnerCode -> partnerCode,
-                            partnerCode -> {
-                                LoanLimitResult result = LoanLimitResult.builder()
-                                        .loanLimitInquiry(loanLimitInquiry)
-                                        .partnerCode(partnerCode)
-                                        .build();
-                                loanLimitInquiry.addResult(result);
-                                return result;
-                            }
-                    ));
+            prepared = persistenceService.preSave(id, partnerCodes, adaptorRequest);
+        } catch (Exception e) {
+            log.error("한도조회 선저장 중 오류. id={}", id, e);
+            persistenceService.markFailed(id);
+            return;
+        }
 
-            // 금융사별 상품 조회 및 ProductResult 선저장
-            Map<PartnerCode, List<LoanLimitProductResult>> productResultMap = partnerCodes.stream()
-                    .collect(Collectors.toMap(
-                            partnerCode -> partnerCode,
-                            partnerCode -> productService.getActiveProducts(partnerCode, adaptorRequest.loanType())
-                                    .stream()
-                                    .map(product -> {
-                                        LoanLimitProductResult productResult =
-                                                LoanLimitProductResult.builder()
-                                                        .loanLimitInquiry(loanLimitInquiry)
-                                                        .loReqtNo(generator.generate("LR")) //신청번호 채번
-                                                        .partnerCode(partnerCode)
-                                                        .productCode(product.getProductCode())
-                                                        .status(PartnerInquiryStatus.PENDING)
-                                                        .build();
-                                        loanLimitInquiry.addProductResult(productResult);
-                                        return productResult;
-                                    }).toList()
-                    ));
-
-            // 상품 전체 수 초기화
-            int totalProductCount = productResultMap.values().stream()
-                    .mapToInt(List::size)
-                    .sum();
-            loanLimitInquiry.initProductCount(totalProductCount);
-
-            // 금융사별 RequestProduct(공통 요청 DTO) 구성
-            Map<PartnerCode, List<RequestProduct>> requestProductMap = productResultMap.entrySet().stream()
-                    .collect(Collectors.toMap(
-                            Map.Entry::getKey,
-                            entry -> entry.getValue().stream()
-                                    .map(productResult ->
-                                            RequestProduct.builder()
-                                                    .loReqtNo(productResult.getLoReqtNo())
-                                                    .productCode(productResult.getProductCode())
-                                                    .build()
-                                    ).toList()
-                    ));
-
+        List<LoanLimitAdaptorResponse> adaptorResponses;
+        try {
+            Map<PartnerCode, List<RequestProduct>> requestProductMap = prepared.requestProductMap();
 
             // 금융사별 병렬 API 호출
             // partnerApiExecutor(I/O 전용 스레드 풀)에서 실행하여 loanLimitExecutor 스레드를 해제한다
@@ -170,13 +117,13 @@ public class LoanLimitSenderService {
                                     .exceptionally(ex -> {
                                         // Circuit Breaker OPEN: Fallback으로 즉시 실패 반환
                                         // 해당 금융사는 격리되며 나머지 금융사는 정상 진행
-                                        if(ex.getCause() instanceof CallNotPermittedException) {
+                                        if (ex.getCause() instanceof CallNotPermittedException) {
                                             log.warn("[{}] Circuit Breaker OPEN - 해당 금융사 격리", partnerCode, ex);
                                             return LoanLimitAdaptorResponse.fail(partnerCode, "CB_OPEN", 0L);
                                         }
 
                                         // RateLimiter 한도 초과 Fallback 추가
-                                        if(ex.getCause() instanceof RequestNotPermitted) {
+                                        if (ex.getCause() instanceof RequestNotPermitted) {
                                             log.warn("[{}] RateLimiter 한도 초과 - 요청 제한", partnerCode);
                                             return LoanLimitAdaptorResponse.fail(partnerCode, "RATE_LIMIT_EXCEEDED", 0L);
                                         }
@@ -206,71 +153,22 @@ public class LoanLimitSenderService {
                     .toList();
 
             // 모든 금융사 응답을 수집한다. (join()은 각 Future의 orTimeout 내에서 대기)
-            List<LoanLimitAdaptorResponse> adaptorResponses = futures.stream()
+            // 이 구간은 트랜잭션/Hikari 커넥션 없이 대기한다 - 파트너 응답이 아무리 느려져도
+            // DB 커넥션 풀에는 영향이 없다.
+            adaptorResponses = futures.stream()
                     .map(CompletableFuture::join)
                     .toList();
+        } catch (Exception e) {
+            log.error("한도조회 파트너 전송 중 오류. id={}", id, e);
+            persistenceService.markFailed(prepared.inquiryId());
+            return;
+        }
 
-            // 전송 결과에 따라 Result / ProductResult 상태 UPDATE
-            // 성공: SEND_SUCCESS, 실패: SEND_FAILED (콜백 대기 여부 결정)
-            adaptorResponses.forEach(adaptorResponse -> {
-                LoanLimitResult result = resultMap.get(adaptorResponse.partnerCode());
-
-                    if(adaptorResponse.success()) {
-                        result.success(adaptorResponse.resTimeMs());
-                        productResultMap.get(adaptorResponse.partnerCode())
-                                .forEach(LoanLimitProductResult::sendSuccess);
-                    }
-                    else {
-                        result.fail(
-                                adaptorResponse.failReason(),
-                                adaptorResponse.resTimeMs()
-                        );
-
-                        productResultMap.get(adaptorResponse.partnerCode())
-                                .forEach(LoanLimitProductResult::sendFail);
-                    }
-
-                    // 파트너 전송 이력 감사 로그
-                    outboxEventWriter.enqueue(
-                            "PartnerTransmission",
-                            loanLimitInquiry.getInquiryNo(),
-                            "PARTNER_TRANSMISSION",
-                            PartnerTransmissionAuditEvent.from(loanLimitInquiry.getInquiryNo(), adaptorResponse)
-                    );
-
-            });
-
-            // 성공 금융사 수에 따라 Inquiry 최종 상태 결정
-            // 전체 성공: SUCCESS, 전체 실패: FAILED, 일부 성공: PARTIAL_SUCCESS
-            long successCount = adaptorResponses.stream()
-                    .filter(LoanLimitAdaptorResponse::success).count();
-            InquiryStatus resultStatus = successCount == adaptorResponses.size()
-                    ? InquiryStatus.SUCCESS
-                    : (successCount == 0 ? InquiryStatus.FAILED : InquiryStatus.PARTIAL_SUCCESS);
-
-            loanLimitInquiry.updateInquiryStatus(resultStatus);
-
-            // 알림 발송 - notification 도메인을 직접 알지 못함
-            if(!Objects.equals(InquiryStatus.FAILED, resultStatus)) {
-
-                //kafkaLoanLimitEventPublisher.publishCompletedEvent(event);
-                //springLoanLimitEventPublisher.publishCompletedEvent(event);
-
-                // Spring 이벤트 발행 (트랜잭션 커밋 후 Kafka 발행 트리거)
-                outboxEventWriter.enqueue(
-                        "LoanLimitInquiry",
-                        loanLimitInquiry.getInquiryNo(),
-                        "LOAN_LIMIT_COMPLETED",
-                        LoanLimitCompletedEvent.from(loanLimitInquiry)
-                );
-
-                //applicationEventPublisher.publishEvent(new OutboxCreatedEvent(outboxEvent.getId()));
-            }
-
-        } catch(Exception e) {
-            // 예상치 못한 예외 발생 시 Inquiry를 FAILED로 처리한다.
-            log.error("한도조회 처리 중 오류. id={}", loanLimitInquiry.getId(), e);
-            loanLimitInquiry.updateInquiryStatus(InquiryStatus.FAILED);
+        try {
+            persistenceService.applyResults(prepared.inquiryId(), adaptorResponses);
+        } catch (Exception e) {
+            log.error("한도조회 처리 중 오류. id={}", prepared.inquiryId(), e);
+            persistenceService.markFailed(prepared.inquiryId());
         }
     }
 }

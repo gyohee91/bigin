@@ -15,16 +15,15 @@ import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.global.exception.ExternalApiFailException;
 import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
 import java.util.List;
@@ -40,7 +39,11 @@ import static org.mockito.Mockito.mock;
 
 @ExtendWith(MockitoExtension.class)
 class LoanLimitSenderServiceTest {
-    @InjectMocks
+    // 트랜잭션 분리 이후 LoanLimitSenderService는 DB 접근이 없고
+    // LoanLimitInquiryPersistenceService(선저장/결과반영 트랜잭션 담당)에 위임한다.
+    // @InjectMocks 대신 실제 LoanLimitInquiryPersistenceService 인스턴스를 mock 협력자들로
+    // 직접 생성해서 주입한다 - 트랜잭션 경계가 바뀌었을 뿐 비즈니스 로직 자체는 동일하므로
+    // 엔티티 상태 검증(assertThat(inquiry.getStatus())...)은 그대로 유효하다.
     private LoanLimitSenderService loanLimitSenderService;
 
     @Mock
@@ -58,13 +61,19 @@ class LoanLimitSenderServiceTest {
     @Mock
     private OutboxEventWriter outboxEventWriter;
 
+    @Mock
+    private MeterRegistry meterRegistry;
+
     @BeforeEach
     void setUp() {
+        LoanLimitInquiryPersistenceService persistenceService = new LoanLimitInquiryPersistenceService(
+                loanLimitInquiryRepository, productService, outboxEventWriter, generator
+        );
+
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(4);
         executor.setMaxPoolSize(4);
         executor.initialize();
-        ReflectionTestUtils.setField(loanLimitSenderService, "partnerApiExecutor", executor);
 
         // orTimeout()이 partnerOrTimeouts.get(partnerCode)를 조회하므로
         // 테스트에서 사용하는 모든 PartnerCode에 대해 값을 채워준다.
@@ -74,11 +83,15 @@ class LoanLimitSenderServiceTest {
                 PartnerCode.LINE_BANK, Duration.ofSeconds(5),
                 PartnerCode.KB_CAPITAL, Duration.ofSeconds(5)
         );
-        ReflectionTestUtils.setField(loanLimitSenderService, "partnerOrTimeouts", partnerOrTimeouts);
+
+        loanLimitSenderService = new LoanLimitSenderService(
+                adaptorFactory, persistenceService, executor, partnerOrTimeouts, meterRegistry
+        );
     }
 
     private LoanLimitInquiry buildInquiry() {
         return LoanLimitInquiry.builder()
+                .id(1L)
                 .userId(1L)
                 .name("윤교희")
                 .ci("")
