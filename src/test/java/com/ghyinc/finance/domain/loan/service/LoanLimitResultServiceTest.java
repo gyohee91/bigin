@@ -119,15 +119,13 @@ class LoanLimitResultServiceTest {
         LoanLimitProductResult productResult = this.buildProductResult(inquiry, "LR20260410AAA", "P060100206");
         LoanLimitResultRequest.LoanApplyResult preScrResultList = this.buildSuccessItem("LR20260410AAA", "P060100206");
 
-        //this.stubLockAcquired();
-
         LoanLimitResultAdaptor adaptor = mock(LoanLimitResultAdaptor.class);
         given(resultAdaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
         given(adaptor.convert(any())).willReturn(this.buildRequestDto(List.of(preScrResultList)));
         given(loanLimitProductResultRepository.findByLoReqtNoAndProductCode("LR20260410AAA", "P060100206"))
                 .willReturn(Optional.of(productResult));
-        given(loanLimitProductResultRepository.findInquiryByLoReqtNoAndProduceCodeWithLock("LR20260410AAA", "P060100206"))
-                .willReturn(Optional.of(inquiry));
+        given(loanLimitProductResultRepository.incrementSuccessProductCount("LR20260410AAA", "P060100206"))
+                .willReturn(1);
 
         // when
         loanLimitResultService.responseCompareLoanResult("LINE_BANK", this.buildRequest(List.of(preScrResultList)));
@@ -136,6 +134,7 @@ class LoanLimitResultServiceTest {
         assertThat(productResult.getStatus()).isEqualTo(PartnerInquiryStatus.SUCCESS);
         assertThat(productResult.getAmount()).isEqualTo(30_000_000);
         assertThat(productResult.getResultCode()).isEqualTo(LoanLimitResultCode.SUCCESS);
+        then(loanLimitProductResultRepository).should().incrementSuccessProductCount("LR20260410AAA", "P060100206");
     }
 
     /*
@@ -200,10 +199,10 @@ class LoanLimitResultServiceTest {
         // when
         loanLimitResultService.responseCompareLoanResult("LINE_BANK", this.buildRequest(List.of(item)));
 
-        // then - PENDING 상태라 처리 skip, successCount 미증가, 락 진입 자체를 안 함
+        // then - PENDING 상태라 처리 skip, successCount 증가 쿼리 자체를 안 호출
         assertThat(inquiry.getSuccessProductCount()).isEqualTo(0);
         assertThat(productResult.getStatus()).isEqualTo(PartnerInquiryStatus.PENDING);
-        then(lockExecutor).should(never()).execute(anyString(), anyLong(), anyLong(), any(Runnable.class), any(Runnable.class));
+        then(loanLimitProductResultRepository).should(never()).incrementSuccessProductCount(anyString(), anyString());
     }
 
     @Test
@@ -229,6 +228,7 @@ class LoanLimitResultServiceTest {
         // then - 이미 SUCCESS라 중복 수신으로 skip
         assertThat(inquiry.getSuccessProductCount()).isEqualTo(0);
         assertThat(productResult.getStatus()).isEqualTo(PartnerInquiryStatus.SUCCESS);
+        then(loanLimitProductResultRepository).should(never()).incrementSuccessProductCount(anyString(), anyString());
     }
 
     @Test

@@ -30,7 +30,11 @@ import java.util.Optional;
  * <ul>
  *     <li>금융사별 응답 포맷이 상이하므로 {@link LoanLimitResultAdaptor}를 통해
  *          공통 요청 DTO{@code LoanLimitResultRequest}로 변환한다</li>
- *     <li>비관락으로 동일 Inquiry에 대한 콜백이 동시에 수신될 때 순차 처리를 보장한다</li>
+ *     <li>동일 Inquiry에 대한 콜백 카운트 증가는 {@code @Lock(PESSIMISTIC_WRITE)} 대신
+ *          {@link LoanLimitProductResultRepository#incrementSuccessProductCount} DB 레벨
+ *          원자적 UPDATE로 처리한다. 부하테스트에서 46개 파트너 fan-out이 한 inquiry 행의
+ *          비관락을 놓고 동시에 경합하면서 대기 스레드마다 Hikari 커넥션을 붙든 채 쌓여
+ *          커넥션 풀 고갈로 이어졌던 문제가 있어, 애플리케이션 레벨 락 자체를 없앴다</li>
  * </ul>
  *
  * <h3>콜백 처리 예외 전략</h3>
@@ -61,9 +65,8 @@ public class LoanLimitResultService {
      *     <li>partnerCode 유효성 검증 및 금융사별 Adaptor 조회</li>
      *     <li>금융사별 요청 포맷을 공통 DTO {@link LoanLimitResultRequest}로 변환</li>
      *     <li>loReqtNo + productCode로 선저장된 ProductResult 조회</li>
-     *     <li>비관락으로 Inquiry 조회 (동시 콜백 순차 처리)</li>
      *     <li>중복 수신 및 처리 불가 상태 체크</li>
-     *     <li>한도금액, 금리 UPDATE + 콜백 카운트 증가</li>
+     *     <li>한도금액, 금리 UPDATE + 콜백 카운트 원자적 증가(DB UPDATE, 락 없음)</li>
      * </ol>
      *
      * <h3>처리 불가 상태 분류</h3>
@@ -93,10 +96,6 @@ public class LoanLimitResultService {
                         var productResult = loanLimitProductResultRepository.findByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
                                 .orElseThrow(() -> new InvalidRequestException("존재하지 않는 식별번호&상품코드. loReqtNo: " + item.getLoReqtNo() + ", productCode: " + item.getProductCode()));
 
-                        // 비관적 Lock으로 동시 수신 시 순차 처리 보장
-                        var loanLimitInquiry = loanLimitProductResultRepository.findInquiryByLoReqtNoAndProduceCodeWithLock(item.getLoReqtNo(), item.getProductCode())
-                                .orElseThrow(() -> new InvalidRequestException("존재하지 않는 한도조회 이력"));
-
                         // SEND_SUCCESS 상태가 아닌 경우 처리 불가 상태로 간주하고 skip한다.
                         // 중복 수신(SUCCESS) 또는 전송 실패/타임아웃된 건은 결과를 덮어쓰지 않는다
                         if(productResult.getStatus() != PartnerInquiryStatus.SEND_SUCCESS) {
@@ -111,13 +110,9 @@ public class LoanLimitResultService {
                             return;
                         }
 
-                        // 콜백 수신 카운트 증가 및 한도결과 UPDATE
-                        // incrementSuccessCount(): Inquiry의 successProductCount 증가
-                        loanLimitInquiry.incrementSuccessCount();
+                        // 콜백 수신 카운트 증가(DB 원자적 UPDATE, 애플리케이션 락 없음) 및 한도결과 UPDATE
+                        loanLimitProductResultRepository.incrementSuccessProductCount(item.getLoReqtNo(), item.getProductCode());
                         productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
-
-                        // Redis 분산 락으로 successProductCount 갱신 보호
-                        //this.updateWithDistributedLock(partnerCode, item, productResult);
 
                         // Callback 정상 처리 시
                         outboxEventWriter.enqueue(
