@@ -68,6 +68,6 @@ class PartnerConnectionPoolConfigTest {
         PoolingHttpClientConnectionManager connectionManager = partnerConnectionPoolConfig.partnerConnectionManager();
         HttpRoute httpRoute = new HttpRoute(new HttpHost("http", "kakaobank-mock", 8091));
 
-        assertThat(connectionManager.getMaxPerRoute(httpRoute)).isEqualTo(15);
+        assertThat(connectionManager.getMaxPerRoute(httpRoute)).isEqualTo(20);
     }
 }
