@@ -33,11 +33,11 @@ class RateLimiterConfigTest {
     void ratelimiter_shouldActuallyRejectCallsBeyondLimit() {
         RateLimiter rateLimiter = rateLimiterRegistry.rateLimiter(PartnerCode.KAKAO_BANK.name());
 
-        for(int i = 0; i < 20; i++) {
+        for(int i = 0; i < 40; i++) {
             assertThat(rateLimiter.acquirePermission()).isTrue();
         }
 
-        // 같은 1초 주기 안에서 21번째 요청은 거부되어야 한다.
+        // 같은 1초 주기 안에서 41번째 요청은 거부되어야 한다.
         assertThat(rateLimiter.acquirePermission()).isFalse();
     }
 }
