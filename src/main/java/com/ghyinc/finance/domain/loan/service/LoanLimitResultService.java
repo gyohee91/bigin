@@ -32,9 +32,13 @@ import java.util.Optional;
  *          공통 요청 DTO{@code LoanLimitResultRequest}로 변환한다</li>
  *     <li>동일 Inquiry에 대한 콜백 카운트 증가는 {@code @Lock(PESSIMISTIC_WRITE)} 대신
  *          {@link LoanLimitProductResultRepository#incrementSuccessProductCount} DB 레벨
- *          원자적 UPDATE로 처리한다. 부하테스트에서 46개 파트너 fan-out이 한 inquiry 행의
- *          비관락을 놓고 동시에 경합하면서 대기 스레드마다 Hikari 커넥션을 붙든 채 쌓여
- *          커넥션 풀 고갈로 이어졌던 문제가 있어, 애플리케이션 레벨 락 자체를 없앴다</li>
+ *          원자적 UPDATE로 처리한다. 다만 이 UPDATE문의 row lock은 그 자체가 속한 트랜잭션이
+ *          커밋될 때까지 유지되므로, 이 메서드처럼 다른 로직(엔티티 flush, outbox INSERT)과
+ *          같은 트랜잭션에 묶여 있으면 46개 파트너 fan-out이 여전히 그 트랜잭션 전체 시간만큼
+ *          순차 대기하며 Hikari 커넥션을 붙든 채 쌓이는 문제가 재현된다. 그래서 이 증가 호출은
+ *          {@link LoanLimitCounterService#incrementSuccessCount}를 통해 별도의
+ *          {@code REQUIRES_NEW} 트랜잭션으로 분리 실행하여, UPDATE 직후 바로 커밋·락 해제되게
+ *          한다</li>
  * </ul>
  *
  * <h3>콜백 처리 예외 전략</h3>
@@ -51,6 +55,7 @@ import java.util.Optional;
 public class LoanLimitResultService {
     private final LoanLimitResultAdaptorFactory resultAdaptorFactory;
     private final LoanLimitProductResultRepository loanLimitProductResultRepository;
+    private final LoanLimitCounterService loanLimitCounterService;
     private final RedisLockExecutor lockExecutor;
     private final OutboxEventWriter outboxEventWriter;
 
@@ -110,8 +115,9 @@ public class LoanLimitResultService {
                             return;
                         }
 
-                        // 콜백 수신 카운트 증가(DB 원자적 UPDATE, 애플리케이션 락 없음) 및 한도결과 UPDATE
-                        loanLimitProductResultRepository.incrementSuccessProductCount(item.getLoReqtNo(), item.getProductCode());
+                        // 콜백 수신 카운트 증가: 별도 REQUIRES_NEW 트랜잭션으로 분리 실행하여
+                        // UPDATE 직후 즉시 커밋·row lock 해제 (프록시 경유 필수 - self-invocation 금지)
+                        loanLimitCounterService.incrementSuccessCount(item.getLoReqtNo(), item.getProductCode());
                         productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
 
                         // Callback 정상 처리 시
