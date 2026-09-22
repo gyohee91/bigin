@@ -65,4 +65,37 @@ public class AsyncConfig {
         executor.initialize();
         return executor;
     }
+
+    /**
+     * {@code loanLimitExecutor} 포화로 Fan-out 제출이 거부됐을 때의 보상 트랜잭션
+     * ({@link com.ghyinc.finance.domain.loan.service.LoanLimitEventHandler#compensateForRejection}) 전용 풀.
+     * <p>
+     * (2026-09 부하테스트로 발견 및 수정) 이 보상 트랜잭션을 별도 풀 없이 Tomcat 요청 스레드에서
+     * 그대로 동기 실행하던 구버전에는 다음과 같은 2차 병목이 있었다: {@code loanLimitExecutor}가
+     * 한번 포화되면 그 이후 유입되는 모든 요청이 전부 이 보상 경로(REQUIRES_NEW로 새 Hikari
+     * 커넥션 요구)를 동시에 타게 되어, executor 포화가 곧바로 Hikari 풀 고갈로 전이되는
+     * 피드백 루프가 발생했다. 실제로 20 req/s 지속 부하 테스트에서 executor 포화 후 수십 초 만에
+     * Hikari 풀(150) 전체가 소진되는 것을 로그로 재현/확인했다.
+     * <p>
+     * 보상 트랜잭션을 이 작은 전용 풀(core=2, max=5)로 위임함으로써, 포화 상황에서도 동시에
+     * 열리는 보상용 Hikari 커넥션 수 자체를 하드 캡으로 제한한다. 일부 FAILED 처리가 지연되는
+     * 것은 best-effort 특성상 허용 가능하지만, 보상 로직이 Hikari 풀 전체를 끌고 내려가는 것은
+     * 허용할 수 없기 때문이다. queueCapacity(200)로 순간적인 몰림은 유실 없이 순차 처리하고,
+     * 그마저 넘치면(즉, 이 작은 풀조차 감당 못 할 정도의 극단적 상황) 로그만 남기고 스킵한다 -
+     * markFailed()는 원래도 best-effort로 설계되어 있다.
+     */
+    @Bean(name = "compensationExecutor")
+    public Executor compensationExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(5);
+        executor.setQueueCapacity(200);
+        executor.setThreadNamePrefix("loan-limit-compensation-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(30);
+        executor.setTaskDecorator(new MdcTaskDecorator());
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+        executor.initialize();
+        return executor;
+    }
 }
