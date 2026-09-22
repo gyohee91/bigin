@@ -136,7 +136,7 @@ class LoanLimitInquiryPersistenceServiceTest {
     @Test
     @DisplayName("createLoanLimitInquiry - inquiryNo 채번 후 Inquiry INSERT, 응답에 그대로 반영")
     void createLoanLimitInquiry_savesInquiryWithGeneratedInquiryNo() {
-        given(generator.generateGuid("LL")).willReturn("LL20260101abcd1234");
+        given(generator.generate("LL")).willReturn("LL20260101abcd1234");
         LoanLimitRequest request = buildLoanLimitRequest();
 
         LoanLimitInquiryResponse response = persistenceService.createLoanLimitInquiry(
@@ -155,7 +155,7 @@ class LoanLimitInquiryPersistenceServiceTest {
     @Test
     @DisplayName("createLoanLimitInquiry - 저장 후 LoanLimitInquiryCreatedEvent를 발행 (id·금융사 목록·adaptorRequest 포함)")
     void createLoanLimitInquiry_publishesCreatedEventAfterSave() {
-        given(generator.generateGuid("LL")).willReturn("LL20260101abcd1234");
+        given(generator.generate("LL")).willReturn("LL20260101abcd1234");
         given(loanLimitInquiryRepository.save(any(LoanLimitInquiry.class)))
                 .willAnswer(invocation -> {
                     LoanLimitInquiry inquiry = invocation.getArgument(0);
