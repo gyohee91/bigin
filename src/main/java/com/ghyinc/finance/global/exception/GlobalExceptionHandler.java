@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -110,6 +111,20 @@ public class GlobalExceptionHandler {
                 .body(ErrorResponse.of(
                         HttpStatus.SERVICE_UNAVAILABLE.getReasonPhrase(),
                         "일시적으로 요청이 많아 처리할 수 없습니다. 잠시 후 다시 시도해주세요."));
+    }
+
+    /**
+     * Hikari 커넥션 풀 고갈 - connect-timeout(3s) 내에 커넥션을 못 받아
+     * JpaTransactionManager가 EntityManager/트랜잭션을 열지 못한 경우
+     */
+    @ExceptionHandler(CannotCreateTransactionException.class)
+    public ResponseEntity<ErrorResponse> handleCannotCreateTransactionException(CannotCreateTransactionException e) {
+        log.error("CannotCreateTransactionException (DB 커넥션 풀 고갈 추정): {}", e.getMessage(), e);
+
+        return ResponseEntity
+                .status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header("Retry-After", "3")
+                .body(ErrorResponse.of(HttpStatus.SERVICE_UNAVAILABLE.getReasonPhrase(), "일시적으로 요청이 많아 처리할 수 없습니다. 잠시 후 다시 시도해주세요."));
     }
 
     @ExceptionHandler(Exception.class)
