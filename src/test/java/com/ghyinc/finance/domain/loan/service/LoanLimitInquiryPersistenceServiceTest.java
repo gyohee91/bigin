@@ -2,6 +2,8 @@ package com.ghyinc.finance.domain.loan.service;
 
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
+import com.ghyinc.finance.domain.loan.dto.LoanLimitInquiryResponse;
+import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.dto.PreparedFanout;
 import com.ghyinc.finance.domain.loan.dto.ProductCache;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
@@ -15,6 +17,7 @@ import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
+import com.ghyinc.finance.global.event.LoanLimitInquiryCreatedEvent;
 import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,6 +27,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Optional;
@@ -54,10 +59,13 @@ class LoanLimitInquiryPersistenceServiceTest {
     @Mock
     private LoReqtNoGenerator generator;
 
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
+
     @BeforeEach
     void setUp() {
         persistenceService = new LoanLimitInquiryPersistenceService(
-                loanLimitInquiryRepository, productService, outboxEventWriter, generator
+                loanLimitInquiryRepository, productService, outboxEventWriter, generator, applicationEventPublisher
         );
     }
 
@@ -109,6 +117,66 @@ class LoanLimitInquiryPersistenceServiceTest {
                 .jobName("테스트회사")
                 .loanType(LoanType.PERSONAL_CREDIT)
                 .build();
+    }
+
+    private LoanLimitRequest buildLoanLimitRequest() {
+        return LoanLimitRequest.builder()
+                .userId(1L)
+                .name("테스트")
+                .rrno("9102131234567")
+                .ci("")
+                .jobType(JobType.EMPLOYEE)
+                .jobName("테스트회사")
+                .loanType(LoanType.PERSONAL_CREDIT)
+                .build();
+    }
+
+    // ─── createLoanLimitInquiry ───────────────────────────────────────────────
+
+    @Test
+    @DisplayName("createLoanLimitInquiry - inquiryNo 채번 후 Inquiry INSERT, 응답에 그대로 반영")
+    void createLoanLimitInquiry_savesInquiryWithGeneratedInquiryNo() {
+        given(generator.generateGuid("LL")).willReturn("LL20260101abcd1234");
+        LoanLimitRequest request = buildLoanLimitRequest();
+
+        LoanLimitInquiryResponse response = persistenceService.createLoanLimitInquiry(
+                request, List.of(PartnerCode.LINE_BANK), buildAdaptorRequest());
+
+        ArgumentCaptor<LoanLimitInquiry> inquiryCaptor = ArgumentCaptor.forClass(LoanLimitInquiry.class);
+        then(loanLimitInquiryRepository).should().save(inquiryCaptor.capture());
+        assertThat(inquiryCaptor.getValue().getInquiryNo()).isEqualTo("LL20260101abcd1234");
+        assertThat(inquiryCaptor.getValue().getUserId()).isEqualTo(request.userId());
+        assertThat(inquiryCaptor.getValue().getName()).isEqualTo(request.name());
+
+        assertThat(response.success()).isTrue();
+        assertThat(response.inquiryNo()).isEqualTo("LL20260101abcd1234");
+    }
+
+    @Test
+    @DisplayName("createLoanLimitInquiry - 저장 후 LoanLimitInquiryCreatedEvent를 발행 (id·금융사 목록·adaptorRequest 포함)")
+    void createLoanLimitInquiry_publishesCreatedEventAfterSave() {
+        given(generator.generateGuid("LL")).willReturn("LL20260101abcd1234");
+        given(loanLimitInquiryRepository.save(any(LoanLimitInquiry.class)))
+                .willAnswer(invocation -> {
+                    LoanLimitInquiry inquiry = invocation.getArgument(0);
+                    ReflectionTestUtils.setField(inquiry, "id", 10L);
+                    return inquiry;
+                });
+        LoanLimitRequest request = buildLoanLimitRequest();
+        LoanLimitAdaptorRequest adaptorRequest = buildAdaptorRequest();
+
+        persistenceService.createLoanLimitInquiry(
+                request, List.of(PartnerCode.KAKAO_BANK, PartnerCode.TOSS_BANK), adaptorRequest);
+
+        ArgumentCaptor<LoanLimitInquiryCreatedEvent> eventCaptor =
+                ArgumentCaptor.forClass(LoanLimitInquiryCreatedEvent.class);
+        then(applicationEventPublisher).should().publishEvent(eventCaptor.capture());
+
+        LoanLimitInquiryCreatedEvent event = eventCaptor.getValue();
+        assertThat(event.id()).isEqualTo(10L);
+        assertThat(event.activePartnerCodes())
+                .containsExactly(PartnerCode.KAKAO_BANK, PartnerCode.TOSS_BANK);
+        assertThat(event.adaptorRequest()).isEqualTo(adaptorRequest);
     }
 
     // ─── preSave ──────────────────────────────────────────────────────────────

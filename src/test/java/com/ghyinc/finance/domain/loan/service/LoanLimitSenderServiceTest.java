@@ -23,6 +23,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.time.Duration;
@@ -64,10 +65,13 @@ class LoanLimitSenderServiceTest {
     @Mock
     private MeterRegistry meterRegistry;
 
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
+
     @BeforeEach
     void setUp() {
         LoanLimitInquiryPersistenceService persistenceService = new LoanLimitInquiryPersistenceService(
-                loanLimitInquiryRepository, productService, outboxEventWriter, generator
+                loanLimitInquiryRepository, productService, outboxEventWriter, generator, applicationEventPublisher
         );
 
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
