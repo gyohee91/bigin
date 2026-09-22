@@ -9,13 +9,10 @@ import com.ghyinc.finance.domain.loan.factory.LoanLimitStrategyFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepository;
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
-import com.ghyinc.finance.global.common.LoReqtNoGenerator;
-import com.ghyinc.finance.global.event.LoanLimitInquiryCreatedEvent;
 import com.ghyinc.finance.global.lock.RedisLockExecutor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -59,9 +56,7 @@ public class LoanLimitService {
     private final LoanLimitProductResultRepository loanLimitProductResultRepository;
     private final LoanLimitStrategyFactory strategyFactory;
     private final RedisLockExecutor lockExecutor;
-
-    private final LoReqtNoGenerator generator;
-    private final ApplicationEventPublisher applicationEventPublisher;
+    private final LoanLimitInquiryPersistenceService persistenceService;
 
     /**
      * 비교대출 한도조회 요청을 처리한다.
@@ -89,7 +84,6 @@ public class LoanLimitService {
      * @return 202 Accepted 응답 (inquiryNo 포함)
      * @throws InvalidRequestException 진행 중인 조회 존재, 조회 가능 금융사 없음
      */
-    @Transactional
     public LoanLimitInquiryResponse requestCompareLoan(LoanLimitRequest request) {
         // Redis 분산 락으로 중복 요청 방어
         String lockKey = "loan:request:lock:" + request.userId() + ":" + request.loanType();
@@ -136,38 +130,11 @@ public class LoanLimitService {
             );
         }
 
-        // LoanLimitInquiry INSERT: 조회 식별번호(inquiryNo) 채번 후 저장
-        LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
-                .inquiryNo(generator.generate("LL"))
-                .userId(request.userId())
-                .name(request.name())
-                .ci(request.ci())
-                .jobType(request.jobType())
-                .jobName(request.jobName())
-                .joinDate(request.joinDate())
-                .loanType(request.loanType())
-                .carNo(request.carNo())
-                .agreePersonalCreditInfo(request.agreePersonalCreditInfo())
-                .agreePersonalCreditTime(request.agreePersonalCreditTime())
-                .build();
-
-        loanLimitInquiryRepository.save(inquiry);
-
         // 어댑터 요청 DTO 변환 (Strategy)
         // 대출 유형별 전략으로 금융사 전송용 요청 DTO 생성
         LoanLimitAdaptorRequest adaptorRequest = strategy.toAdaptorRequest(request, context);
 
-        // 트랜잭션 커밋 후 비동기 전송을 위해 Spring 이벤트를 발행한다.
-        // AFTER_COMMIT 이후 처리를 보장하기 위해 직접 호출 대신 이벤트를 사용한다
-        applicationEventPublisher.publishEvent(
-                LoanLimitInquiryCreatedEvent.builder()
-                        .id(inquiry.getId())
-                        .activePartnerCodes(activePartnerCodes)
-                        .adaptorRequest(adaptorRequest)
-                        .build()
-        );
-
-        return LoanLimitInquiryResponse.from(inquiry);
+        return persistenceService.createLoanLimitInquiry(request, activePartnerCodes, adaptorRequest);
     }
 
     @Transactional(readOnly = true)

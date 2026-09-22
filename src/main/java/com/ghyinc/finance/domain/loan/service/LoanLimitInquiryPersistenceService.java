@@ -2,6 +2,8 @@ package com.ghyinc.finance.domain.loan.service;
 
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
+import com.ghyinc.finance.domain.loan.dto.LoanLimitInquiryResponse;
+import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.dto.PreparedFanout;
 import com.ghyinc.finance.domain.loan.dto.RequestProduct;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
@@ -13,11 +15,13 @@ import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
+import com.ghyinc.finance.global.event.LoanLimitInquiryCreatedEvent;
 import com.ghyinc.finance.global.event.PartnerTransmissionAuditEvent;
 import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -51,6 +55,8 @@ public class LoanLimitInquiryPersistenceService {
     private final ProductService productService;
     private final OutboxEventWriter outboxEventWriter;
     private final LoReqtNoGenerator generator;
+
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     /**
      * 1단계: 선저장 트랜잭션 (짧게, commit).
@@ -88,7 +94,7 @@ public class LoanLimitInquiryPersistenceService {
                                     LoanLimitProductResult productResult =
                                             LoanLimitProductResult.builder()
                                                     .loanLimitInquiry(loanLimitInquiry)
-                                                    .loReqtNo(generator.generate("LR")) //신청번호 채번
+                                                    .loReqtNo(generator.generateGuid("LR")) //신청번호 채번
                                                     .partnerCode(partnerCode)
                                                     .productCode(product.getProductCode())
                                                     .status(PartnerInquiryStatus.PENDING)
@@ -190,5 +196,54 @@ public class LoanLimitInquiryPersistenceService {
                 },
                 () -> log.error("FAILED 처리 대상 조회 이력 없음. id={}", id)
         );
+    }
+
+    /**
+     * 0단계: 한도조회 이력(Inquiry) 최초 INSERT 트랜잭션 (짧게, commit).
+     *
+     * <p>사용자 요청을 받아 {@link LoanLimitInquiry} 로우 하나만 생성해 즉시 커밋한다.
+     * 파트너별 Result/ProductResult 선저장은 여기서 하지 않는다 - 그건 {@link #preSave}가
+     * AFTER_COMMIT 이후 별도 트랜잭션에서 처리한다. 이 메서드는 최소한의 INSERT 한 건뿐이므로
+     * Hikari 커넥션 점유 시간은 수 ms 수준이다.</p>
+     *
+     * <p>커밋 후 {@link LoanLimitInquiryCreatedEvent}를 발행해 실제 파트너 팬아웃 트리거를
+     * {@link LoanLimitEventHandler#handleInquiryCreated}에 위임한다. 이벤트를 AFTER_COMMIT
+     * 시점에만 처리하도록 함으로써, 커밋 전에 파트너 콜백이 먼저 도착해 Inquiry를 아직
+     * 조회할 수 없는 Race Condition을 막는다.</p>
+     */
+    @Transactional
+    public LoanLimitInquiryResponse createLoanLimitInquiry(
+            LoanLimitRequest request,
+            List<PartnerCode> activePartnerCodes,
+            LoanLimitAdaptorRequest adaptorRequest
+    ) {
+        // LoanLimitInquiry INSERT: 조회 식별번호(inquiryNo) 채번 후 저장
+        LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
+                .inquiryNo(generator.generateGuid("LL"))
+                .userId(request.userId())
+                .name(request.name())
+                .ci(request.ci())
+                .jobType(request.jobType())
+                .jobName(request.jobName())
+                .joinDate(request.joinDate())
+                .loanType(request.loanType())
+                .carNo(request.carNo())
+                .agreePersonalCreditInfo(request.agreePersonalCreditInfo())
+                .agreePersonalCreditTime(request.agreePersonalCreditTime())
+                .build();
+
+        loanLimitInquiryRepository.save(inquiry);
+
+        // 트랜잭션 커밋 후 비동기 전송을 위해 Spring 이벤트를 발행한다.
+        // AFTER_COMMIT 이후 처리를 보장하기 위해 직접 호출 대신 이벤트를 사용한다
+        applicationEventPublisher.publishEvent(
+                LoanLimitInquiryCreatedEvent.builder()
+                        .id(inquiry.getId())
+                        .activePartnerCodes(activePartnerCodes)
+                        .adaptorRequest(adaptorRequest)
+                        .build()
+        );
+
+        return LoanLimitInquiryResponse.from(inquiry);
     }
 }
