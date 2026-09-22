@@ -94,7 +94,7 @@ public class LoanLimitInquiryPersistenceService {
                                     LoanLimitProductResult productResult =
                                             LoanLimitProductResult.builder()
                                                     .loanLimitInquiry(loanLimitInquiry)
-                                                    .loReqtNo(generator.generateGuid("LR")) //신청번호 채번
+                                                    .loReqtNo(generator.generate("LR")) //신청번호 채번
                                                     .partnerCode(partnerCode)
                                                     .productCode(product.getProductCode())
                                                     .status(PartnerInquiryStatus.PENDING)
@@ -219,7 +219,7 @@ public class LoanLimitInquiryPersistenceService {
     ) {
         // LoanLimitInquiry INSERT: 조회 식별번호(inquiryNo) 채번 후 저장
         LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
-                .inquiryNo(generator.generateGuid("LL"))
+                .inquiryNo(generator.generate("LL"))
                 .userId(request.userId())
                 .name(request.name())
                 .ci(request.ci())
