@@ -1,5 +1,6 @@
 package com.ghyinc.finance.global.config;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
@@ -8,6 +9,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 
+@Slf4j
 @EnableAsync
 @Configuration
 public class AsyncConfig {
@@ -124,6 +126,38 @@ public class AsyncConfig {
         executor.setAwaitTerminationSeconds(30);
         executor.setTaskDecorator(new MdcTaskDecorator());
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+        executor.initialize();
+        return executor;
+    }
+
+    /**
+     * OutboxEventService#publishAfterCommit() 전용 - 즉시발행 경로의 Kafka send()를
+     * loanLimitExecutor에서 완전히 분리한다.
+     * <p>
+     * (2026-09 발견) publishAfterCommit()는 @TransactionalEventListener(AFTER_COMMIT)에
+     * @Async가 없어 트랜잭션을 커밋한 스레드(loanLimitExecutor)에서 그대로 실행되고 있었다.
+     * kafkaTemplate.send()는 Future를 안 기다려도 내부적으로 max.block.ms(3초)까지 토픽
+     * 메타데이터를 동기 대기할 수 있어서, Kafka 장애 시 이벤트 1건당 최대 3초씩 loanLimitExecutor
+     * 스레드를 점유했다 - 실측 결과 Kafka 완전 장애 구간(2분56초) 동안에만 loanLimitExecutor
+     * 포화(Fan-out 제출 실패)가 383건 집중 발생, 장애 구간 밖에서는 0건이었다.
+     * <p>
+     * 거절 시 예외를 던지지 않고 로그만 남긴다 - AFTER_COMMIT 이벤트 디스패치가 실패로 보이면
+     * 이미 커밋된 LoanLimitInquiryPersistenceService#applyResults()가 호출부(inquiry())의
+     * catch로 인해 잘못 markFailed() 처리될 위험이 있기 때문. 어차피 이 경로가 막혀도 이벤트는
+     * PENDING으로 남아 배치 재시도가 처리한다 - Outbox 패턴의 설계 의도 그대로다.
+     */
+    @Bean(name = "outboxPublishExecutor")
+    public Executor outboxPublishExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(20);
+        executor.setMaxPoolSize(20);
+        executor.setQueueCapacity(200);
+        executor.setThreadNamePrefix("outbox-publish-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(30);
+        executor.setTaskDecorator(new MdcTaskDecorator());
+        executor.setRejectedExecutionHandler((r, exec) ->
+                log.warn("outboxPublishExecutor 포화 - 즉시발행 스킵, PENDING으로 남아 배치 재시도가 처리함"));
         executor.initialize();
         return executor;
     }
