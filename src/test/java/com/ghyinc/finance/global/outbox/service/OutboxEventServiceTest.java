@@ -4,6 +4,7 @@ import com.ghyinc.finance.global.outbox.entity.OutboxEvent;
 import com.ghyinc.finance.global.outbox.entity.OutboxStatus;
 import com.ghyinc.finance.global.outbox.event.OutboxCreatedEvent;
 import com.ghyinc.finance.global.outbox.repository.OutboxEventRepository;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -16,6 +17,7 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
@@ -148,5 +150,78 @@ class OutboxEventServiceTest {
         assertThatThrownBy(() -> outboxEventService.publishToKafka(outboxEvent))
                 .isInstanceOf(InvalidRequestException.class)
                 .hasMessage("알 수 없는 aggregateType: " + outboxEvent.getAggregateType());
+    }
+
+    @Test
+    @DisplayName("publishToKafkaSync 성공 - true 반환 (배치 재시도가 결과를 동기 확인)")
+    void publishToKafkaSync_success_returnsTrue() {
+        // given
+        OutboxEvent outboxEvent = this.buildPendingOutboxEvent();
+        CompletableFuture<SendResult<String, String>> future =
+                CompletableFuture.completedFuture(mock(SendResult.class));
+        given(kafkaTemplate.send(any(ProducerRecord.class))).willReturn(future);
+
+        // when
+        boolean result = outboxEventService.publishToKafkaSync(outboxEvent, Duration.ofSeconds(3));
+
+        // then
+        assertThat(result).isTrue();
+    }
+
+    @Test
+    @DisplayName("publishToKafkaSync 타임아웃 - false 반환하고 예외를 밖으로 던지지 않는다")
+    void publishToKafkaSync_timeout_returnsFalseWithoutThrowing() {
+        // given
+        OutboxEvent outboxEvent = this.buildPendingOutboxEvent();
+        // 절대 완료되지 않는 Future -> get(timeout)이 TimeoutException을 던지는 상황 재현
+        CompletableFuture<SendResult<String, String>> neverCompletes = new CompletableFuture<>();
+        given(kafkaTemplate.send(any(ProducerRecord.class))).willReturn(neverCompletes);
+
+        // when
+        boolean result = outboxEventService.publishToKafkaSync(outboxEvent, Duration.ofMillis(100));
+
+        // then - CompletableFuture 체인이 절대 예외로 끝나지 않아야
+        // OutboxEventBatchPublisher의 supplyAsync().thenAccept()가 항상 실행된다
+        assertThat(result).isFalse();
+    }
+
+    @Test
+    @DisplayName("applyRetryResult 성공 - PUBLISHED로 반영")
+    void applyRetryResult_success_marksPublished() {
+        // given
+        OutboxEvent outboxEvent = this.buildPendingOutboxEvent();
+        given(outboxEventRepository.findById(1L)).willReturn(Optional.of(outboxEvent));
+
+        // when
+        outboxEventService.applyRetryResult(1L, true);
+
+        // then
+        assertThat(outboxEvent.getStatus()).isEqualTo(OutboxStatus.PUBLISHED);
+        assertThat(outboxEvent.getPublishedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("applyRetryResult 실패 - FAILED로 반영 (배치 재시도가 마지막 기회)")
+    void applyRetryResult_failure_marksFailed() {
+        // given
+        OutboxEvent outboxEvent = this.buildPendingOutboxEvent();
+        given(outboxEventRepository.findById(1L)).willReturn(Optional.of(outboxEvent));
+
+        // when
+        outboxEventService.applyRetryResult(1L, false);
+
+        // then
+        assertThat(outboxEvent.getStatus()).isEqualTo(OutboxStatus.FAILED);
+        assertThat(outboxEvent.getFailCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("applyRetryResult - 존재하지 않는 id는 조용히 스킵한다")
+    void applyRetryResult_notFound_doesNothing() {
+        // given
+        given(outboxEventRepository.findById(999L)).willReturn(Optional.empty());
+
+        // when & then - 예외 없이 조용히 반환
+        outboxEventService.applyRetryResult(999L, true);
     }
 }

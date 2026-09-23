@@ -98,4 +98,33 @@ public class AsyncConfig {
         executor.initialize();
         return executor;
     }
+
+    /**
+     * OutboxEventBatchPublisher 전용 - PENDING 재시도 이벤트를 병렬로 발행하고
+     * kafkaTemplate.send().get(timeout)으로 결과를 동기 확인한다.
+     * <p>
+     * 즉시발행 경로(OutboxEventService#publishAfterCommit)와 반드시 분리해야 하는 이유:
+     * 그 경로는 loanLimitExecutor 스레드에서 @Transactional(REQUIRES_NEW)로 실행되므로
+     * 거기서 get()으로 블로킹하면 Hikari 커넥션을 Kafka ack 대기 동안 물게 된다
+     * (보상 트랜잭션 Thundering Herd와 동일한 패턴이 Kafka를 상대로 재발).
+     * 배치 재시도는 @SchedulerLock으로 동시 실행 자체가 막힌 독립 백그라운드 작업이라
+     * 여기서만 get()으로 결과를 확정 짓는다.
+     * <p>
+     * maxPoolSize=10 기준, 재시도 대상 최대 100건을 RETRY_TIMEOUT(3초)으로 처리하면
+     * 최악의 경우 10라운드 × 3초 = 30초로 @SchedulerLock의 lockAtMostFor(55초) 이내.
+     */
+    @Bean(name = "outboxRetryExecutor")
+    public Executor outboxRetryExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(5);
+        executor.setMaxPoolSize(10);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("outbox-retry-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(30);
+        executor.setTaskDecorator(new MdcTaskDecorator());
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+        executor.initialize();
+        return executor;
+    }
 }
