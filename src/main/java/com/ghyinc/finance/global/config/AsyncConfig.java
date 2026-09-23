@@ -116,7 +116,7 @@ public class AsyncConfig {
     @Bean(name = "outboxRetryExecutor")
     public Executor outboxRetryExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(5);
+        executor.setCorePoolSize(10);
         executor.setMaxPoolSize(10);
         executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("outbox-retry-");
