@@ -21,9 +21,11 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -59,22 +61,23 @@ class LoanLimitServiceTest {
     @Mock
     private LoanLimitInquiryPersistenceService persistenceService;
 
-    // requestCompareLoan()의 락 블록은 반환값 없는 Runnable 오버로드를 탄다
-    // (action 람다가 조건부로만 throw하고 정상 흐름에선 값 없이 끝나 Supplier로는 타입이 안 맞음)
+    // requestCompareLoan()의 락 블록은 action 람다가 persistenceService.createLoanLimitInquiry(...)의
+    // 반환값을 그대로 return하므로(정상 흐름에서 값이 있는 return문이 있어 Runnable과는 타입이 안 맞음)
+    // Supplier<T> 오버로드를 탄다. RedisLockExecutor#execute(String, long, long, Supplier, Supplier) 참고.
+    @SuppressWarnings("unchecked")
     private void stubLockAcquired() {
         willAnswer(invocation -> {
-            Runnable action = invocation.getArgument(3);
-            action.run();
-            return null;
-        }).given(lockExecutor).execute(anyString(), anyLong(), anyLong(), any(Runnable.class), any(Runnable.class));
+            Supplier<Object> action = invocation.getArgument(3);
+            return action.get();
+        }).given(lockExecutor).execute(anyString(), anyLong(), anyLong(), any(Supplier.class), any(Supplier.class));
     }
 
+    @SuppressWarnings("unchecked")
     private void stubLockUnavailable() {
         willAnswer(invocation -> {
-            Runnable onLockUnavailable = invocation.getArgument(4);
-            onLockUnavailable.run();
-            return null;
-        }).given(lockExecutor).execute(anyString(), anyLong(), anyLong(), any(Runnable.class), any(Runnable.class));
+            Supplier<Object> onLockUnavailable = invocation.getArgument(4);
+            return onLockUnavailable.get();
+        }).given(lockExecutor).execute(anyString(), anyLong(), anyLong(), any(Supplier.class), any(Supplier.class));
     }
 
     @Test
@@ -125,6 +128,9 @@ class LoanLimitServiceTest {
     @Test
     @DisplayName("활성화된 금융사가 없으면 InvalidRequestException 발생")
     void requestCompareLoan_noActivePartner_throwException() {
+        // 락 획득 성공 - action 그대로 실행 (검증 대상 로직이 락 안으로 들어갔으므로 필요)
+        this.stubLockAcquired();
+
         // given
         LoanLimitRequest request = LoanLimitRequest.builder()
                 .userId(1L)
@@ -165,7 +171,7 @@ class LoanLimitServiceTest {
                 .build();
 
         this.stubLockAcquired();
-        given(loanLimitInquiryRepository.existsByUserIdAndLoanTypeAndStatus(1L, LoanType.PERSONAL_CREDIT, InquiryStatus.IN_PROGRESS))
+        given(loanLimitInquiryRepository.existsByUserIdAndLoanTypeAndStatusIn(1L, LoanType.PERSONAL_CREDIT, EnumSet.of(InquiryStatus.PENDING, InquiryStatus.IN_PROGRESS)))
                 .willReturn(true);
 
         // when & then
@@ -223,6 +229,9 @@ class LoanLimitServiceTest {
     @Test
     @DisplayName("오토담보 - Nice DNR 조회 실패 시 진행 가능 금융사 없으면 예외")
     void requestCompareLoan_auto_niceDnrFailed_throwException() {
+        // 락 획득 성공 - action 그대로 실행 (검증 대상 로직이 락 안으로 들어갔으므로 필요)
+        this.stubLockAcquired();
+
         // given
         LoanLimitRequest request = LoanLimitRequest.builder()
                 .userId(1L)
@@ -277,7 +286,7 @@ class LoanLimitServiceTest {
                 .hasMessage("요청이 처리 중입니다. 잠시 후 다시 시도해 주세요.");
 
         then(loanLimitInquiryRepository).should(never())
-                .existsByUserIdAndLoanTypeAndStatus(any(), any(), any());
+                .existsByUserIdAndLoanTypeAndStatusIn(any(), any(), any());
         then(persistenceService).should(never()).createLoanLimitInquiry(any(), any(), any());
     }
 

@@ -8,14 +8,15 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.Optional;
 
 @Repository
 public interface LoanLimitInquiryRepository extends JpaRepository<LoanLimitInquiry, Long> {
-    boolean existsByUserIdAndLoanTypeAndStatus(
+    boolean existsByUserIdAndLoanTypeAndStatusIn(
             @Param("userId") Long userId,
             @Param("loanType") LoanType loanType,
-            @Param("status")InquiryStatus status
+            @Param("statuses") Collection<InquiryStatus> statuses
     );
 
     @Query("SELECT DISTINCT t FROM LoanLimitInquiry t " +
