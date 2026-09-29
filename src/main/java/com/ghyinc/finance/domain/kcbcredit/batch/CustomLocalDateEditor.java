@@ -26,7 +26,5 @@ public class CustomLocalDateEditor extends PropertyEditorSupport {
             throw new IllegalArgumentException(
                     "잘못된 날짜 형식입니다. yyyyMMdd 형식이어야 합니다: " + text, e);
         }
-
-        super.setAsText(text);
     }
 }

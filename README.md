@@ -87,72 +87,96 @@
 ```
 com.ghyinc.finance
 ├── domain
-│   ├── loan
-│   │   ├── controller         # API 진입점
-│   │   ├── service            # 비즈니스 로직
-│   │   │   ├── LoanLimitService.java
-│   │   │   ├── ProductService.java            # 금융사별 상품 조회 캐싱 처리
-│   │   │   ├── LoanLimitEventHandler.java     # 한도조회 처리 이벤트 리스너
-│   │   │   ├── LoanLimitSenderService.java    # @Async 비동기 전송
-│   │   │   └── LoanLimitResultService.java    # 콜백 수신 처리
-│   │   ├── adaptor            # 금융사별 API 변환
-│   │   │   ├── common         # 표준 Layout 금융사 공통
-│   │   │   ├── impl           # 비표준 금융사 개별 구현
-│   │   │   └── callback       # 콜백 수신 Adaptor
-│   │   ├── strategy           # 대출유형별 전략 패턴
-│   │   ├── entity             # JPA Entity
-│   │   ├── repository         # Spring Data JPA
-│   │   ├── dto                # 요청/응답 DTO
-│   │   └── enums              # 상태/타입 Enum
+│   ├── loan                                   # 핵심 도메인: 한도조회 · 대출신청
+│   │   ├── controller
+│   │   │   └── LoanController.java               # 한도조회 / 콜백 수신 / 폴링 / 결과요약 / 대출신청 API
+│   │   ├── service
+│   │   │   ├── LoanLimitService.java                     # 요청 수신 · 중복요청 방어(Redis 락) · Strategy 실행 · 결과 폴링
+│   │   │   ├── LoanLimitInquiryPersistenceService.java   # DB 트랜잭션 전용 협력자 (최초 INSERT / 선저장 / 결과반영 / FAILED 처리)
+│   │   │   ├── LoanLimitEventHandler.java                # AFTER_COMMIT 이벤트 리스너 → 팬아웃 제출, 포화 시 보상 처리
+│   │   │   ├── LoanLimitSenderService.java               # 금융사 병렬 팬아웃 (무트랜잭션 구간)
+│   │   │   ├── LoanLimitResultService.java               # 금융사 콜백 수신 처리
+│   │   │   ├── LoanLimitCounterService.java              # 콜백 카운트 증가 전용 (REQUIRES_NEW)
+│   │   │   ├── LoanLimitSummaryService.java              # 결과 화면용 요약 (가능/불가 금융사 분류)
+│   │   │   ├── LoanApplyService.java                     # 선택한 한도결과 기반 대출신청
+│   │   │   └── ProductService.java                       # 금융사별 상품 조회 (Redis 분산 락 + 캐시)
+│   │   ├── adaptor                            # 금융사별 API 변환
+│   │   │   ├── common                             # 표준 Layout 금융사 공통 (CommonLoanLimitAdaptor / CommonResultAdaptor)
+│   │   │   ├── impl                               # 비표준 금융사 개별 구현 (Kakaobank / Tossbank / Linebank + 각 ResultAdaptor)
+│   │   │   ├── callback                           # 콜백 수신 Adaptor 인터페이스 + Factory
+│   │   │   └── dto                                # LoanLimitAdaptorRequest / Response
+│   │   ├── factory                            # LoanLimitStrategyFactory / LoanLimitAdaptorFactory
+│   │   ├── strategy                           # 대출유형별 전략 (Personal / Auto / Mortgage / Business)
+│   │   ├── entity                             # LoanLimitInquiry(Aggregate Root) / LoanLimitResult / LoanLimitProductResult / Partner / Product / LoanApply ...
+│   │   ├── repository                         # Spring Data JPA
+│   │   ├── dto                                # 요청/응답 DTO, PreparedFanout(선저장 결과), ExternalDataContext
+│   │   └── enums                              # InquiryStatus / PartnerInquiryStatus / PartnerCode / LoanType ...
 │   ├── notification
-│   │   ├── service            # 알림 비즈니스 로직
+│   │   ├── controller
+│   │   ├── service
 │   │   │   ├── NotificationService.java
 │   │   │   └── NotificationSenderService.java
-│   │   ├── sender             # 채널별 발송 (Strategy + Template Method)
+│   │   ├── sender                             # 채널별 발송 (Strategy + Template Method)
 │   │   │   ├── AbstractNotificationSender.java     # Template Method (CB/Retry/Fallback 골격)
 │   │   │   ├── NotificationSender.java             # 전략 인터페이스
-│   │   │   └── NotificationSenderFactory.java      # ChannelType → SenderMap 자동 수집
+│   │   │   ├── NotificationSenderFactory.java      # ChannelType → Sender 자동 수집
+│   │   │   └── Sms / Email / Kakao / Push NotificationSender.java
 │   │   ├── event
-│   │   │   ├── NotificationEventConsumer.java       # Kafka Consumer (발송 처리)
-│   │   │   └── LoanLimitCompletedEventConsumer.java # loan-limit-completed 토픽 수신
-│   │   ├── entity
-│   │   ├── repository
-│   │   └── enums
-│   └── external               # 외부 기관 API
-│       ├── nice               # Nice DNR (자동차등록원부) 연동
-│       └── coocon             # KB 부동산 시세 연동
-├── global
-│   ├── client                 # 통신 방식별 ApiClient (REST, 전용선)
-│   ├── common                 # 공통 유틸 (채번, BaseEntity 등)
-│   ├── config                 # Spring 설정
-│   ├── crypto                 # 암복호화 (AES, RSA)
-│   ├── event                  # Kafka Event Publisher
-│   ├── exception              # 전역 예외 처리
-│   ├── outbox                 # Outbox 패턴 (트랜잭션 보장)
-│   │   ├── entity
-│   │   │   ├── OutboxEvent.java
-│   │   │   └── OutboxStatus.java
+│   │   │   ├── LoanLimitCompletedEventConsumer.java # loan-limit-completed 수신 (@RetryableTopic + DLT)
+│   │   │   ├── NotificationEventConsumer.java       # notification.send 수신 (실제 발송)
+│   │   │   └── NotificationEvent.java
+│   │   ├── entity / repository / dto / enums
+│   ├── audit                                  # 감사 로그
 │   │   ├── event
-│   │   │   └── OutboxCreatedEvent.java
-│   │   ├── repository
-│   │   │   └── OutboxEventRepository.java
-│   │   ├── service
-│   │   │   ├── OutboxEventWriter.java       # Outbox Insert + 이벤트 발행
-│   │   │   └── OutboxEventService.java      # @TransactionalEventListener
-│   │   └── scheduler
-│   │       └── OutboxEventBatchPublisher.java # @Scheduled 재시도
-│   ├── kafka
-│   │   └── dlq                    # Kafka DLQ 처리
-│   │       ├── entity
-│   │       │   ├── DlqEvent.java
-│   │       │   └── DlqStatus.java
-│   │       ├── repository
-│   │       │   └── DlqEventRepository.java
-│   │       ├── DlqEventConsumer.java      # DLT 토픽 수신 + Poison Pill 자동 분류
-│   │       ├── DlqRetryScheduler.java     # 지수 백오프 자동 재시도
-│   │       └── PoisonPillClassifier.java  # Poison Pill 판별
-│   ├── metrics
-│   │   └── PartnerSlaMetricsConsumer.java # audit.partner-transmission 독립 구독, 파트너사별 SLA 지표 수집
+│   │   │   └── AuditLogConsumer.java               # audit.partner-transmission / audit.partner-callback 배치 적재
+│   │   └── entity / repository
+│   ├── kcbcredit                              # KCB 신용변동 파일 수신 · Spring Batch 처리
+│   │   ├── scheduler
+│   │   │   └── KcbFileIngestScheduler.java         # 매일 03:00, ShedLock + 파일명 이력 기반 멱등성 가드
+│   │   ├── file                                # KcbFilePoller / KcbFileProperties (신규 파일 탐색)
+│   │   ├── batch                               # Job/Step 설정, Reader 레이아웃(고정폭), Processor, Writer, JobListener
+│   │   └── dto / entity / enums / repository
+│   ├── auth                                   # JWT 로그인 · 토큰 재발급 (controller / service / security / dto)
+│   ├── user                                   # 회원 (Member, MemberRole)
+│   └── external                               # 외부 기관 API
+│       ├── nice                               # Nice DNR (자동차등록원부) 연동
+│       └── coocon                             # KB 부동산 시세 연동
+└── global
+    ├── client                                 # 통신 방식별 ApiClient (REST, 전용선)
+    ├── common                                 # 공통 유틸 (LoReqtNoGenerator 채번, BaseTimeEntity, ApiCommResponse 등)
+    ├── config                                 # Spring 설정
+    │   ├── AsyncConfig.java                        # 스레드풀 5종 (loanLimit / partnerApi / compensation / outboxPublish / outboxRetry)
+    │   ├── Kafka*Config.java                       # Kafka Producer/Consumer, 토픽 선언
+    │   ├── PartnerConnectionPoolConfig / PartnerOrTimeoutConfig / RestClientConfig ...   # 금융사별 커넥션 풀 · 타임아웃 계층
+    │   └── RateLimiterConfig / RetryTemplateConfig / CacheConfig / SecurityConfig ...
+    ├── filter                                 # InboundRateLimiterFilter(Bucket4j+Redis) / JwtAuthenticationFilter / RequestIdFilter
+    ├── jwt                                    # JWT 토큰 발급·검증
+    ├── lock                                   # RedisLockExecutor (Redisson 분산 락)
+    ├── circuitbreaker                         # Circuit Breaker 상태 조회 · 이벤트 리스너
+    ├── crypto                                 # 암복호화 (AES, RSA) + CryptoFactory
+    ├── event                                  # 도메인 이벤트 / Kafka 페이로드 (LoanLimitInquiryCreatedEvent, LoanLimitCompletedEvent, Audit 이벤트)
+    ├── exception                              # 전역 예외 처리
+    ├── interceptor / health / init            # HTTP 로깅·재시도 인터셉터 / Redisson 헬스체크 / 초기 데이터 적재
+    ├── outbox                                 # Outbox 패턴 (트랜잭션 보장)
+    │   ├── entity                                  # OutboxEvent, OutboxStatus (PENDING / PUBLISHED / FAILED)
+    │   ├── event                                   # OutboxCreatedEvent
+    │   ├── repository
+    │   ├── service
+    │   │   ├── OutboxEventWriter.java              # Outbox INSERT + OutboxCreatedEvent 발행 (호출자 트랜잭션에 참여)
+    │   │   └── OutboxEventService.java             # AFTER_COMMIT 즉시 발행 / 배치 재시도용 동기 발행
+    │   └── scheduler
+    │       └── OutboxEventBatchPublisher.java      # @Scheduled + ShedLock, PENDING 건 재시도
+    ├── kafka
+    │   ├── backoff                                 # JitteredExponentialBackOff
+    │   └── dlq                                     # Kafka DLQ 처리
+    │       ├── entity / repository                     # DlqEvent, DlqStatus
+    │       ├── DlqEventConsumer.java                   # DLT 토픽 수신 + Poison Pill 자동 분류
+    │       ├── DlqRetryScheduler.java                  # 지수 백오프 자동 재시도
+    │       └── PoisonPillClassifier.java               # Poison Pill 판별
+    └── metrics                                # Micrometer 지표
+        ├── PartnerSlaMetricsConsumer.java          # audit.partner-transmission 독립 구독, 파트너사별 SLA 지표
+        ├── PartnerConnectionPoolMetrics.java       # 금융사 HTTP 커넥션 풀 사용량
+        └── TaskExecutorMetrics.java                # 스레드풀 사용량
 ```
 
 <br>
@@ -162,50 +186,126 @@ com.ghyinc.finance
 
 ### 1. 한도조회 비동기 처리 흐름
 
+한도조회는 **"접수 → 팬아웃 → 콜백 수신 → FE 폴링"** 4단계로 나뉩니다. 요청 스레드는 접수(Inquiry INSERT)까지만 담당하고 즉시 응답하며, 금융사 호출과 결과 반영은 별도 스레드풀에서 처리합니다. **DB 트랜잭션은 짧은 구간 단위로 쪼개고, 금융사 응답을 기다리는 팬아웃 구간은 트랜잭션 없이 수행**하여 대기 시간 동안 DB 커넥션을 점유하지 않습니다.
+
 ```
-FE → POST /api/loan/limit/inquiry
+FE → POST /api/loan/request-compare-loan
          │
          ▼
-  LoanLimitService                      [HTTP 요청 스레드]
-  ├── Strategy 선택 (대출유형별)
-  ├── 외부데이터 조회 (Nice DNR 등)
-  ├── LoanLimitInquiry INSERT (PENDING)
-  ├── ApplicationEventPublisher.publishEvent(LoanLimitInquiryCreatedEvent)
-  └── 202 Accepted 즉시 응답
+  InboundRateLimiterFilter                          [HTTP 요청 스레드]
+  └── Bucket4j + Redis, 클라이언트(IP)당 초당 20건 초과 시 429 (인스턴스 수와 무관)
+         │
+         ▼
+  LoanLimitService.requestCompareLoan()
+  ├── Redis 분산 락 (userId + loanType, 대기 0초) — 동시 중복 요청 차단
+  ├── 진행 중 조회(PENDING / IN_PROGRESS) 존재 여부 확인 → 있으면 거절
+  ├── Strategy 선택 (대출유형별) → validate()
+  ├── 외부데이터 조회 (Nice DNR, KB시세 등 — 필요한 유형만)
+  ├── 조회 가능 금융사 선정
+  │     ├── strategy.getSupportedBanks()       : 대출유형별 지원 금융사 (코드 레벨)
+  │     └── strategy.filterAvailablePartners() : 외부데이터 실패 시 해당 금융사 동적 제외
+  ├── strategy.toAdaptorRequest() — 금융사 전송용 공통 요청 DTO 생성
+  └── PersistenceService.createLoanLimitInquiry()      ◀ [Tx 0] 짧은 트랜잭션
+        ├── LoanLimitInquiry INSERT (inquiryNo 채번, PENDING)
+        ├── LoanLimitInquiryCreatedEvent 발행 (Spring 이벤트)
+        └── COMMIT 후 inquiryNo 포함 즉시 응답
          │
          ▼ @TransactionalEventListener(AFTER_COMMIT)
   LoanLimitEventHandler.handleInquiryCreated()
-         │  트랜잭션 커밋 후 실행 보장
-         │  (커밋 전 실행 시 콜백이 먼저 도착해도 Inquiry 조회 불가 → Race Condition)
+  │  커밋 이후 실행 보장 (커밋 전 실행 시 콜백이 먼저 도착해도 Inquiry 조회 불가 → Race Condition)
+  │  @Async 대신 executor.execute()로 직접 제출 — 큐 포화(TaskRejectedException)를 이 자리에서 잡기 위함
+  │
+  ├── 정상: loanLimitExecutor에 팬아웃 제출 → HTTP 스레드 즉시 해제
+  └── 포화: compensationExecutor(전용 소형 풀)에서 markFailed() — Inquiry FAILED 처리 (REQUIRES_NEW)
          │
-         ▼ @Async ("loanLimitExecutor") [별도 스레드 — HTTP 스레드 즉시 해제]
-  LoanLimitSenderService
-  ├── LoanLimitResult INSERT       (금융사당 1건)
-  ├── LoanLimitProductResult INSERT (상품당 1건, PENDING 선저장)
-  ├── 금융사별 API 병렬 전송 (CompletableFuture)
-  └── 완료 시 알림 이벤트 발행
-      └── OutboxEventWriter.enqueue() — Outbox INSERT + OutboxCreatedEvent 발행 (같은 트랜잭션, 원자적)
+         ▼ loanLimitExecutor 스레드
+  LoanLimitSenderService.inquiry()                  ※ 자체는 @Transactional 아님
+  │
+  ├── ① [Tx 1] PersistenceService.preSave()          ◀ 선저장 (짧게 COMMIT)
+  │     ├── Inquiry → IN_PROGRESS
+  │     ├── LoanLimitResult INSERT        (금융사당 1건)
+  │     ├── LoanLimitProductResult INSERT (상품당 1건, PENDING, loReqtNo 채번)
+  │     ├── Inquiry 전체 상품 수 초기화
+  │     └── 팬아웃에 필요한 값만 PreparedFanout(record)으로 반환 (엔티티 반환 금지 → 트랜잭션 밖 Lazy 이슈 방지)
+  │
+  ├── ② [무트랜잭션] 금융사 병렬 팬아웃                ◀ DB 커넥션 미점유
+  │     ├── CompletableFuture.supplyAsync(adaptor.inquireLimit(), partnerApiExecutor)
+  │     ├── .orTimeout(금융사별 orTimeout)   — connect < read < orTimeout 계층
+  │     ├── 어댑터 호출 안쪽: Rate Limiter → Bulkhead → Circuit Breaker → Retry (Resilience4j)
+  │     └── 실패는 예외 전파 대신 Fallback 응답으로 변환 → 다른 금융사 진행에 영향 없음
+  │           CB_OPEN / RATE_LIMIT_EXCEEDED / BULKHEAD_FULL / THREAD_POOL_EXHAUSTED / 기타 예외
+  │
+  └── ③ [Tx 2] PersistenceService.applyResults()      ◀ 결과반영 (짧게 COMMIT)
+        ├── 금융사별 Result / ProductResult 상태 UPDATE (SEND_SUCCESS / SEND_FAILED)
+        ├── 금융사별 전송 이력 Outbox INSERT (PartnerTransmission)
+        ├── Inquiry 최종 상태 결정: SUCCESS / PARTIAL_SUCCESS / FAILED
+        └── FAILED가 아니면 완료 이벤트 Outbox INSERT (LOAN_LIMIT_COMPLETED) — 같은 트랜잭션, 원자적
+
+      ※ ①②③ 어디서든 예외 발생 시 markFailed()로 Inquiry를 FAILED 처리 (best-effort)
+      ※ ①③은 별도 빈(PersistenceService)으로 분리 — 같은 클래스 내부 호출은 AOP 프록시를 우회해 @Transactional이 무효화됨
          │
          ▼ @TransactionalEventListener(AFTER_COMMIT)
-  OutboxEventService.publishAfterCommit()
+  OutboxEventService.publishAfterCommit()           [outboxPublishExecutor, 별도 스레드풀 · REQUIRES_NEW]
   ├── Kafka 발행 성공 → OutboxEvent PUBLISHED UPDATE
-  └── Kafka 발행 실패 → OutboxEvent PENDING 유지 (배치 재시도)
+  ├── Kafka 발행 실패 → OutboxEvent PENDING 유지
+  └── outboxPublishExecutor 포화 → 즉시발행 스킵 (PENDING으로 남아 배치가 처리)
+         │
+         ▼ (Kafka 장애 등으로 PENDING이 남은 경우)
+  OutboxEventBatchPublisher.retryPendingEvents()    [@Scheduled 60초, ShedLock, outboxRetryExecutor]
+  ├── PENDING 건 조회 (일정 시간 경과분, 최대 100건)
+  ├── 동기 발행(send().get(timeout)) 후 결과 확정
+  └── applyRetryResult(): PUBLISHED / FAILED 반영 (REQUIRES_NEW, id로 재조회)
          │
          ▼ Kafka (loan-limit-completed)
-  LoanLimitCompletedEventConsumer (notification 도메인)
-  └── NotificationService → notification.send 토픽 발행
+  LoanLimitCompletedEventConsumer (notification 도메인)   [@RetryableTopic: 지수 백오프 재시도 + DLT]
+  └── NotificationService → Notification INSERT + notification.send 이벤트 발행
          │
          ▼ Kafka (notification.send)
   NotificationEventConsumer
   ├── NotificationSenderFactory.getSender(channelType)
   ├── AbstractNotificationSender.send() — CircuitBreaker + Retry + Fallback
   └── 채널별 실제 발송 (SMS/Email/카카오톡: RestClient, 앱 푸시: FCM)
+```
+
+```
 ─────────────────────────────────────────────────────
   Callback (금융사 → 플랫폼)
-  금융사 → POST /api/loan/limit/callback
-  LoanLimitResultService
-  ├── loReqtNo + productCode로 선저장 데이터 조회 및 UPDATE
-  └── 비관적 락으로 count 동시성 제어
+─────────────────────────────────────────────────────
+  금융사 → POST /api/loan/response-compare-loan-result   (Header: X-Partner-Code)
+  LoanLimitResultService.responseCompareLoanResult()
+  ├── LoanLimitResultAdaptorFactory.getAdaptor(partnerCode)
+  │     └── 금융사별 콜백 포맷 → 공통 DTO(LoanLimitResultRequest) 변환
+  ├── loReqtNo + productCode로 선저장된 ProductResult 조회
+  ├── 상태가 SEND_SUCCESS가 아니면 skip (중복 수신 / 전송 실패·타임아웃 건은 덮어쓰지 않음)
+  ├── LoanLimitCounterService.incrementSuccessCount()      ◀ 콜백 카운트 원자적 UPDATE, REQUIRES_NEW 별도 트랜잭션
+  │     └── UPDATE 직후 COMMIT → Inquiry row lock 즉시 해제 (동일 Inquiry에 다수 금융사 콜백이 몰려도 서로 대기하지 않음)
+  ├── ProductResult UPDATE (resultCode, 한도, 금리)
+  ├── 콜백 이력 Outbox INSERT (PartnerCallback)
+  └── 금융사에는 항상 금융사 포맷의 응답 반환 — 처리 실패 시 실패 응답을 내려 재전송 여부를 금융사가 판단하도록 함
+```
+
+```
+─────────────────────────────────────────────────────
+  결과 조회 (FE → 플랫폼)
+─────────────────────────────────────────────────────
+  GET /api/loan/inquiry/{inquiryNo}            FE 폴링
+  └── 전체 콜백이 수신된 경우(isAllResultReceived)에만 상품별 결과를 페이징하여 반환, 그 전에는 진행 상태만 반환
+
+  GET /api/loan/inquiry/{inquiryNo}/summary    결과 화면 전용 요약
+  └── 대출 가능 / 불가 금융사 분류, 상품별 그룹핑, 아직 응답 대기 중인 금융사 집계
+
+  POST /api/loan/apply                         대출신청
+  └── 한도 이력 · 선택 상품 결과 검증 → 부결 상품 / 중복 신청 차단 → LoanApply INSERT
+```
+
+```
+─────────────────────────────────────────────────────
+  배치 (KCB 신용변동 파일 수신)
+─────────────────────────────────────────────────────
+  KcbFileIngestScheduler                       [매일 03:00 · ShedLock]
+  ├── KcbFilePoller: 신규 파일 탐색
+  ├── 파일명 이력 조회(KcbCreditFile) — 이미 처리된 파일이면 스킵 (멱등성)
+  └── Spring Batch Job 실행: 고정폭 파일 읽기 → chunk 단위 처리 → skip 기반 결함 허용
 ```
 
 ### 2. Kafka 토픽 구성
@@ -214,47 +314,72 @@ FE → POST /api/loan/limit/inquiry
 loan-limit-completed   loan → notification 도메인 간 이벤트 전달
                         한도조회 완료 시 발행 (inquiryNo가 partition key)
                         OutboxEventService가 발행 (Outbox Pattern)
- 
+
 notification.send      notification 도메인 내부 비동기 발송 처리
                         Notification INSERT 후 실제 발송 분리
 
 audit.partner-transmission   파트너사 API 전송 이력 감사 로그 (inquiryNo가 partition key)
                               독립된 컨슈머 그룹 2개가 같은 토픽을 병렬 구독:
-                              ├── audit-log-group           → AuditLogConsumer (감사 로그 DB 적재)
+                              ├── audit-log-group           → AuditLogConsumer (감사 로그 DB 배치 적재)
                               └── partner-sla-metrics-group → PartnerSlaMetricsConsumer (Micrometer 지표 수집)
                               한쪽이 느려지거나 장애가 나도 다른 쪽 처리에 영향 없음 (컨슈머 그룹 단위로 완전히 독립)
 
-audit.partner-callback       파트너사 콜백 수신 이력 감사 로그 (AuditLogConsumer가 구독)
+audit.partner-callback       파트너사 콜백 수신 이력 감사 로그 (loReqtNo가 partition key, AuditLogConsumer가 구독)
 
-loan-limit-completed.DLT    loan-limit-completed 처리 실패 메시지 보관
-notification.send.DLT       notification.send 처리 실패 메시지 보관
+*.DLT                        loan-limit-completed / notification.send / audit.partner-transmission / audit.partner-callback
+                              각 토픽별 처리 실패 메시지 보관 (총 4개)
 ```
+
+모든 토픽은 Outbox의 `aggregateType`으로 분기하여 발행합니다.
+
+| aggregateType | 토픽 | 이벤트 |
+|---|---|---|
+| `LoanLimitInquiry` | `loan-limit-completed` | 한도조회 완료 |
+| `Notification` | `notification.send` | 알림 발송 요청 |
+| `PartnerTransmission` | `audit.partner-transmission` | 금융사 전송 이력 |
+| `PartnerCallback` | `audit.partner-callback` | 금융사 콜백 수신 이력 |
 
 **파트너사별 SLA 모니터링 (`PartnerSlaMetricsConsumer`)**: `audit.partner-transmission` 이벤트(`PartnerTransmissionAuditEvent`)에는 이미 `partnerCode`/`success`/`resTimeMs`가 담겨 있어, DB 재조회 없이 payload만으로 Micrometer `Counter`(`partner.transmission.count`)와 `Timer`(`partner.transmission.duration`)를 `partner`/`result` 태그로 기록합니다. `/actuator/prometheus`로 그대로 노출되어 파트너사별 실패율·p95 응답시간을 Grafana에서 바로 확인할 수 있습니다. 감사 로그(`AuditLogConsumer`)와 달리 완전성보다 가용성을 우선해 파싱 실패 시에도 예외를 전파하지 않고 로그만 남긴 뒤 다음 메시지로 넘어갑니다(재시도/DLT 없음).
 
-### 2. 디자인 패턴
+### 3. 디자인 패턴
 
 #### Strategy + Factory 패턴
-대출유형(신용/담보/사업자/오토담보)별로 지원 금융사, 유효성 검증, 요청 변환 로직을 캡슐화합니다.
+대출유형(신용/담보/사업자/오토담보)별로 지원 금융사, 유효성 검증, 외부데이터 조회, 요청 변환 로직을 캡슐화합니다.
 
 ```java
 // 대출유형별 전략 자동 선택
-LoanLimitStrategy strategy = strategyFactory.getStrategy(request.getLoanType());
+LoanLimitStrategy strategy = strategyFactory.getStrategy(request.loanType());
 strategy.validate(request);
-ExternalDataContext context = strategy.fetchExternalData(request);
+ExternalDataContext context = strategy.requiresExternalData()
+        ? strategy.fetchExternalData(request)
+        : ExternalDataContext.empty();
+List<PartnerCode> available = strategy.filterAvailablePartners(strategy.getSupportedBanks(), context);
 LoanLimitAdaptorRequest adaptorRequest = strategy.toAdaptorRequest(request, context);
 ```
 
-#### Adaptor 패턴
-금융사별 자체 API Layout을 내부 표준 DTO로 변환합니다.
+#### Adaptor + Factory 패턴
+금융사별 자체 API Layout을 내부 표준 DTO로 변환합니다. 요청(한도조회 전송)과 응답(콜백 수신) 각각 Adaptor/Factory 쌍이 있습니다.
 
 ```
-표준 Layout 금융사 → CommonLoanLimitAdaptor (yml 설정만으로 금융사 추가)
-자체 Layout 금융사 → KakaobankLoanLimitAdaptor / TossBankLoanLimitAdaptor
+표준 Layout 금융사 → CommonLoanLimitAdaptor / CommonResultAdaptor (yml 설정만으로 금융사 추가)
+자체 Layout 금융사 → Kakaobank / Tossbank / Linebank + 각 ResultAdaptor (impl)
+
+LoanLimitAdaptorFactory        partnerCode → 한도조회 전송 Adaptor
+LoanLimitResultAdaptorFactory  partnerCode → 콜백 수신 Adaptor
 ```
 
 #### Strategy + Template Method 패턴 (notification)
 채널(SMS/Email/카카오톡/앱 푸시)별 발송 로직을 캡슐화합니다. 자세한 구조는 아래 `📨 알림 서비스` 섹션에서 다룹니다.
+
+#### 트랜잭션 경계 분리 (협력자 빈 패턴)
+`@Transactional`이 필요한 구간을 별도 빈으로 분리해 프록시를 경유하도록 합니다. 같은 클래스 내부 호출은 AOP 프록시를 우회하므로, 짧게 커밋해야 하는 구간은 반드시 다른 빈으로 나눕니다.
+
+```
+LoanLimitSenderService        → 트랜잭션 없이 팬아웃 오케스트레이션
+LoanLimitInquiryPersistenceService → 최초 INSERT / preSave / applyResults / markFailed 각각 짧은 트랜잭션
+LoanLimitCounterService       → 콜백 카운트 증가만 REQUIRES_NEW
+OutboxEventService            → 즉시발행(REQUIRES_NEW) / 배치 결과 반영(REQUIRES_NEW)
+```
 
 #### 통신 방식별 ApiClient 분리
 
