@@ -25,6 +25,9 @@
 - [💀 Kafka DLQ (Dead Letter Queue)](#kafka-dlq)
 - [🗃 캐싱 전략](#caching-strategy)
 - [🔄 콜백 동시성 제어](#callback-concurrency)
+- [🔑 인증 (JWT)](#auth)
+- [🗂 KCB 신용변동 배치](#kcb-batch)
+- [📊 모니터링 지표](#monitoring)
 - [📋 API 명세](#api-spec)
 - [📝 주요 설계 결정](#design-decisions)
 
@@ -59,7 +62,7 @@
 | Framework    | Spring Boot 2.7      | Spring Boot 3.5                 |
 | Architecture | Layered Architecture | Domain-driven Package Structure |
 | DB           | Oracle DB            | H2 DB (In-memory)               |
-| API 통신       | RestTemplate         | RestClient                      |
+| API 통신       | RestTemplate         | RestClient + Apache HttpClient5 (커넥션 풀) |
 
 ### 개인 프로젝트 상세 스택
 
@@ -68,15 +71,21 @@
 | Language  | Java 17                                 |
 | Framework | Spring Boot 3.5                         |
 | ORM       | Spring Data JPA / Hibernate             |
-| DB        | H2 DB                                   |
-| 비동기       | Spring @Async / CompletableFuture       |
-| 장애격리      | Resilience4j Circuit Breaker / Retry / Rate Limiter / Bulkhead |
+| DB        | H2 DB (local, In-memory)                |
+| 비동기       | Spring @Async / CompletableFuture, 용도별 전용 ThreadPoolTaskExecutor 5종 |
+| 장애격리      | Resilience4j Circuit Breaker / Retry / Rate Limiter / Bulkhead (금융사별 독립 인스턴스) |
+| HTTP Client | Spring RestClient + Apache HttpClient5 (`PoolingHttpClientConnectionManager`) |
+| 메시지큐 | Apache Kafka (Outbox Pattern, DLQ, `@RetryableTopic` 지수 백오프 재시도) |
+| 캐싱 | Redis Cache (Redisson 분산 락 기반), Caffeine (로컬 캐시) |
+| 분산처리 | Redis (Redisson 분산 락, INCR 채번), Bucket4j (분산 Rate Limiting) |
+| 스케줄링 | Spring @Scheduled + ShedLock (JDBC) |
+| 배치 | Spring Batch (고정폭 파일, chunk + skip 결함 허용) |
+| 보안 | Spring Security + JWT (jjwt) |
 | 암복호화      | AES-256-CBC, AES-256-ECB, RSA-OAEP      |
+| 알림 | REST 채널(SMS/Email/카카오톡) + Firebase Admin SDK (FCM 앱 푸시) |
+| 모니터링 | Spring Boot Actuator + Micrometer + Prometheus |
 | API 문서    | SpringDoc OpenAPI (Swagger)             |
-| Build     | Gradle                                  |
-| 메시지큐 | Apache Kafka (Outbox Pattern, DLQ, 지수 백오프 재시도) |
-| 캐싱 | Redis Cache (Redisson 분산 락 기반), Caffeine (`@Cacheable`, 로컬 캐시) |
-| 분산처리 | Redis (Redisson 분산락, INCR 채번) |
+| Build / CI | Gradle, GitHub Actions, JaCoCo |
 
 
 <br>
@@ -393,24 +402,35 @@ REST   → RestApiClient
 <a id="thread-pool-concurrency"></a>
 ## ⚙️ 스레드풀 구성과 동시성 제어
 
-### Executor 사이징 근거
+### Executor 구성
 
-`loanLimitExecutor`(요청당 1스레드 점유, core 10 / max 30 / queue 50)와 `partnerApiExecutor`(금융사별 병렬 호출 전담, core 50 / max 150 / queue 300)의 초기값은 감으로 잡지 않고, 서로 다른 두 자원 관점에서 상한을 각각 계산한 뒤 더 작은 쪽을 채택하는 방식으로 정했습니다.
+용도가 다른 작업이 한 풀에서 서로를 밀어내지 않도록 스레드풀을 5개로 분리했습니다.
 
-1. **코어 수 기준 이론적 상한** — 인스턴스 스펙(8 core)을 기준으로 산출. 외부 API 호출 대기가 대부분인 I/O-bound 작업이라 스레드 수를 코어 수보다 훨씬 크게 잡을 여지는 있지만, 무한정 늘리면 컨텍스트 스위칭 비용이 커지므로 이 관점에서의 상한을 먼저 계산합니다.
-2. **메모리 기준 현실적 상한** — 서버 메모리(32GB)에서 JVM 힙, 다른 스레드풀(`loanLimitExecutor` 등), DB 커넥션 풀 등 기존 점유량을 제외한 여유분을 스레드당 예상 메모리 사용량으로 나눠 산출. 코어 수 기준 상한만 보면 실제로는 메모리 부족으로 OOM이나 GC 압박이 먼저 발생할 수 있어서 별도로 계산합니다.
-3. 두 상한 중 더 작은 값을 기준으로 `corePoolSize`/`maxPoolSize`를 설정합니다 — 한쪽 자원만 보고 정하면 다른 자원이 실제 병목이 될 수 있기 때문에, 보수적인 값을 채택하는 쪽이 안전합니다.
-4. 오픈 후에는 이 초기값을 그대로 두지 않고, 실제 부하 테스트로 처리량이 꺾이기 시작하는 지점을 확인해 값을 미세 조정했습니다.
+| Executor | core / max / queue | 거절 시 동작 | 역할 |
+|---|---|---|---|
+| `loanLimitExecutor` | 15 / 40 / 60 | `AbortPolicy` → 호출부에서 FAILED 보상 | 한도조회 팬아웃 오케스트레이션 (조회 1건이 팬아웃 완료까지 스레드 1개 점유) |
+| `partnerApiExecutor` | 300 / 400 / 50 | `AbortPolicy` → `THREAD_POOL_EXHAUSTED` fallback | 금융사별 병렬 API 호출 (I/O 대기 전용) |
+| `compensationExecutor` | 2 / 5 / 200 | 제출 실패 시 로그만 남기고 스킵 (best-effort) | `loanLimitExecutor` 포화 시 Inquiry FAILED 전환 전용 |
+| `outboxPublishExecutor` | 20 / 20 / 200 | 즉시발행 스킵 → PENDING으로 남아 배치가 처리 | Outbox 즉시 Kafka 발행 |
+| `outboxRetryExecutor` | 10 / 10 / 100 | `AbortPolicy` | Outbox 배치 재시도 병렬 발행 |
 
-두 풀 모두 큐가 가득 차면 `AbortPolicy`로 즉시 실패시킵니다. 무한정 큐잉으로 지연을 숨기기보다, 포화 상태를 호출부에 빠르게 알려 장애를 조기에 드러내는 쪽을 택했습니다.
+**사이징 근거**
+
+- `partnerApiExecutor`는 Little's Law로 산정했습니다. 초당 20건 × 금융사 49곳 팬아웃 × 평균 응답 0.3초 ≈ 294 → `core=300`, `max=400`(HTTP 커넥션 풀 `maxTotal`과 동일). 큐는 짧은 버스트만 흡수하도록 작게(50) 두었습니다.
+- `loanLimitExecutor`는 팬아웃 대기 동안 스레드를 점유하는 구조라 `max`가 곧 동시에 진행 가능한 한도조회 수입니다. DB 커넥션 풀(`maximum-pool-size=150`)은 이 값에 콜백·Outbox 배치 등 다른 트랜잭션 경로 여유분을 더해서 잡았습니다.
+- `compensationExecutor`는 의도적으로 작게 두었습니다. `loanLimitExecutor`가 포화된 뒤에는 유입되는 모든 요청이 FAILED 보상 경로(`REQUIRES_NEW`, 새 DB 커넥션)를 동시에 타기 때문에, 이 경로를 요청 스레드에서 그대로 실행하면 executor 포화가 곧바로 DB 커넥션 풀 고갈로 번집니다. 전용 소형 풀로 위임해 **보상용으로 동시에 열리는 커넥션 수의 상한을 하드 캡**으로 걸었습니다.
+- `outboxRetryExecutor`는 `core = max`로 맞췄습니다. `ThreadPoolExecutor`는 bounded queue가 가득 차기 전에는 `core`를 넘겨 스레드를 늘리지 않으므로, `core`가 작으면 `max`가 있어도 실제 동시성이 `core`로 고정됩니다.
+- `outboxPublishExecutor`를 파트너 API용 풀과 분리한 이유는 Kafka 장애 시 발행 스레드가 블로킹되더라도 금융사 호출 경로에 영향을 주지 않도록 하기 위해서입니다. 포화되면 발행을 건너뛰고 Outbox가 `PENDING`으로 남아 배치 재시도가 처리하므로 데이터는 유실되지 않습니다.
+
+풀이 포화되면 큐잉으로 지연을 숨기지 않고 `AbortPolicy`로 즉시 실패시킵니다. 포화 상태를 호출부에 빠르게 알려 장애를 조기에 드러내는 쪽을 택했습니다. 초기값은 계산으로 잡되, 실제 부하 테스트로 처리량이 꺾이는 지점을 확인해 조정합니다.
 
 ```java
 @Bean(name = "partnerApiExecutor")
 public Executor partnerApiExecutor() {
     ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-    executor.setCorePoolSize(50);
-    executor.setMaxPoolSize(150);
-    executor.setQueueCapacity(300);
+    executor.setCorePoolSize(300);   // Little's Law: 20 req/s × 49 팬아웃 × 0.3s ≈ 294
+    executor.setMaxPoolSize(400);    // partnerConnectionManager maxTotal과 동일하게
+    executor.setQueueCapacity(50);   // 짧은 버스트만 흡수
     executor.setTaskDecorator(new MdcTaskDecorator());
     executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
     executor.initialize();
@@ -426,8 +446,11 @@ public Executor partnerApiExecutor() {
 
 | 지점 | 문제 | 방어 방식 |
 |---|---|---|
-| 콜백 수신 (다수 금융사 동시 응답) | `LoanLimitInquiry` count Lost Update | DB `PESSIMISTIC_WRITE` — [콜백 동시성 제어](#callback-concurrency) |
-| 상품 정보 캐싱 | 캐시 미스 시 다수 스레드의 중복 조회(Cache Stampede) | Redis 분산 락(Redisson) — [캐싱 전략](#caching-strategy) |
+| 한도조회 요청 (동일 사용자 동시 요청) | 같은 `userId + loanType`으로 조회가 중복 생성됨 | Redis 분산 락(Redisson, 대기 0초) + 진행 중(PENDING / IN_PROGRESS) 조회 존재 여부 확인 |
+| 팬아웃 대기 구간 | 금융사 응답을 기다리는 동안 DB 커넥션을 붙잡아 커넥션 풀 고갈 | 트랜잭션을 선저장 / 결과반영 두 구간으로 분리, 팬아웃 대기는 무트랜잭션 — [핵심 아키텍처](#architecture) |
+| Executor 포화 | 포화 후 유입되는 요청이 모두 보상 트랜잭션(새 커넥션)을 요구 | 전용 `compensationExecutor`(최대 5)로 동시 보상 수 제한 |
+| 콜백 수신 (다수 금융사 동시 응답) | `LoanLimitInquiry` count Lost Update, 행 락 대기 중 커넥션 점유 | 원자적 UPDATE를 `REQUIRES_NEW`로 분리해 즉시 커밋 — [콜백 동시성 제어](#callback-concurrency) |
+| 상품 정보 캐싱 | 캐시 미스 시 다수 스레드의 중복 조회(Cache Stampede) | Redis 분산 락(Redisson) + 더블 체크 — [캐싱 전략](#caching-strategy) |
 | 인바운드 트래픽 | 멀티 인스턴스 환경에서 로컬 Rate Limiter로는 전체 TPS 제한 불가 | Redis 공유 카운터 기반 Bucket4j — [인바운드 트래픽 방어](#inbound-rate-limiting) |
 | 파트너사 API 호출(outbound) | Resilience4j RateLimiter는 인스턴스-로컬이라 인스턴스 수만큼 계약 TPS 초과 가능 | **알려진 한계** — 인바운드와 동일한 Bucket4j+Redis 공유 카운터 구조로 전환 검토 중 |
 
@@ -437,11 +460,11 @@ public Executor partnerApiExecutor() {
 
 파트너사 호출에 쓰던 `RestClient`는 원래 `SimpleClientHttpRequestFactory`(JDK `HttpURLConnection` 기반)를 썼습니다. 이 구현은 커넥션 재사용 한도가 JVM 전역 시스템 프로퍼티(`http.maxConnections`, 기본값 5)로만 제어되고, `RestClient` 인스턴스별·파트너별로 다르게 줄 방법이 없었습니다. `partnerApiExecutor`가 스레드를 최대 150개까지 띄워도, 같은 파트너사 목적지로 나가는 실제 동시 커넥션은 기본 설정상 5개로 묶여 있어 스레드는 늘어나도 커넥션을 기다리며 블로킹되는 병목이 될 수 있었습니다.
 
-이를 해소하기 위해 `PoolingHttpClientConnectionManager`(Apache HttpClient5)로 전환했습니다(`PartnerConnectionPoolConfig`). 전체 파트너가 공유하는 커넥션 풀(`maxTotal=200`) 위에 파트너별 상한(`maxPerRoute`)을 `HttpRoute` 단위로 얹고, 풀이 고갈됐을 때는 무한 대기 대신 `connectionRequestTimeout(2초)`으로 빠르게 실패하도록 해서 Executor의 `AbortPolicy`와 동일한 "포화 시 빠른 실패" 원칙을 커넥션 풀 레벨까지 확장했습니다.
+이를 해소하기 위해 `PoolingHttpClientConnectionManager`(Apache HttpClient5)로 전환했습니다(`PartnerConnectionPoolConfig`). 전체 파트너가 공유하는 커넥션 풀(`maxTotal=400`, 기본 `maxPerRoute=10`) 위에 파트너별 상한(`maxPerRoute`)을 `HttpRoute` 단위로 얹고, 풀이 고갈됐을 때는 무한 대기 대신 `connectionRequestTimeout(500ms)`으로 빠르게 실패하도록 해서 Executor의 `AbortPolicy`와 동일한 "포화 시 빠른 실패" 원칙을 커넥션 풀 레벨까지 확장했습니다.
 
-전환 과정에서 두 가지를 놓치기 쉬웠습니다. 첫째, `SHINHAN_BANK`는 전용선(`ConnectionType.LEASE_LINE`)이라 `base-url`에 스킴이 없는데(`127.0.0.1`), 이걸 걸러내지 않고 전체 파트너를 순회하며 `HttpHost`를 만들면 기동 시점에 `PoolingHttpClientConnectionManager` 빈 생성 자체가 예외로 실패합니다 — `ConnectionType.REST`인 파트너만 대상으로 걸러야 합니다. 둘째, HttpClient5에서는 커넥션 연결(connect) 타임아웃이 `RequestConfig`가 아니라 `ConnectionConfig` 소관입니다(연결 타임아웃은 새 물리 커넥션을 맺는 순간에만 의미가 있는 값이라, 풀에서 커넥션을 재사용하는 구조에서는 요청 단위가 아니라 커넥션 단위 설정이 맞다는 게 HttpClient5의 설계 의도). `PoolingHttpClientConnectionManager`엔 라우트별 `setConnectionConfig()`가 없어서, `setConnectionConfigResolver(Resolver<HttpRoute, ConnectionConfig>)`로 파트너별 connect timeout을 매핑하고 목록에 없는 라우트는 폴백 값으로 처리하도록 구성했습니다.
+전환 과정에서 세 가지를 놓치기 쉬웠습니다. 먼저, `HttpRoute`의 동등성은 scheme/host/port 기준이라 여러 파트너가 같은 호스트를 공유하면(로컬 부하테스트에서 전 파트너가 mock 서버 하나를 바라보는 경우) 서로 다른 파트너가 같은 라우트로 충돌합니다. 파트너를 순회하며 `setMaxPerRoute(route, n)`을 그냥 호출하면 마지막 파트너의 값이 나머지 전부를 덮어써서, 49개 파트너가 공유하는 라우트인데도 실제 허용 커넥션이 15~20개에 머무는 문제가 있었습니다. 지금은 같은 라우트의 `maxPerRoute`를 **덮어쓰지 않고 합산**하고 `maxTotal`을 넘지 않도록 캡을 씌웁니다. 둘째, `SHINHAN_BANK`는 전용선(`ConnectionType.LEASE_LINE`)이라 `base-url`에 스킴이 없는데(`127.0.0.1`), 이걸 걸러내지 않고 전체 파트너를 순회하며 `HttpHost`를 만들면 기동 시점에 `PoolingHttpClientConnectionManager` 빈 생성 자체가 예외로 실패합니다 — `ConnectionType.REST`인 파트너만 대상으로 걸러야 합니다. 셋째, HttpClient5에서는 커넥션 연결(connect) 타임아웃이 `RequestConfig`가 아니라 `ConnectionConfig` 소관입니다(연결 타임아웃은 새 물리 커넥션을 맺는 순간에만 의미가 있는 값이라, 풀에서 커넥션을 재사용하는 구조에서는 요청 단위가 아니라 커넥션 단위 설정이 맞다는 게 HttpClient5의 설계 의도). `PoolingHttpClientConnectionManager`엔 라우트별 `setConnectionConfig()`가 없어서, `setConnectionConfigResolver(Resolver<HttpRoute, ConnectionConfig>)`로 파트너별 connect timeout을 매핑하고 목록에 없는 라우트는 폴백 값으로 처리하도록 구성했습니다.
 
-만료 커넥션 정리는 `evictExpiredConnections()`(서버가 Keep-Alive 헤더로 명시한 만료 시각 경과)와 `evictIdleConnections()`(일정 시간 유휴 상태) 둘 다 등록해뒀습니다 — 판단 기준이 달라 하나만 켜두면 다른 한쪽이 놓친 stale 커넥션이 재사용될 수 있습니다.
+만료 커넥션 정리는 `evictExpiredConnections()`(서버가 Keep-Alive 헤더로 명시한 만료 시각 경과)와 `evictIdleConnections()`(30초 유휴) 둘 다 등록해뒀습니다 — 판단 기준이 달라 하나만 켜두면 다른 한쪽이 놓친 stale 커넥션이 재사용될 수 있습니다.
 
 풀 상태(leased/pending/available/max)는 `PartnerConnectionPoolMetrics`가 Micrometer Gauge로 전체·파트너별 태그를 붙여 노출합니다 — 이번 전환이 실제로 병목을 해소했는지는 이 지표로 실측 검증할 예정입니다.
 
@@ -452,24 +475,28 @@ public Executor partnerApiExecutor() {
 
 ```
 LoanLimitInquiry (한도조회 요청 1건)
-  ├── inquiryNo           업무 식별번호 (채번)
-  ├── status              PENDING → IN_PROGRESS → SUCCESS/PARTIAL_SUCCESS/FAILED
-  ├── totalProductCount   전체 상품 수 (콜백 완료 판단)
-  └── callbackReceivedCount / approvedProductCount
+  ├── inquiryNo             업무 식별번호 (채번, FE 폴링 / 이력 조회 Key)
+  ├── userId / loanType     인덱스 (user_id, loan_type, status) — 진행 중 조회 확인용
+  ├── status                PENDING → IN_PROGRESS → SUCCESS / PARTIAL_SUCCESS / FAILED
+  ├── totalProductCount     전체 상품 수 (선저장 시점에 초기화)
+  └── successProductCount   콜백 수신이 끝난 상품 수 (전체 수신 여부 판단: isAllResultReceived)
 
-LoanLimitResult (금융사당 1건)
+LoanLimitResult (금융사당 1건 — 전송 결과)
   ├── partnerCode
-  └── status              PENDING → SEND_SUCCESS / SEND_FAILED
+  ├── status                PENDING → SUCCESS / FAILED (금융사 API 전송 성공 여부)
+  └── failReason / resTimeMs
 
-LoanLimitProductResult (상품당 1건)
-  ├── loReqtNo            상품별 유니크 채번 (콜백 연결 Key)
-  ├── productCode
-  ├── status              PENDING → SUCCESS / TIMEOUT
-  ├── resultCode          SUCCESS / LIMIT_DENIED / CREDIT_SCORE_LOW ...
-  └── limitAmount / minRate / maxRate
+LoanLimitProductResult (상품당 1건 — 콜백 결과)
+  ├── loReqtNo              상품별 유니크 채번 (콜백 연결 Key)
+  ├── partnerCode / productCode
+  ├── status                PENDING → SEND_SUCCESS / SEND_FAILED → SUCCESS (콜백 수신 완료)
+  ├── resultCode            SUCCESS / LIMIT_DENIED / CREDIT_SCORE_LOW ...
+  └── amount / interestRate
 
-LoanApplication (대출신청 1건)
-  └── loReqtNo → LoanLimitProductResult 연결
+LoanApply (대출신청 1건)
+  ├── loReqtNo              → LoanLimitProductResult 연결
+  ├── partnerCode / productCode
+  └── status                PENDING → SUBMITTED / FAILED
 ```
 
 ### Aggregate Root 패턴
@@ -492,7 +519,7 @@ inquiry.addProductResult(productResult);    // LoanLimitProductResult 추가
 // 도메인 로직도 Aggregate Root에서 실행
 inquiry.updateInquiryStatus(InquiryStatus.IN_PROGRESS);
 inquiry.initProductCount(totalCount);
-inquiry.incrementSuccessCount();  // count 증가 + 상태 자동 결정
+inquiry.incrementSuccessCount();  // successProductCount 증가 (콜백 경로는 동시성 때문에 원자적 UPDATE 사용 — 콜백 동시성 제어 참고)
 ```
 
 <br>
@@ -500,7 +527,7 @@ inquiry.incrementSuccessCount();  // count 증가 + 상태 자동 결정
 <a id="resilience4j"></a>
 ## 🔒 장애 격리 - Resilience4j
 
-금융사별 독립적인 Circuit Breaker 인스턴스로 특정 금융사 장애 시 격리합니다.
+금융사별 독립적인 Circuit Breaker / Retry / Rate Limiter / Bulkhead 인스턴스(이름 = `PartnerCode`)로 특정 금융사 장애 시 격리합니다. 알림 채널(SMS/EMAIL/KAKAOTALK/PUSH)도 채널명으로 동일하게 독립 인스턴스를 가집니다.
 
 ### Circuit Breaker 설정
 
@@ -509,27 +536,26 @@ resilience4j:
   circuitbreaker:
     configs:
       default:
+        register-health-indicator: true
         sliding-window-type: COUNT_BASED
-        sliding-window-size: 10          # 최근 10건 기준
-        minimum-number-of-calls: 5       # 최소 5건 이후 통계
-        failure-rate-threshold: 50       # 실패율 50% 이상 시 OPEN
-        slow-call-duration-threshold: 5s # 5초 이상 응답은 느린 호출로 기록
-        slow-call-rate-threshold: 50     # 느린 호출 50% 이상 시 OPEN
-        wait-duration-in-open-state: 60s
+        sliding-window-size: 10                  # 최근 10건 기준
+        minimum-number-of-calls: 5               # 최소 5건 이후 통계
+        failure-rate-threshold: 50               # 실패율 50% 이상 시 OPEN
+        slow-call-duration-threshold: 7s         # 7초 이상 응답은 느린 호출로 기록
+        slow-call-rate-threshold: 50             # 느린 호출 50% 이상 시 OPEN
+        wait-duration-in-open-state: 60s         # 파트너 회복 시간 확보
         permitted-number-of-calls-in-half-open-state: 3
         automatic-transition-from-open-to-half-open-enabled: true
-        # 기록할 예외
+        max-wait-duration-in-half-open-state: 10s
         record-exceptions:
-          - org.springframework.web.client.ResourceAccessException
           - org.springframework.web.client.HttpServerErrorException
+          - org.springframework.web.client.ResourceAccessException
           - java.net.ConnectException
           - java.net.SocketTimeoutException
-
-        # 무시할 예외 (Circuit Breaker에 영향 안 줌)
         ignore-exceptions:
-          - org.springframework.web.client.HttpClientErrorException.BadRequest
-          - org.springframework.web.client.HttpClientErrorException.Unauthorized
-      
+          - org.springframework.web.client.HttpClientErrorException
+
+      # default를 상속하고 예외 타입만 도메인 예외로 교체 (HTTP 클라이언트 라이브러리에 종속되지 않도록)
       loan-default:
         base-config: default
         record-exceptions:
@@ -543,12 +569,15 @@ resilience4j:
           - com.ghyinc.finance.global.exception.ExternalApiServerException
         ignore-exceptions:
           - com.ghyinc.finance.global.exception.ExternalApiClientException
-    instances:
+
+    instances:            # 금융사 50여 곳은 모두 loan-default, 알림 채널 4종은 notification-default 상속
       KAKAO_BANK:
-        base-config: default
-      KB_BANK:
-        base-config: default
-        slow-call-duration-threshold: 10s  # 전용선 응답 지연 고려
+        base-config: loan-default
+      TOSS_BANK:
+        base-config: loan-default
+      ...
+      SMS:
+        base-config: notification-default
 ```
 
 ### Circuit Breaker 상태 전환
@@ -561,31 +590,25 @@ HALF_OPEN → 복구 시도 (제한적 요청으로 복구 여부 확인)
 
 ### Fallback - Partial Failure 패턴
 
-Circuit Breaker OPEN 시 `CallNotPermittedException`을 Adaptor에서 직접 캐치하여 즉시 실패 응답을 반환합니다. 특정 금융사 장애가 전체 한도조회를 중단시키지 않고 나머지 금융사는 정상 진행합니다.
+Circuit Breaker OPEN, Rate Limiter 초과, Bulkhead 포화는 모두 "우리 쪽 정책으로 호출하지 않은 것"이라 Adaptor에서 결과로 바꾸지 않고 **예외 그대로 위로 던지고**, `LoanLimitSenderService`의 `CompletableFuture.exceptionally()` **단일 지점**에서 실패 응답으로 변환합니다(Adaptor와 Sender 양쪽에서 중복 처리하지 않기 위함). 특정 금융사 장애가 전체 한도조회를 중단시키지 않고 나머지 금융사는 정상 진행합니다.
 
 ```java
-// LoanLimitAdaptor - CB OPEN 시 Fallback 처리
-@Override
-public LoanLimitAdaptorResponse inquireLimit(PartnerCode partnerCode,
-                                              LoanLimitAdaptorRequest request) {
-    try {
-        // Circuit Breaker + Retry 적용된 API 호출
-        CommonLimitResponse result = apiClient.post("...");
-        return LoanLimitAdaptorResponse.success(partnerCode, resTimeMs);
- 
-    } catch (CallNotPermittedException e) {
-        // Fallback: CB OPEN 시 즉시 실패 응답 반환
-        // → 실제 API 호출 없이 해당 금융사 격리
-        // → 나머지 금융사는 정상 진행 (Partial Success)
-        log.warn("[{}] Circuit Breaker OPEN → Fallback 실행", partnerCode);
-        return LoanLimitAdaptorResponse.fail(partnerCode, "CB_OPEN", resTimeMs);
- 
-    } catch (Exception e) {
-        log.error("[{}] 한도조회 오류", partnerCode, e);
-        return LoanLimitAdaptorResponse.fail(partnerCode, e.getMessage(), resTimeMs);
-    }
-}
+// LoanLimitSenderService - 금융사별 팬아웃
+CompletableFuture
+    .supplyAsync(() -> adaptor.inquireLimit(partnerCode, adaptorRequests), partnerApiExecutor)
+    .orTimeout(partnerOrTimeouts.get(partnerCode).toMillis(), TimeUnit.MILLISECONDS)
+    .exceptionally(ex -> {
+        if (ex.getCause() instanceof CallNotPermittedException)   // CB OPEN
+            return LoanLimitAdaptorResponse.fail(partnerCode, "CB_OPEN", 0L);
+        if (ex.getCause() instanceof RequestNotPermitted)          // Rate Limiter 초과
+            return LoanLimitAdaptorResponse.fail(partnerCode, "RATE_LIMIT_EXCEEDED", 0L);
+        if (ex.getCause() instanceof BulkheadFullException)        // Bulkhead 포화
+            return LoanLimitAdaptorResponse.fail(partnerCode, "BULKHEAD_FULL", 0L);
+        return LoanLimitAdaptorResponse.fail(partnerCode, ex.getMessage(), 0L);
+    });
 ```
+
+`partnerApiExecutor`에 작업을 **제출하는 시점**의 거절(`RejectedExecutionException`)은 `supplyAsync()`가 Future를 반환하기 전에 동기적으로 발생해서 `exceptionally()`로는 잡히지 않습니다. 이 경우는 별도 `catch`에서 `THREAD_POOL_EXHAUSTED`로 변환해, 예외가 `map()` 밖으로 튀어나가 전체 요청이 FAILED 되는 것을 막습니다.
 
 ### Fallback 적용 후 최종 상태 결정
 
@@ -604,12 +627,19 @@ Inquiry 최종 상태
 ### 타임아웃 계층 설계
 
 ```
-connectTimeout (3초)   → 서버 연결 실패 → ResourceAccessException → CB 실패 기록
-readTimeout    (7초)   → 응답 미수신   → SocketTimeoutException  → CB 실패 기록
-orTimeout      (8초)   → CompletableFuture 강제 종료 (최후 안전망)
- 
-connectTimeout < readTimeout = slow-call-duration-threshold < orTimeout
-     3초       <  7초        =              7초             <    8초
+connectionRequestTimeout (500ms) → 풀에서 커넥션 대여 대기 (풀 고갈 시 빠른 실패)
+connectTimeout  (금융사별)        → 서버 연결 실패     → ResourceAccessException → CB 실패 기록
+readTimeout     (금융사별)        → 응답 미수신        → SocketTimeoutException  → CB 실패 기록
+orTimeout       (금융사별, 계산)  → CompletableFuture 강제 종료 (최후 안전망)
+
+connectTimeout < readTimeout < orTimeout
+```
+
+`connect` / `read`는 `application.yaml`의 금융사별 설정(`loan-api.partners.<CODE>.connect-timeout-ms / read-timeout-ms`)이고, `orTimeout`은 고정값이 아니라 `PartnerOrTimeoutConfig`가 그 금융사의 설정과 Retry 설정으로 **동적으로 산정**합니다. Retry가 최대로 재시도하는 최악의 경우가 끝나기 전에 Future가 강제 종료되어 Retry 정책을 잘라먹지 않도록 하기 위해서입니다.
+
+```
+worstCasePerAttempt = connectionRequestTimeout(500ms) + connectTimeout + readTimeout
+orTimeout = maxAttempts × worstCasePerAttempt + worstCaseBackoff + MARGIN(1초)
 ```
 
 ### Retry 설정
@@ -619,19 +649,22 @@ resilience4j:
   retry:
     configs:
       default:
-        max-attempts: 3          # 최초 1회 + 재시도 2회
-        wait-duration: 1s        # 재시도 간격
-        enable-exponential-backoff: true    # 지수 백오프
+        max-attempts: 2                       # 최초 1회 + 재시도 1회
+        wait-duration: 300ms
+        enable-exponential-backoff: true      # 지수 백오프
         exponential-backoff-multiplier: 2
-        enable-randomized-wait: true        # Jitter
-        randomized-wait-factor: 0.5
+        max-wait-duration: 1s
+        enable-randomized-wait: true          # Jitter
+        randomized-wait-factor: 0.3           # 계산된 간격 ±30%
         retry-exceptions:
-          - java.io.IOException
-          - java.util.concurrent.TimeoutException
           - org.springframework.web.client.HttpServerErrorException
           - org.springframework.web.client.ResourceAccessException
+          - java.net.ConnectException
+          - java.net.SocketTimeoutException
+          - java.io.IOException
+          - com.ghyinc.finance.global.exception.ExternalApiServerException
         ignore-exceptions:
-          - io.github.resilience4j.circuitbreaker.CallNotPermittedException
+          - com.ghyinc.finance.global.exception.ExternalApiClientException   # 4xx는 재시도 안 함
 ```
 
 ### Rate Limiter 설정
@@ -643,37 +676,35 @@ resilience4j:
   ratelimiter:
     configs:
       default:
-        limit-for-period: 10          # 갱신 주기당 최대 허용 요청 수
+        limit-for-period: 40          # 갱신 주기당 최대 허용 요청 수
         limit-refresh-period: 1s      # 갱신 주기 (1초)
-        timeout-duration: 0           # 대기 없이 즉시 실패 (0 = 허용량 초과 시 즉시 예외)
-```
-
-```
-Retry → Circuit Breaker 순으로 실행
-  → Rate Limiter 초과 시 RequestNotPermitted 예외 발생
-  → maxAttempts(3) 모두 실패 후 CB 실패로 기록
-  → CB OPEN 시 Retry 없이 즉시 Fallback 실행 (ignoreExceptions)
+        timeout-duration: 0           # 대기 없이 즉시 실패 (초과 시 RequestNotPermitted)
 ```
 
 ### Bulkhead 설정
 
-Rate Limiter는 "초당 몇 건까지 접수할지"를 제한하지만, 응답이 얼마나 오래 걸리는지는 신경 쓰지 않습니다. 특정 금융사가 느려지면(장애까진 아니라 CB의 `slow-call-rate-threshold`를 안 넘는 수준이어도) Rate Limiter는 계속 요청을 접수시키고, 그 요청들이 응답을 기다리며 쌓여 `partnerApiExecutor`(6개 금융사가 공유하는 스레드 풀)를 잠식할 수 있습니다. Bulkhead는 "지금 동시에 진행 중인 호출이 몇 건인지"를 직접 제한해서 이 문제를 막습니다.
+Rate Limiter는 "초당 몇 건까지 접수할지"를 제한하지만, 응답이 얼마나 오래 걸리는지는 신경 쓰지 않습니다. 특정 금융사가 느려지면(장애까진 아니라 CB의 `slow-call-rate-threshold`를 안 넘는 수준이어도) Rate Limiter는 계속 요청을 접수시키고, 그 요청들이 응답을 기다리며 쌓여 `partnerApiExecutor`(50여 개 금융사가 공유하는 스레드 풀)를 잠식할 수 있습니다. Bulkhead는 "지금 동시에 진행 중인 호출이 몇 건인지"를 직접 제한해서 이 문제를 막습니다.
 
 ```yaml
 resilience4j:
   bulkhead:
     configs:
       default:
-        max-concurrent-calls: 10   # 동시 진행 허용 건수
+        max-concurrent-calls: 20   # 동시 진행 허용 건수 (금융사별 max-per-route와 맞춤)
         max-wait-duration: 0       # 대기 없이 즉시 실패
 ```
 
+### 데코레이터 실행 순서
+
+`RestApiClient`가 금융사별 Registry 인스턴스를 아래 순서로 감쌉니다(바깥 → 안쪽).
+
 ```
-Rate Limiter → Bulkhead → Circuit Breaker → Retry 순으로 실행
-  → Rate Limiter, Bulkhead 둘 다 CB보다 바깥에 위치
+Rate Limiter → Bulkhead → Circuit Breaker → Retry → 실제 HTTP 호출
+  → Rate Limiter, Bulkhead는 CB보다 바깥
     (우리 쪽 정책으로 거절한 호출은 CB 실패 통계에 잡히면 안 됨)
-  → Bulkhead 한도 초과 시 BulkheadFullException 즉시 발생
-    → 실제 I/O 없이 즉시 반환되어 partnerApiExecutor 스레드를 오래 붙잡지 않음
+  → Retry가 가장 안쪽: 재시도(maxAttempts=2)가 모두 실패해야 CB에 실패 1건으로 기록
+  → CB OPEN이면 Retry 없이 즉시 CallNotPermittedException
+  → Rate Limiter / Bulkhead 초과 시 실제 I/O 없이 즉시 반환되어 partnerApiExecutor 스레드를 오래 붙잡지 않음
 ```
 
 > 위 Resilience4j 구성(CB/Retry/Bulkhead/RateLimiter)은 전부 `RestApiClient` → 금융사 API 호출,
@@ -714,7 +745,7 @@ public RedissonBasedProxyManager<String> bucket4jProxyManager(RedissonClient red
 }
 ```
 
-`InboundRateLimitFilter`(`OncePerRequestFilter`)가 `/api/loan/request-compare-loan` 요청을 가로채,
+`InboundRateLimiterFilter`(`OncePerRequestFilter`)가 `/api/loan/request-compare-loan` 요청을 가로채,
 클라이언트 IP(`X-Forwarded-For` 우선, 없으면 `getRemoteAddr()`)를 키로 Redis에 저장된 버킷에서
 토큰을 하나 소비합니다. 토큰이 없으면 컨트롤러에 진입하지 않고 그 자리에서 `429 Too Many Requests` +
 `Retry-After` 헤더로 즉시 응답합니다.
@@ -976,18 +1007,39 @@ Outbox 패턴 미적용 시 문제
   └── OutboxEvent INSERT (PENDING)        ├─ 같은 트랜잭션 (원자적)
                                          ─┘
         ↓ 트랜잭션 커밋 후
- 
+
 @TransactionalEventListener(AFTER_COMMIT)
-OutboxEventService.publishAfterCommit()
-  ├── Kafka 즉시 발행 시도
+OutboxEventService.publishAfterCommit()   [@Async("outboxPublishExecutor") · REQUIRES_NEW]
+  ├── Kafka 즉시 발행 시도 (비동기 콜백, 결과를 기다리며 스레드를 묶지 않음)
   ├── 성공 → OutboxEvent PUBLISHED UPDATE
-  └── 실패 → OutboxEvent PENDING 유지
- 
-        ↓ 1분마다 (보조 안전망)
- 
-@Scheduled OutboxEventBatchPublisher
-  └── 5분 이상 PENDING 건 재시도 → PUBLISHED or FAILED
+  ├── 실패 → OutboxEvent PENDING 유지
+  └── outboxPublishExecutor 포화 → 즉시발행 스킵 (PENDING으로 남아 배치가 처리)
+
+        ↓ 60초마다 (보조 안전망)
+
+@Scheduled OutboxEventBatchPublisher      [ShedLock · outboxRetryExecutor]
+  ├── 5분 이상 경과한 PENDING 건 조회 (최대 100건)
+  ├── publishToKafkaSync(): send().get(3초)로 결과를 동기 확정
+  └── applyRetryResult(id, success): PUBLISHED / FAILED 반영 (REQUIRES_NEW, id로 재조회)
 ```
+
+배치는 결과를 **동기로 확정**한 뒤에만 상태를 반영합니다. 예전처럼 발행 결과를 기다리지 않고 리턴하면, Kafka 장애가 스케줄 주기(1분)보다 길게 이어질 때 같은 PENDING 건이 다음 주기에 또 집혀 중복 발행될 수 있기 때문입니다. `applyRetryResult`는 다른 스레드(`outboxRetryExecutor`)에서 넘어온 detached 엔티티를 그대로 쓰지 않고 id로 다시 조회하며, Spring AOP self-invocation을 피하려고 `OutboxEventService`의 별도 메서드로 분리되어 있습니다.
+
+### Kafka 생산자 설정
+
+Kafka 장애 시 발행 경로가 스레드와 DB 커넥션을 오래 붙잡지 않도록 시간 상한을 명시합니다.
+
+```yaml
+spring.kafka.producer:
+  acks: all
+  properties:
+    enable.idempotence: true
+    retries: 2147483647          # 횟수가 아니라 delivery.timeout.ms로 시간을 제한
+    delivery.timeout.ms: 480000  # 재시도 포함 전체 전송 시도 최대 시간
+    max.block.ms: 3000           # 메타데이터/버퍼 대기 상한 (기본 60초는 장애 시 스레드를 너무 오래 점유)
+```
+
+`delivery.timeout.ms`는 전송 재시도 루프의 상한이고, `send()`가 토픽 메타데이터를 **동기적으로** 기다리는 시간은 별개로 `max.block.ms`가 결정합니다. 미설정 시 기본 60초여서 Kafka 장애 때 호출 스레드가 그만큼 묶입니다.
 
 ### OutboxEventWriter — 중복 로직 통합
 
@@ -996,18 +1048,25 @@ OutboxEventService.publishAfterCommit()
 ### OutboxEvent 토픽 분기
 
 ```java
-String topic = switch (outboxEvent.getAggregateType()) {
-    case "LoanLimitInquiry" -> "loan-limit-completed";
-    case "Notification"     -> "notification.send";
-    default -> throw new InvalidRequestException("...");
-};
+private String resolveTopic(String aggregateType) {
+    return switch (aggregateType) {
+        case "LoanLimitInquiry"    -> "loan-limit-completed";
+        case "Notification"        -> "notification.send";
+        case "PartnerTransmission" -> "audit.partner-transmission";
+        case "PartnerCallback"     -> "audit.partner-callback";
+        default -> throw new InvalidRequestException("알 수 없는 aggregateType: " + aggregateType);
+    };
+}
 ```
 
 ### 적용 범위
 
 ```
-loan 도메인      LoanLimitCallbackService → 한도조회 완료 이벤트
-notification     NotificationService     → 알림 발송 이벤트
+loan 도메인      LoanLimitInquiryPersistenceService.applyResults()
+                   → 금융사별 전송 이력 (PartnerTransmission), 한도조회 완료 (LoanLimitInquiry)
+                 LoanLimitResultService (콜백 수신)
+                   → 콜백 수신 이력 (PartnerCallback)
+notification     NotificationService → 알림 발송 이벤트 (Notification)
 ```
 
 <br>
@@ -1099,6 +1158,10 @@ try-catch로 감싸 어떤 상황에서도 예외를 밖으로 던지지 않도�
 대신합니다. 아직 `@RetryableTopic`으로 전환하지 않은 Consumer가 있다면 기존 DB 폴링 방식이 계속 그 Consumer를
 커버합니다.
 
+### DLT 수신 대상
+
+`DlqEventConsumer`는 `loan-limit-completed.DLT`, `notification.send.DLT` 두 토픽을 구독하며(그룹 `notification-dlq-group`), 예외 종류로 Poison Pill(→ `DEAD`, 영구 보관)과 일시 장애(→ `PENDING`, `nextRetryAt`을 지정해 자동 재시도)를 분류해 `DlqEvent`로 저장합니다. 재시도는 `DlqRetryScheduler`가 30초 주기(ShedLock)로 처리합니다. `audit.*` 토픽의 DLT는 이 컨슈머의 대상이 아닙니다.
+
 ### Poison Pill 판별 기준
 
 ```
@@ -1147,7 +1210,7 @@ Redis 캐시 적용 후
 예시:     products::KAKAO_BANK:PERSONAL_CREDIT
 
 적용 효과
-  피크 트래픽 기준 금융사 6개 × 요청당 1회 조회
+  피크 트래픽 기준 금융사 50여 개 × 요청당 1회 조회
   → 캐시 미적용 시 DB 조회 집중
   → 캐시 적용 후 첫 조회만 DB, 이후 Redis에서 처리
 ```
