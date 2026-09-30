@@ -1355,26 +1355,109 @@ CaffeineCacheManager → "cryptoService" 캐시, TTL 1시간, 최대 100개
 <a id="callback-concurrency"></a>
 ## 🔄 콜백 동시성 제어
 
-여러 금융사 콜백이 동시에 수신될 때 `LoanLimitInquiry` count 업데이트의 Lost Update를 방지합니다.
+여러 금융사 콜백이 동시에 수신될 때 `LoanLimitInquiry`의 콜백 수신 카운트(`successProductCount`) 갱신이 유실되지 않도록 하면서, 락 대기 때문에 DB 커넥션이 쌓이지 않게 하는 것이 목표입니다.
 
-락 보유 시간을 최소화하고 중복 콜백에도 안전하도록, 락 획득 직후 `PartnerInquiryStatus` 상태를 확인해 이미 처리됐거나(SUCCESS) 처리 불가 상태인 중복 콜백은 즉시 skip하는 가드를 같이 둡니다.
+### 변천 과정
+
+```
+1) Redis 분산 락            → leaseTime 고정 시 GC pause 중 락 만료로 상호배제가 깨질 수 있음 (fencing token 부재)
+2) DB 비관적 락(PESSIMISTIC_WRITE) → 락 보유 시간이 트랜잭션 전체 길이만큼이라, 동일 Inquiry에 다수 금융사 콜백이 몰리면 순차 대기
+3) 원자적 UPDATE 단독       → 락은 UPDATE 문장이 아니라 "그 UPDATE가 속한 트랜잭션이 커밋될 때까지" 유지됨
+                              → 호출부와 같은 트랜잭션이면 이후 flush / Outbox INSERT / commit까지 row lock을 붙든 채 대기 (커넥션도 함께 점유)
+4) 원자적 UPDATE + REQUIRES_NEW 분리 (현재)
+```
+
+### 현재 구조
+
+카운트 증가만 `LoanLimitCounterService`로 분리해 **별도 `REQUIRES_NEW` 트랜잭션**에서 실행합니다. UPDATE 직후 바로 커밋되어 Inquiry row lock이 그 즉시 풀립니다. 나머지 로직(`productResult.updateResult()`, Outbox enqueue)은 금융사·상품별로 서로 다른 `LoanLimitProductResult` 행을 다루므로 콜백끼리 경합하지 않습니다.
 
 ```java
-// LoanLimitResultService - 비관적 락(PESSIMISTIC_WRITE)으로 동시 콜백 순차 처리
-var loanLimitInquiry = loanLimitProductResultRepository
-        .findInquiryByLoReqtNoAndProduceCodeWithLock(item.getLoReqtNo(), item.getProductCode())
-        .orElseThrow(() -> new InvalidRequestException("존재하지 않는 한도조회 이력"));
+// LoanLimitResultService (콜백 수신, @Transactional)
+var productResult = loanLimitProductResultRepository
+        .findByLoReqtNoAndProductCode(item.getLoReqtNo(), item.getProductCode())
+        .orElseThrow(() -> new InvalidRequestException("존재하지 않는 식별번호&상품코드"));
 
-// SEND_SUCCESS 상태가 아니면 처리 불가로 간주하고 skip (중복 수신 포함, 락 보유 시간 최소화)
+// SEND_SUCCESS 상태가 아니면 처리 불가로 간주하고 skip (중복 수신 포함)
 if (productResult.getStatus() != PartnerInquiryStatus.SEND_SUCCESS) {
-    log.warn("[{}] 처리 불가 상태의 결과 수신. loReqtNo={}, status={}",
-            partnerCode, item.getLoReqtNo(), productResult.getStatus());
+    log.warn("[{}] 처리 불가 상태의 결과 수신. loReqtNo={}, status={}", partnerCode, item.getLoReqtNo(), productResult.getStatus());
     return;
 }
 
-loanLimitInquiry.incrementSuccessCount();
+// 원자적 UPDATE를 별도 트랜잭션(REQUIRES_NEW)으로 → 즉시 커밋, row lock 해제
+loanLimitCounterService.incrementSuccessCount(item.getLoReqtNo(), item.getProductCode());
 productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
+// 콜백 수신 이력 Outbox INSERT (PartnerCallback)
 ```
+
+```java
+// LoanLimitCounterService
+@Transactional(propagation = Propagation.REQUIRES_NEW)
+public int incrementSuccessCount(String loReqtNo, String productCode) {
+    return loanLimitProductResultRepository.incrementSuccessProductCount(loReqtNo, productCode);
+}
+```
+
+> `LoanLimitCounterService`는 반드시 **별도 빈으로 주입**받아 프록시를 통해 호출해야 합니다. 같은 클래스 안의 내부 호출로 합치면 AOP 프록시를 거치지 않아 `REQUIRES_NEW`가 무시되고 바깥 트랜잭션에 그대로 참여합니다.
+
+### 콜백 응답과 중복 수신
+
+- 처리 중 예외가 나도 예외를 상위로 전파하지 않고 **금융사 포맷의 실패 응답**을 반환합니다. 예외를 던지면 금융사가 응답을 받지 못해 재전송이 반복될 수 있어서, 재전송 여부를 응답 코드로 제어합니다.
+- 상태가 `SEND_SUCCESS`가 아닌 콜백(이미 처리된 `SUCCESS` 중복 수신, 전송 실패·타임아웃 건)은 결과를 덮어쓰지 않고 skip합니다.
+
+<br>
+
+<a id="auth"></a>
+## 🔑 인증 (JWT)
+
+| Method | URL | 설명 |
+|---|---|---|
+| POST | /api/auth/login | 로그인 — Access / Refresh Token 발급 |
+| POST | /api/auth/refresh | Access Token 재발급 |
+| POST | /api/auth/logout | 로그아웃 |
+
+- `JwtTokenProvider`(jjwt)가 `TokenType`(ACCESS / REFRESH)별 만료 시간으로 토큰을 발급·검증하고, `JwtAuthenticationFilter`가 요청마다 토큰을 검증합니다. 인증 실패·권한 없음은 `JwtAuthenticationEntryPoint` / `JwtAccessDeniedHandler`가 응답합니다.
+- `SecurityConfig`는 form login / HTTP Basic을 비활성화한 JWT 기반 구성이며, Swagger·H2 콘솔·Actuator와 `/api/**`는 현재 `permitAll`입니다. 그 외 경로만 인증이 필요합니다.
+- 회원(`Member`)은 `MemberRole`을 가지며, 토큰에는 회원 ID와 권한이 담깁니다.
+
+<br>
+
+<a id="kcb-batch"></a>
+## 🗂 KCB 신용변동 배치
+
+KCB에서 매일 수신하는 고정폭 신용변동 파일을 Spring Batch로 처리합니다.
+
+```
+KcbFileIngestScheduler                    [매일 03:00 · ShedLock]
+├── KcbFilePoller: 감시 디렉터리(kcb.file.local-watch-dir)에서 신규 파일 탐색
+├── KcbCreditFile 이력 조회 — 같은 파일명이 이미 있으면 스킵 (멱등성)
+└── Spring Batch Job(kcbCreditJob) 실행
+      Reader   FlatFileItemReader — EUC-KR, 헤더 스킵, 고정폭(FixedLengthTokenizer, strict=false)
+      Process  KcbCreditItemProcessor
+      Writer   KcbCreditItemWriter
+      Step     chunk(1,000) + faultTolerant + skip(Exception) skipLimit(1,000)
+               → 포맷 오류 레코드 몇 건이 Step 전체를 실패시키지 않음
+```
+
+- 스케줄러 재시작·중복 트리거 시 같은 파일이 재처리되지 않도록 **파일명 이력 기반 멱등성 가드**를 둡니다.
+- Job 실행이 실패하면 `KcbCreditFile`에 실패 사유를 기록합니다.
+- `spring.batch.job.enabled=false`로 앱 시작 시 자동 실행을 막고, `@Scheduled`로만 기동합니다.
+
+<br>
+
+<a id="monitoring"></a>
+## 📊 모니터링 지표
+
+`/actuator/prometheus`로 노출되며 모든 지표에 `application="bigin"` 태그가 붙습니다(노출 엔드포인트: `health`, `info`, `prometheus`, `metrics`).
+
+| 지표 | 제공 클래스 | 설명 |
+|---|---|---|
+| Resilience4j (CB / Retry / RateLimiter / Bulkhead) | `resilience4j-micrometer` | 금융사별 상태·호출 수 |
+| `partner.transmission.count` / `.duration` | `PartnerSlaMetricsConsumer` | 파트너사별 전송 성공·실패 및 응답시간 (audit 토픽 구독) |
+| 금융사 HTTP 커넥션 풀 | `PartnerConnectionPoolMetrics` | leased / pending / available / max (전체·파트너별) |
+| 스레드풀 | `TaskExecutorMetrics` | Executor별 사용량 |
+| 상태 확인 | `RedissonHealthIndicator`, CB health indicator | Redis / Circuit Breaker 상태 |
+
+CB 상태 전환·Retry·Rate Limiter 이벤트는 각각 `CircuitBreakerEventListener`, `RetryEventListener`, `RateLimiterEventListener`가 로그로 남깁니다.
 
 <br>
 
@@ -1383,36 +1466,42 @@ productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInter
 
 | Method | URL | 설명 |
 |---|---|---|
-| POST | /api/loan/limit/inquiry | 한도조회 요청 |
-| GET | /api/loan/limit/inquiry/{inquiryNo} | 한도조회 결과 폴링 |
-| POST | /api/loan/limit/callback | 한도결과 콜백 수신 (금융사 → 플랫폼) |
+| POST | /api/loan/request-compare-loan | 한도조회 요청 (`inquiryNo` 포함 즉시 응답) |
+| GET | /api/loan/inquiry/{inquiryNo} | 한도조회 결과 폴링 (`page`, `size`) |
+| GET | /api/loan/inquiry/{inquiryNo}/summary | 결과 화면용 요약 (대출 가능/불가 금융사 분류, 상품별 그룹핑) |
+| POST | /api/loan/response-compare-loan-result | 한도결과 콜백 수신 (금융사 → 플랫폼, Header `X-Partner-Code`) |
 | POST | /api/loan/apply | 대출신청 |
-| GET | /api/loan/apply/{applicationNo} | 대출신청 결과 조회 |
 | POST | /api/notification/send | 알림 발송 등록 (즉시/예약) |
+| POST | /api/auth/login, /refresh, /logout | 인증 |
 
 <br>
 
 주요 테스트 대상은 다음과 같습니다.
 
-| 테스트 클래스                           | 검증 항목                                   |
-|-----------------------------------|-----------------------------------------|
-| LoanLimitServiceTest              | 한도조회 요청 비즈니스 로직                         |
-| LoanLimitSenderServiceTest        | 비동기 전송 및 상태 처리                          |
-| LoanLimitResultServiceTest        | 콜백 수신 및 Outbox INSERT 검증                |
-| LoanLimitStrategyFactoryTest      | 대출유형별 전략 검증                             |
-| OutboxEventServiceTest            | Outbox 즉시 발행 / 실패 시 PENDING 유지          |
-| OutboxEventWriterTest             | Outbox Service Layer로 Event 발행          |
-| NotificationEventConsumerTest     | Kafka Consumer (알림 서비스) 검증              |
-| AesCryptoServiceTest              | AES 암복호화                                |
-| RsaCryptoServiceTest              | RSA 암복호화                                |
-| RestApiClientTest                 | CB 상태 전환 (CLOSED→OPEN→HALF_OPEN→CLOSED) |
-| LoReqtNoGeneratorTest             | 채번 검증                                   |
-| CryptoFactoryTest                 | 파트너별 CryptoService 생성                   |
-| CryptoFactoryCacheIntegrationTest | Caffeine Cache hit 동시성 테스트              |
-| PoisonPillClassifierTest          | Poison Pill 판별 (클래스명/클래스 계층/중첩 예외)      |
-| DlqEventConsumerTest              | DEAD/PENDING 자동 분류, Slack 알림 검증         |
-| DlqRetrySchedulerTest             | 재시도 성공/실패/한도 초과, 지수 백오프 검증              |
-| RedisLockExecutorTest             | Redis Lock 메커니즘 검증                      |
+| 영역 | 테스트 클래스 | 검증 항목 |
+|---|---|---|
+| 한도조회 (loan) | LoanLimitServiceTest | 한도조회 요청 비즈니스 로직 (중복 요청 방어, Strategy 연동) |
+| | LoanLimitInquiryPersistenceServiceTest | 최초 INSERT / 선저장 / 결과반영 / FAILED 처리 각 트랜잭션 구간 |
+| | LoanLimitEventHandlerTest | AFTER_COMMIT 팬아웃 제출, executor 포화 시 보상 처리 |
+| | LoanLimitSenderServiceTest | 비동기 팬아웃 및 fallback(CB_OPEN / RATE_LIMIT / BULKHEAD / THREAD_POOL_EXHAUSTED) 상태 처리 |
+| | LoanLimitResultServiceTest, LoanLimitCounterServiceTest | 콜백 수신, 중복·처리불가 skip, 카운트 원자적 증가, Outbox INSERT |
+| | LoanLimitStrategyFactoryTest | 대출유형별 전략 선택 |
+| | ProductServiceTest, ProductServiceStampedeTest | 상품 캐싱, 캐시 스탬피드 방지(분산 락 + 더블 체크) |
+| Outbox | OutboxEventServiceTest, OutboxEventWriterTest, OutboxEventTest | 즉시 발행 / 실패 시 PENDING 유지 / 이벤트 발행 |
+| | OutboxEventBatchPublisherTest | 배치 재시도 (동기 확정, 결과 반영) |
+| Kafka / DLQ | LoanLimitCompletedEventConsumerTest, NotificationEventConsumerTest | Kafka Consumer 검증 |
+| | PoisonPillClassifierTest, DlqEventConsumerTest, DlqRetrySchedulerTest | Poison Pill 판별, DEAD/PENDING 자동 분류, 재시도(성공/실패/한도 초과) |
+| | JitteredExponentialBackOffTest | 지수 백오프 + jitter |
+| 알림 (notification) | AbstractNotificationSenderTest, Sms/Email/KakaoNotificationSenderTest, NotificationSenderFactoryTest | Template Method 골격(CB/Retry/Fallback), 채널별 발송, Factory |
+| | NotificationServiceTest, NotificationSenderServiceTest | 알림 등록·발송 서비스 |
+| 감사 / 지표 | AuditLogConsumerTest, PartnerSlaMetricsConsumerTest | 감사 로그 배치 적재, 파트너 SLA 지표 |
+| 배치 (kcbcredit) | KcbFileIngestSchedulerTest, KcbCreditItemWriterTest, KcbCreditBatchLoadTest | 파일 수신 멱등성, Writer, 대용량 파일 엔드투엔드 처리(포맷 오류 skip 포함) |
+| 인증 | AuthServiceTest, AuthenticationIntegrationTest, JwtTokenProviderTest | 로그인/재발급, 인증 통합, 토큰 발급·검증 |
+| 인프라 (global) | RestApiClientTest | CB 상태 전환 (CLOSED→OPEN→HALF_OPEN→CLOSED) |
+| | RateLimiterConfigTest, PartnerConnectionPoolConfigTest | Bucket4j 설정, 커넥션 풀(라우트 합산·상한) |
+| | RedisLockExecutorTest, RedisLockExecutorConcurrencyTest, RedissonHealthIndicatorTest | Redis Lock 메커니즘·동시성, 헬스 체크 |
+| | AesCryptoServiceTest, RsaCryptoServiceTest, CryptoFactoryTest, CryptoFactoryCacheIntegrationTest | 암복호화, 파트너별 CryptoService 생성, Caffeine 캐시 |
+| | LoReqtNoGeneratorTest, LoReqtNoGeneratorCurrencyTest | 채번 및 동시성 |
 
 <br>
 
@@ -1427,15 +1516,15 @@ productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInter
 | 금융사별 Circuit Breaker | 특정 금융사 장애 시 다른 금융사 영향 없이 격리                                                                                                            |
 | Rate Limiter 도입 | 금융사 API Rate Limit 정책 준수, CB 불필요 OPEN 방지, RequestNotPermitted를 CB 실패에서 제외                                                              |
 | Bulkhead 도입 | Rate Limiter는 호출 소요 시간을 모름 → 특정 금융사가 느려지면 응답 대기 요청이 쌓여 partnerApiExecutor 잠식 가능 → 동시 진행 건수 자체를 제한해 스레드 풀 잠식 방지 |
-| Adaptor에서 CB Fallback 처리 | @CircuitBreaker 어노테이션 방식은 금융사별 독립 인스턴스 지정 불가, 수동 catch로 명시적 Fallback 처리                                                                |
+| CB/RateLimit/Bulkhead Fallback을 Sender에서 단일 처리 | `RestApiClient`가 금융사별 Registry 인스턴스로 직접 데코레이션(Rate Limiter → Bulkhead → CB → Retry)하므로 어노테이션 방식(금융사별 독립 인스턴스 지정 불가)을 쓰지 않음. Adaptor는 정책성 예외(`CallNotPermittedException` / `RequestNotPermitted` / `BulkheadFullException`)를 그대로 던지고 `LoanLimitSenderService.exceptionally()`에서 한 번만 실패 응답으로 변환해 중복 처리 방지 |
 | Partial Failure 패턴 | 특정 금융사 CB OPEN 시 Fallback 응답 반환, 나머지 금융사 정상 진행                                                                                         |
-| 타임아웃 계층 분리 | readTimeout(CB 실패 기록) + orTimeout(스레드 강제 해제) 역할 분리                                                                                     |
+| 타임아웃 계층 분리 | connect/readTimeout(CB 실패 기록) + orTimeout(스레드 강제 해제) 역할 분리. orTimeout은 고정값이 아니라 금융사별 connect/read와 Retry 설정으로 `PartnerOrTimeoutConfig`가 동적 산정 |
 | 암호화 키 Caffeine 캐싱 | Caffeine 로컬 캐시로 JVM 내 보관, 직렬화 없이 객체 그대로 캐싱                                                                                             |
 | ExternalDataContext | 외부 조회 결과 파라미터 고정 (Nice DNR, KB시세 등 확장 시 파라미터 불변)                                                                                       |
 | Kafka 알림 연동 | 다중 인스턴스 환경에서 이벤트 소실 방지, loan-notification 도메인 물리적 분리                                                                                   |
 | 상품 정보 Redis 캐싱 | 매 한도조회 요청마다 금융사별 상품 DB 조회 반복 → `ProductCache` DTO 변환 후 Redis 캐싱, Entity 직렬화 문제 회피                                                      |
 | 상품 캐싱에 Redisson 분산 락 사용 | `@Cacheable(sync=true)`는 `RedisCacheManager`에서 JVM 로컬 락으로만 동작해 멀티 인스턴스**** stampede를 못 막음 → double-checked locking + Redisson 분산 락으로 직접 구현 |
-| 콜백 동시성 제어 재검토 (Redis 분산락 → 비관적 락 단독) | 콜백 대상 row 경합은 금융사 수(6곳)로 상한이 고정돼 트래픽 증가와 무관하게 락 대기 비용이 커지지 않음 + Redis 분산락은 `leaseTime` 고정 시 GC-pause 중 락 만료로 상호배제가 깨질 수 있음(fencing token 부재) → DB row 단일 자원 보호는 비관적 락 단독이 더 안전하고 왕복 지연도 적음 |
+| 콜백 동시성 제어 (Redis 분산락 → 비관적 락 → 원자적 UPDATE + REQUIRES_NEW) | Redis 분산락은 `leaseTime` 고정 시 GC-pause 중 락 만료로 상호배제가 깨질 수 있고(fencing token 부재), 비관적 락은 락이 트랜잭션 커밋까지 유지돼 다수 금융사 콜백이 몰리면 순차 대기하며 커넥션을 붙듦 → 카운트 증가만 원자적 UPDATE로 `REQUIRES_NEW` 트랜잭션에 분리해 즉시 커밋·락 해제 |
 | Kafka DLQ 도입 | Consumer 처리 실패 메시지 유실 방지, Poison Pill과 일시 장애 자동 분류, 지수 백오프 자동 재시도로 운영팀 개입 최소화                                                          |
 | PoisonPillClassifier | 재시도해도 의미 없는 예외(파싱/데이터 오류)를 즉시 DEAD 처리, 파티션 멈춤(lag 무한 증가) 방지                                                                            |
 | 지수 백오프 DB 영속화 | spring-retry ExponentialBackOff는 메모리에만 존재 → 서버 재기동 시 재시도 일정 소멸. DlqEvent.nextRetryAt을 DB에 저장하여 재기동 후에도 재시도 일정 유지                       |
@@ -1444,5 +1533,16 @@ productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInter
 | ExternalApiServerException / ExternalApiClientException 분리 | resilience4j 설정이 HTTP 클라이언트 라이브러리·전송 방식(RestClient/FCM SDK)에 종속되지 않도록 예외 타입 통일                                                         |
 | OutboxEventWriter 통합 | loan/notification 양쪽에 동일하게 중복돼 있던 "Outbox INSERT + 이벤트 발행" 로직 통합                                                                       |
 | RecordInterceptor 기반 MDC 전파 | 각 Kafka Consumer에 중복돼 있던 MDC put/clear 보일러플레이트를 전역 제거, 신규 Consumer 추가 시에도 자동 적용                                                        |
+| 한도조회 트랜잭션 3단계 분리 (선저장 / 팬아웃 / 결과반영) | 파트너 응답을 기다리는 동안 트랜잭션이 DB 커넥션을 붙잡아 응답이 느려질수록 필요한 커넥션이 늘어나는 피드백 루프 → 팬아웃 대기 구간을 무트랜잭션으로, DB 접근은 `LoanLimitInquiryPersistenceService`의 짧은 트랜잭션 두 구간으로 분리 |
+| 트랜잭션 구간을 별도 빈으로 분리 | 같은 클래스 내부 호출은 AOP 프록시를 우회해 `@Transactional`이 무효화됨 → `PersistenceService` / `CounterService` / `OutboxEventService`를 협력자 빈으로 분리 |
+| `compensationExecutor`(전용 소형 풀) | executor 포화 시 유입 요청이 모두 FAILED 보상(REQUIRES_NEW, 새 커넥션)을 동시에 타면 포화가 커넥션 풀 고갈로 번짐 → 보상 전용 풀(core 2 / max 5)로 동시 커넥션 상한을 하드 캡 |
+| `@Async` 대신 `executor.execute()`로 팬아웃 제출 | `@Async`는 `TaskRejectedException`이 별도 핸들러로만 전달돼 inquiryId를 아는 자리에서 보상 처리가 어려움 → 제출을 동기로 수행해 예외를 바로 잡고 FAILED 전환 예약 |
+| Outbox 즉시발행 / 배치 재시도 스레드풀 분리 | 즉시발행이 파트너 API 풀과 결합되면 Kafka 장애가 금융사 호출 경로로 전파됨 → `outboxPublishExecutor`(포화 시 스킵, PENDING은 배치가 처리)와 `outboxRetryExecutor`로 분리 |
+| 배치 재시도는 동기 발행으로 결과 확정 | fire-and-forget이면 장애가 스케줄 주기보다 길 때 같은 PENDING 건을 중복 발행할 수 있음 → `send().get(timeout)`으로 확정 후 별도 빈(REQUIRES_NEW)에서 상태 반영 |
+| Kafka `max.block.ms=3000` | 기본 60초는 브로커 장애 시 발행 스레드(와 물고 있는 커넥션)를 그만큼 점유 → `delivery.timeout.ms`와 별개로 메타데이터 대기 상한을 명시 |
+| 한도조회 요청에 Redis 분산 락 | 동일 `userId + loanType`의 동시 요청이 진행 중 조회 확인을 함께 통과해 중복 생성되는 것을 방어 (대기 0초, 즉시 거절) |
+| HTTP 커넥션 풀 `maxPerRoute` 합산 | 여러 파트너가 같은 호스트(라우트)를 공유하면 순회 중 마지막 값이 덮어써져 실제 허용 커넥션이 급감 → 라우트별 합산 후 `maxTotal`로 캡 |
+| 스케줄러에 ShedLock | 다중 인스턴스에서 Outbox 재시도·DLQ 재시도·KCB 배치가 동시에 중복 실행되지 않도록 분산 락으로 보호 |
+| KCB 배치 파일명 이력 멱등성 + skip 기반 결함 허용 | 스케줄러 재시작·중복 트리거 시 같은 파일 재처리를 막고, 일부 레코드의 포맷 오류가 Step 전체 실패로 번지지 않게 함 |
 
 <br>

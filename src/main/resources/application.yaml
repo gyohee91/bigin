@@ -816,3 +816,22 @@ kcb:
   file:
     local-watch-dir: /kcb/credit/outbound
     done-dir: /kcb/credit/outbound/done
+
+error-monitor:
+  enabled: true
+  window-seconds: 60
+  default-threshold: 10
+  cooldown-seconds: 300
+  fallback-query-interval-seconds: 10   # Redis 장애 시 DB COUNT는 errorType별 N초에 1회만
+  message-max-length: 500
+  thresholds:                           # errorType의 카테고리(':' 앞부분) 기준
+    CB_OPEN: 1                          # CB_OPEN은 1건이어도 즉시 알림
+    DLQ: 1
+    RETRY_EXHAUSTED: 20
+    HTTP_5XX: 10
+    CLIENT: 30
+  alert:
+    retry-delay-ms: 1000
+  dooray:
+    enabled: false
+    webhookUrl: ${DOORAY_WEBHOOK_URL:}
