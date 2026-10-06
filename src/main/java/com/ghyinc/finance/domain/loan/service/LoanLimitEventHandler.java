@@ -5,8 +5,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.task.TaskRejectedException;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
@@ -64,7 +62,7 @@ public class LoanLimitEventHandler {
     }
 
     /**
-     * {@link #compensateForRejection}을 {@code compensationExecutor}(전용 소형 풀)에 위임한다.
+     * {@code compensationExecutor}(전용 소형 풀)에 위임한다.
      *
      * <p>(2026-09 부하테스트로 발견 및 수정) 예전에는 이 보상 트랜잭션을 별도 풀 없이,
      * 지금 이 메서드를 호출한 Tomcat 요청 스레드에서 그대로 동기 실행했다. 그런데
@@ -83,17 +81,10 @@ public class LoanLimitEventHandler {
      */
     private void scheduleCompensation(LoanLimitInquiryCreatedEvent event) {
         try {
-            compensationExecutor.execute(() -> this.compensateForRejection(event));
+            compensationExecutor.execute(() -> persistenceService.markFailed(event.id()));
         } catch (TaskRejectedException e) {
             log.error("[{}] compensationExecutor 포화로 FAILED 처리 스킵 (best-effort)",
                     event.id(), e);
         }
-    }
-
-    // AFTER_COMMIT 시점이라 활성 트랜잭션이 없으므로 새 트랜잭션으로 명시
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void compensateForRejection(LoanLimitInquiryCreatedEvent event) {
-        persistenceService.markFailed(event.id());
-        // 필요하면 여기서 사용자 알림/아웃박스 이벤트도 함께 발행
     }
 }

@@ -225,7 +225,7 @@ FE → POST /api/loan/request-compare-loan
   │  @Async 대신 executor.execute()로 직접 제출 — 큐 포화(TaskRejectedException)를 이 자리에서 잡기 위함
   │
   ├── 정상: loanLimitExecutor에 팬아웃 제출 → HTTP 스레드 즉시 해제
-  └── 포화: compensationExecutor(전용 소형 풀)에서 markFailed() — Inquiry FAILED 처리 (REQUIRES_NEW)
+  └── 포화: compensationExecutor(전용 소형 풀)에서 markFailed() — Inquiry FAILED 처리 (별도 스레드라 `markFailed()`가 새 트랜잭션을 연다)
          │
          ▼ loanLimitExecutor 스레드
   LoanLimitSenderService.inquiry()                  ※ 자체는 @Transactional 아님
@@ -418,7 +418,7 @@ REST   → RestApiClient
 
 - `partnerApiExecutor`는 Little's Law로 산정했습니다. 초당 20건 × 금융사 49곳 팬아웃 × 평균 응답 0.3초 ≈ 294 → `core=300`, `max=400`(HTTP 커넥션 풀 `maxTotal`과 동일). 큐는 짧은 버스트만 흡수하도록 작게(50) 두었습니다.
 - `loanLimitExecutor`는 팬아웃 대기 동안 스레드를 점유하는 구조라 `max`가 곧 동시에 진행 가능한 한도조회 수입니다. DB 커넥션 풀(`maximum-pool-size=150`)은 이 값에 콜백·Outbox 배치 등 다른 트랜잭션 경로 여유분을 더해서 잡았습니다.
-- `compensationExecutor`는 의도적으로 작게 두었습니다. `loanLimitExecutor`가 포화된 뒤에는 유입되는 모든 요청이 FAILED 보상 경로(`REQUIRES_NEW`, 새 DB 커넥션)를 동시에 타기 때문에, 이 경로를 요청 스레드에서 그대로 실행하면 executor 포화가 곧바로 DB 커넥션 풀 고갈로 번집니다. 전용 소형 풀로 위임해 **보상용으로 동시에 열리는 커넥션 수의 상한을 하드 캡**으로 걸었습니다.
+- `compensationExecutor`는 의도적으로 작게 두었습니다. `loanLimitExecutor`가 포화된 뒤에는 유입되는 모든 요청이 FAILED 보상 경로(새 트랜잭션, 새 DB 커넥션)를 동시에 타기 때문에, 이 경로를 요청 스레드에서 그대로 실행하면 executor 포화가 곧바로 DB 커넥션 풀 고갈로 번집니다. 전용 소형 풀로 위임해 **보상용으로 동시에 열리는 커넥션 수의 상한을 하드 캡**으로 걸었습니다.
 - `outboxRetryExecutor`는 `core = max`로 맞췄습니다. `ThreadPoolExecutor`는 bounded queue가 가득 차기 전에는 `core`를 넘겨 스레드를 늘리지 않으므로, `core`가 작으면 `max`가 있어도 실제 동시성이 `core`로 고정됩니다.
 - `outboxPublishExecutor`를 파트너 API용 풀과 분리한 이유는 Kafka 장애 시 발행 스레드가 블로킹되더라도 금융사 호출 경로에 영향을 주지 않도록 하기 위해서입니다. 포화되면 발행을 건너뛰고 Outbox가 `PENDING`으로 남아 배치 재시도가 처리하므로 데이터는 유실되지 않습니다.
 
@@ -1535,7 +1535,7 @@ CB 상태 전환·Retry·Rate Limiter 이벤트는 각각 `CircuitBreakerEventLi
 | RecordInterceptor 기반 MDC 전파 | 각 Kafka Consumer에 중복돼 있던 MDC put/clear 보일러플레이트를 전역 제거, 신규 Consumer 추가 시에도 자동 적용                                                        |
 | 한도조회 트랜잭션 3단계 분리 (선저장 / 팬아웃 / 결과반영) | 파트너 응답을 기다리는 동안 트랜잭션이 DB 커넥션을 붙잡아 응답이 느려질수록 필요한 커넥션이 늘어나는 피드백 루프 → 팬아웃 대기 구간을 무트랜잭션으로, DB 접근은 `LoanLimitInquiryPersistenceService`의 짧은 트랜잭션 두 구간으로 분리 |
 | 트랜잭션 구간을 별도 빈으로 분리 | 같은 클래스 내부 호출은 AOP 프록시를 우회해 `@Transactional`이 무효화됨 → `PersistenceService` / `CounterService` / `OutboxEventService`를 협력자 빈으로 분리 |
-| `compensationExecutor`(전용 소형 풀) | executor 포화 시 유입 요청이 모두 FAILED 보상(REQUIRES_NEW, 새 커넥션)을 동시에 타면 포화가 커넥션 풀 고갈로 번짐 → 보상 전용 풀(core 2 / max 5)로 동시 커넥션 상한을 하드 캡 |
+| `compensationExecutor`(전용 소형 풀) | executor 포화 시 유입 요청이 모두 FAILED 보상(새 트랜잭션·새 커넥션)을 동시에 타면 포화가 커넥션 풀 고갈로 번짐 → 보상 전용 풀(core 2 / max 5)로 동시 커넥션 상한을 하드 캡 |
 | `@Async` 대신 `executor.execute()`로 팬아웃 제출 | `@Async`는 `TaskRejectedException`이 별도 핸들러로만 전달돼 inquiryId를 아는 자리에서 보상 처리가 어려움 → 제출을 동기로 수행해 예외를 바로 잡고 FAILED 전환 예약 |
 | Outbox 즉시발행 / 배치 재시도 스레드풀 분리 | 즉시발행이 파트너 API 풀과 결합되면 Kafka 장애가 금융사 호출 경로로 전파됨 → `outboxPublishExecutor`(포화 시 스킵, PENDING은 배치가 처리)와 `outboxRetryExecutor`로 분리 |
 | 배치 재시도는 동기 발행으로 결과 확정 | fire-and-forget이면 장애가 스케줄 주기보다 길 때 같은 PENDING 건을 중복 발행할 수 있음 → `send().get(timeout)`으로 확정 후 별도 빈(REQUIRES_NEW)에서 상태 반영 |

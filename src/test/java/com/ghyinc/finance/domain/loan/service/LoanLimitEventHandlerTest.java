@@ -128,14 +128,4 @@ class LoanLimitEventHandlerTest {
         then(persistenceService).should(never()).markFailed(anyLong());
         then(loanLimitSenderService).should(never()).inquiry(anyLong(), any(), any());
     }
-
-    @Test
-    @DisplayName("compensateForRejection - Inquiry를 FAILED로 전환한다")
-    void compensateForRejection_marksInquiryFailed() {
-        LoanLimitInquiryCreatedEvent event = buildEvent();
-
-        eventHandler.compensateForRejection(event);
-
-        then(persistenceService).should().markFailed(event.id());
-    }
 }

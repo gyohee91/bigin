@@ -14,9 +14,12 @@ import java.util.concurrent.ThreadPoolExecutor;
 @Configuration
 public class AsyncConfig {
     /**
-     * @Async("loanLimitExecutor") 전용
-     * LoanLimitSenderService.inquiry() 처리
-     * 한도조회 요청 1건 1스레드 점유
+     * 한도조회 Fan-out 시작 전용 풀.
+     * LoanLimitEventHandler#handleInquiryCreated()가 트랜잭션 커밋(AFTER_COMMIT) 이후
+     * execute()로 직접 제출하고, 이 풀의 스레드가 LoanLimitSenderService#inquiry()를 실행한다.
+     * 한도조회 요청 1건 = 1스레드 점유.
+     * (@Async를 쓰지 않는 이유: 풀 포화 시 TaskRejectedException을 호출부에서 직접 잡아
+     *  FAILED 전환 보상을 예약하기 위함)
      * <p>
      * (2026-09 갱신) inquiry()는 더 이상 @Transactional이 아니다 - 선저장 트랜잭션(짧게, commit) /
      * 파트너 팬아웃 대기(무트랜잭션) / 결과반영 트랜잭션(짧게, 새 트랜잭션)으로 분리했다

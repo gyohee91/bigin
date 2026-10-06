@@ -14,8 +14,34 @@
             <pattern>%d{yyyy-MM-dd HH:mm:ss} %-5level [%thread] [%X{requestId}] %logger{36} : %msg%n</pattern>
         </encoder>
     </appender>
+    <!--
+        [FILE 롤링 appender - Loki/Promtail·Alloy 수집용]
+        IntelliJ 콘솔은 cycle buffer 때문에 부하테스트 중 앞부분 로그가 밀려나가 사라질 수 있고,
+        앱이 중간에 죽으면 그 순간 로그를 다시 볼 방법이 없다. 이 appender는 파일로 영구 보존해서
+        사후 grep/Loki 수집이 가능하게 한다.
 
+        JSON(LogstashEncoder)으로 쓰는 이유: Promtail/Alloy가 라인을 그대로 실어 나르고 Loki/Grafana
+        쪽에서 level·logger·thread·requestId 필드를 정규식 없이 바로 파싱해서 필터링할 수 있다
+        (예: {job="bigin"} | json | requestId="a1b2c3d4-...").
+
+        로그 파일 위치: logs/bigin.log (프로젝트 루트 기준 - IntelliJ Run Configuration의
+        Working directory가 프로젝트 루트일 때 기준. gradle bootRun도 동일)
+        롤링 정책: 100MB 또는 하루 단위로 새 파일, 과거 파일은 7일 보관 후 삭제, 전체 상한 2GB.
+    -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/bigin.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>logs/bigin.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>100MB</maxFileSize>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>2GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcKeyName>requestId</includeMdcKeyName>
+        </encoder>
+    </appender>
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
     </root>
 </configuration>
