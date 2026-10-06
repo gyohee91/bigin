@@ -26,8 +26,8 @@ import java.util.stream.Collectors;
  * 한도조회 요청 서비스
  *
  * <p>FE로부터 한도조회 요청을 수신하여 유효성 검증, 금융사 선정, Inquiry 저장을
- * 수행하고 202 Accepted를 즉시 반환한다. 실제 금융사 API 전송은
- * {@link LoanLimitSenderService}가 비동기로 처리한다.</p>
+ * 수행하고 즉시 응답한다. 실제 금융사 API 전송은 트랜잭션 커밋 후 이벤트를 통해
+ * {@link LoanLimitEventHandler}와 {@link LoanLimitSenderService}가 비동기로 처리한다.</p>
  *
  * <h3>도메인 설계 원칙</h3>
  * <ul>
@@ -37,13 +37,16 @@ import java.util.stream.Collectors;
  *
  * <h3>비동기 처리 흐름</h3>
  * <pre>
- *     FE → requestCompareLoan() → 202 Accepted
- *                              ↓ Spring 이벤트 발행
- *                      LoanLimitInquiryCreatedEvent
- *                              ↓ @TransactionalEventListener(AFTER_COMMIT)
- *                      LoanLimitSenderService.handleInquiryCreated()
- *                              ↓ @Async("loanLimitExecutor")
- *                      금융사 API 병렬 전송
+ *  FE → requestCompareLoan()   [Redis 락: userId + loanType]
+ *         ├ 중복 체크 · 검증 · 외부 데이터 조회 · 금융사 선정
+ *         └ persistenceService.createLoanLimitInquiry()   [Tx0: INSERT 후 커밋]
+ *               ↓ LoanLimitInquiryCreatedEvent 발행
+ *  LoanLimitEventHandler#handleInquiryCreated()
+ *         @TransactionalEventListener(AFTER_COMMIT)
+ *               ↓ loanLimitExecutor.execute()
+ *                 (포화 시 TaskRejectedException → compensationExecutor로 FAILED 전환)
+ *  LoanLimitSenderService#inquiry()   [loanLimitExecutor 스레드]
+ *         preSave(Tx1) → 금융사 Fan-out(무트랜잭션, partnerApiExecutor) → applyResults(Tx2)
  * </pre>
  *
  * @see LoanLimitSenderService

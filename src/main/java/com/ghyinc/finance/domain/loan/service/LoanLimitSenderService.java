@@ -31,14 +31,14 @@ import java.time.Duration;
  *
  * <h3>비동기 처리 구조</h3>
  * <ul>
- *     <li>{@code handleInquiryCreated()}:
- *          {@code @TransactionEventListener(AFTER_COMMIT)}으로
- *          부모 트랜잭션 보장 후 {@code loanLimitExecutor} 스레드에서 실행</li>
+ *     <li>{@code LoanLimitEventHandler#handleInquiryCreated()}:
+ *          {@code @TransactionalEventListener(AFTER_COMMIT)}으로 부모 트랜잭션 커밋을 보장한 뒤
+ *          {@code loanLimitExecutor}에 제출하고, 이 풀의 스레드가 {@code inquiry()}를 실행</li>
  *     <li>{@code inquiry()}: 금융사별 API를 {@code partnerApiExecutor} 스레드 풀에서 병렬 전송.
  *          스레드 풀 분리로 {@code loanLimitExecutor} DeadLock 방지</li>
  * </ul>
  *
- * <p><b>트랜잭션 경계 분리 (2026-09):</b> 이 메서드는 더 이상 {@code @Transactional}이 아니다.
+ * <p><b>트랜잭션 경계 분리 (2026-09):</b> {@code inquiry()}는 더 이상 {@code @Transactional}이 아니다.
  * 과거엔 선저장 → 파트너 팬아웃 대기(join) → 결과반영이 전부 하나의 트랜잭션이라, 파트너 응답을
  * 기다리는 동안(최대 partnerOrTimeout, 수 초) {@code loanLimitExecutor} 스레드가 Hikari
  * 커넥션을 계속 붙잡고 있었다. 부하가 걸려 파트너 응답이 느려질수록 커넥션 점유시간도 늘어나고,
@@ -113,8 +113,15 @@ public class LoanLimitSenderService {
                         try {
                             return CompletableFuture
                                     .supplyAsync(() -> adaptor.inquireLimit(partnerCode, adaptorRequests), partnerApiExecutor)
+                                    // orTimeout은 future만 TimeoutException으로 완료시킬 뿐, 이미 실행 중인 HTTP 호출은
+                                    // 취소하지 않는다. 해당 partnerApiExecutor 스레드는 호출 자체의 readTimeout까지 점유된다.
                                     .orTimeout(partnerOrTimeouts.get(partnerCode).toMillis(), TimeUnit.MILLISECONDS)
                                     .exceptionally(ex -> {
+                                        // 예외 형태 주의: supplyAsync 내부에서 던진 예외(CB/RateLimiter/Bulkhead 등)는
+                                        // CompletionException으로 래핑되어 오므로 getCause()로 확인한다.
+                                        // 반면 orTimeout의 TimeoutException은 래핑 없이 ex 자체로 온다
+                                        // (이 경우 아래 어느 분기에도 걸리지 않고 마지막 일반 에러 분기로 처리된다).
+
                                         // Circuit Breaker OPEN: Fallback으로 즉시 실패 반환
                                         // 해당 금융사는 격리되며 나머지 금융사는 정상 진행
                                         if (ex.getCause() instanceof CallNotPermittedException) {
