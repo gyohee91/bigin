@@ -133,7 +133,7 @@ resilience4j:
         sliding-window-size: 10
         minimum-number-of-calls: 5
         failure-rate-threshold: 50
-        slow-call-duration-threshold: 7s    # readTimeout과 동일하게 (느린 호출도 실패로 count)
+        slow-call-duration-threshold: 2s    # readTimeout과 동일하게 or 이하로 (느린 호출도 실패로 count)
         slow-call-rate-threshold: 50
         wait-duration-in-open-state: 60s    # readTimeout보다 충분히 길게 - 파트너 회복 시간 확보
         permitted-number-of-calls-in-half-open-state: 3
