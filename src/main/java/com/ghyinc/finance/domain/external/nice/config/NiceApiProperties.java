@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
  * <pre>
  * nice-api:
  *   dnr:
- *     base-url: https://api.nice.co.kr
+ *     base-url: <a href="https://api.nice.co.kr">...</a>
  *     path: /v1/vehicle/registration
  *     api-key: nice-api-key
  *     timeout-ms: 5000
@@ -31,5 +31,6 @@ public class NiceApiProperties {
         private String path;
         private int connectTimeoutMs;
         private int readTimeoutMs;
+        private int keepAliveSec = 20;
     }
 }

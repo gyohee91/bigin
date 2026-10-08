@@ -44,7 +44,8 @@ public class RestClientConfig {
                             return this.buildRestClient(
                                     config.getBaseUrl(),
                                     config.getConnectTimeoutMs(),
-                                    config.getReadTimeoutMs()
+                                    config.getReadTimeoutMs(),
+                                    config.getKeepAliveSec()
                             );
                         })
                 );
@@ -53,34 +54,34 @@ public class RestClientConfig {
     @Bean(name = "niceDnrRestClient")
     public RestClient niceDnrRestClient() {
         NiceApiProperties.NiceApiConfig config = niceApiProperties.getDnr();
-        return this.buildRestClient(config.getBaseUrl(), config.getConnectTimeoutMs(), config.getReadTimeoutMs());
+        return this.buildRestClient(config.getBaseUrl(), config.getConnectTimeoutMs(), config.getReadTimeoutMs(), config.getKeepAliveSec());
     }
 
     @Bean(name = "smsRestClient")
     public RestClient smsRestClient() {
         NotificationApiProperties.ChannelApiConfig config = notificationApiProperties.getConfig(ChannelType.SMS);
-        return this.buildRestClient(config.getBaseUrl(), config.getConnectTimeoutMs(), config.getReadTimeoutMs());
+        return this.buildRestClient(config.getBaseUrl(), config.getConnectTimeoutMs(), config.getReadTimeoutMs(), config.getKeepAliveSec());
     }
 
     @Bean(name = "emailRestClient")
     public RestClient emailmsRestClient() {
         NotificationApiProperties.ChannelApiConfig config = notificationApiProperties.getConfig(ChannelType.EMAIL);
-        return this.buildRestClient(config.getBaseUrl(), config.getConnectTimeoutMs(), config.getReadTimeoutMs());
+        return this.buildRestClient(config.getBaseUrl(), config.getConnectTimeoutMs(), config.getReadTimeoutMs(), config.getKeepAliveSec());
     }
 
     @Bean(name = "kakaotalkRestClient")
     public RestClient kakaotalkRestClient() {
         NotificationApiProperties.ChannelApiConfig config = notificationApiProperties.getConfig(ChannelType.KAKAOTALK);
-        return this.buildRestClient(config.getBaseUrl(), config.getConnectTimeoutMs(), config.getReadTimeoutMs());
+        return this.buildRestClient(config.getBaseUrl(), config.getConnectTimeoutMs(), config.getReadTimeoutMs(), config.getKeepAliveSec());
     }
 
     /**
      * 현재 병렬 호출 병목이 실제로 발생하는 지점은
      * partnerApiExecutor가 동시에 때리는 파트너사 쪽이라, 우선 그쪽만 전환.
      */
-    private RestClient buildRestClient(String baseUrl, int connectTimeoutMs, int readTimeoutMs) {
+    private RestClient buildRestClient(String baseUrl, int connectTimeoutMs, int readTimeoutMs, int keepAliveSec) {
         CloseableHttpClient httpClient = partnerConnectionPoolConfig.buildPartnerHttpClient(
-                partnerConnectionManager, readTimeoutMs
+                partnerConnectionManager, readTimeoutMs, keepAliveSec
         );
         HttpComponentsClientHttpRequestFactory factory =
                 new HttpComponentsClientHttpRequestFactory(httpClient);

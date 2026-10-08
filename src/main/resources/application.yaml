@@ -530,11 +530,13 @@ loan-api:
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     TOSS_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     KB_CAPITAL:
       base-url: http://localhost:8091
       path: /send/sms
@@ -542,53 +544,63 @@ loan-api:
       read-timeout-ms: 2000
       max-per-route: 20   # resilience4j.ratelimiter.instances.KB_CAPITAL과 동일하게 20
       # 나머지 파트너는 기본값(10) 사용
+      keep-alive-sec: 20
     LINE_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     SHINHAN_BANK:
       base-url: 127.0.0.1
       port: 9001
       path: /loan/inquiry
       connect-timeout-ms: 1000
       read-timeout-ms: 3000
+      keep-alive-sec: 20
     # 시중은행
     KB_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     WOORI_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     HANA_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     NH_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     IBK_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     SC_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     CITI_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
 
     # 지방은행
     DGB_BANK:
@@ -596,31 +608,37 @@ loan-api:
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     BUSAN_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     KYONGNAM_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     GWANGJU_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     JEONBUK_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     JEJU_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
 
     # 캐피탈
     HYUNDAI_CAPITAL:
@@ -628,76 +646,91 @@ loan-api:
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     SHINHAN_CAPITAL:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     LOTTE_CAPITAL:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     HANA_CAPITAL:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     WOORI_FINANCIAL_CAPITAL:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     DGB_CAPITAL:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     JB_WOORI_CAPITAL:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     BNK_CAPITAL:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     IBK_CAPITAL:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     MERITZ_CAPITAL:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     ORIX_CAPITAL:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     MIRAE_ASSET_CAPITAL:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     ACUON_CAPITAL:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     KOREA_INVESTMENT_CAPITAL:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     DB_CAPITAL:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
 
     # 저축은행
     SBI_SAVINGS_BANK:
@@ -705,51 +738,61 @@ loan-api:
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     OK_SAVINGS_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     WELCOME_SAVINGS_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     PEPPER_SAVINGS_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     ACUON_SAVINGS_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     KOREA_INVESTMENT_SAVINGS_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     DAISHIN_SAVINGS_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     YUJIN_SAVINGS_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     JT_CHINAE_SAVINGS_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     MOA_SAVINGS_BANK:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
 
     # 카드사
     SHINHAN_CARD:
@@ -757,31 +800,37 @@ loan-api:
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     SAMSUNG_CARD:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     KB_CARD:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     HYUNDAI_CARD:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     LOTTE_CARD:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
     WOORI_CARD:
       base-url: http://localhost:8091
       path: /send/sms
       connect-timeout-ms: 1000
       read-timeout-ms: 2000
+      keep-alive-sec: 20
 
 nice-api:
   dnr:
@@ -789,6 +838,7 @@ nice-api:
     path: /send/sms
     connect-timeout-ms: 3000
     read-timeout-ms: 7000
+    keep-alive-sec: 20
 
 # 기존 notification.sender.* 블록을 아래로 교체
 notification-api:
@@ -798,16 +848,19 @@ notification-api:
       path: /send/sms
       connect-timeout-ms: 1500
       read-timeout-ms: 5000
+      keep-alive-sec: 20
     EMAIL:
       base-url: http://localhost:8091
       path: /send/email
       connect-timeout-ms: 1500
       read-timeout-ms: 5000
+      keep-alive-sec: 20
     KAKAOTALK:
       base-url: http://localhost:8091
       path: /send/kakaotalk
       connect-timeout-ms: 1500
       read-timeout-ms: 5000
+      keep-alive-sec: 20
 
 jwt:
   secret: bXktc3VwZXItc2VjcmV0LWtleS1tdXN0LWJlLWxvbmc=

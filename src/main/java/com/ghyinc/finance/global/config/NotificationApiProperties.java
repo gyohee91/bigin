@@ -31,5 +31,6 @@ public class NotificationApiProperties {
         private String path;
         private int connectTimeoutMs = 3000;
         private int readTimeoutMs = 5000;
+        private int keepAliveSec = 20;
     }
 }
