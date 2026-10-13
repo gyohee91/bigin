@@ -40,7 +40,7 @@ public class PartnerConnectionPoolConfig {
     public static final long CONNECTION_REQUEST_TIMEOUT_MS = 500;
 
     /**
-     * partnerApiExecutor(max 300 스레드, 50개 파트너 동시 팬아웃 기준 재산정)가 만들어낼 수 있는
+     * partnerApiExecutor(max 400 스레드, 50개 파트너 동시 팬아웃 기준 재산정)가 만들어낼 수 있는
      * 최대 동시 호출 수보다 여유를 둔 전체 상한 + 파트너별(HttpRoute) 상한을 함께 등록한다.
      * <p>
      * 목표 20 req/s × 최대 49개 REST 파트너 팬아웃 × 응답시간 ~300ms 가정 시
@@ -55,6 +55,8 @@ public class PartnerConnectionPoolConfig {
 
         ConnectionConfig fallbackConnectionConfig = ConnectionConfig.custom()
                 .setConnectTimeout(Timeout.ofMilliseconds(1000))
+                .setTimeToLive(TimeValue.ofMinutes(5))
+                .setValidateAfterInactivity(TimeValue.ofSeconds(2))
                 .build();
         Map<HttpRoute, ConnectionConfig> routeConnectionConfigs = new HashMap<>();
 
@@ -132,8 +134,10 @@ public class PartnerConnectionPoolConfig {
                 .setConnectionManager(connectionManager)
                 .setConnectionManagerShared(true)
                 .setDefaultRequestConfig(requestConfig)
-                .evictExpiredConnections()
-                .evictIdleConnections(TimeValue.ofSeconds(30))
+                .disableAutomaticRetries()
+                // evict 풀 정리는 스케줄러가 담당 (PartnerConnectionEvictionScheduler)
+                //.evictExpiredConnections()
+                //.evictIdleConnections(TimeValue.ofSeconds(30))
                 .build();
     }
 
