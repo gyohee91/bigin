@@ -75,7 +75,7 @@ public class ProductService {
     @Transactional
     @CacheEvict(
             value = "products",
-            key = "#product.partnerCode.name() + ':' + #product.loanType.name()"
+            key = "#product.partnerCode.name() + ':' + #productCache.loanType.name()"
     )
     public void updateProductStatus(ProductCache productCache, boolean active) {
         productRepository.findById(productCache.getId())

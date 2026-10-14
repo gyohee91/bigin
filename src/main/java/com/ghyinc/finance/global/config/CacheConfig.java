@@ -20,6 +20,7 @@ import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 import java.time.Duration;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 @Configuration
@@ -59,11 +60,13 @@ public class CacheConfig {
                 )
                 .disableCachingNullValues();
 
+        RedisCacheConfiguration productConfig = RedisCacheConfiguration.defaultCacheConfig()
+                .entryTtl((key, value) -> Duration.ofHours(6)
+                        .plusSeconds(ThreadLocalRandom.current().nextLong(0, 1800)));   // TTL jitter
+
         return RedisCacheManager.builder(connectionFactory)
-                .cacheDefaults(configuration)
-                .withCacheConfiguration("products",
-                        configuration.entryTtl(Duration.ofHours(6))  // 상품 정보는 더 길게
-                )
+                .cacheDefaults(configuration)       // 기본 1h는 그대로 유지
+                .withCacheConfiguration("products", productConfig)  // 상품 정보는 더 길게
                 .build();
     }
 
