@@ -4,6 +4,7 @@ import com.ghyinc.finance.domain.loan.dto.ProductCache;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.repository.ProductRepository;
+import com.ghyinc.finance.global.exception.LockUnavailableException;
 import com.ghyinc.finance.global.lock.RedisLockExecutor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,18 +39,23 @@ public class ProductService {
         List<ProductCache> cached = cache.get(lockKey, List.class);
         if (cached != null) return cached;
 
-        return lockExecutor.execute(LOCK_PREFIX + lockKey, 3, 5,
-                () -> {
-                    // 더블 체크 - 락 대기 중 다른 Thread가 이미 채웠을 수도 있음
-                    List<ProductCache> doubleChecked = cache.get(lockKey, List.class);
-                    if (doubleChecked != null) return doubleChecked;
+        try {
+            return lockExecutor.execute(LOCK_PREFIX + lockKey, 3, 5,
+                    () -> {
+                        // 더블 체크 - 락 대기 중 다른 Thread가 이미 채웠을 수도 있음
+                        List<ProductCache> doubleChecked = cache.get(lockKey, List.class);
+                        if (doubleChecked != null) return doubleChecked;
 
-                    List<ProductCache> result = this.loadActiveProducts(partnerCode, loanType);
-                    if (!result.isEmpty()) cache.put(lockKey, result);
-                    return result;
-                },
-                () -> this.loadActiveProducts(partnerCode, loanType)
-        );
+                        List<ProductCache> result = this.loadActiveProducts(partnerCode, loanType);
+                        if (!result.isEmpty()) cache.put(lockKey, result);
+                        return result;
+                    },
+                    () -> this.loadActiveProducts(partnerCode, loanType)
+            );
+        } catch (LockUnavailableException e) {
+            log.warn("[상품 캐시] 락 불가(Redis 장애), DB 직접 조회 key={}", lockKey);
+            return this.loadActiveProducts(partnerCode, loanType);
+        }
     }
 
     /*
