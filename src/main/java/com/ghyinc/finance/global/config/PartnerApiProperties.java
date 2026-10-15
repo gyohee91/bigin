@@ -33,5 +33,6 @@ public class PartnerApiProperties {
         private int connectTimeoutMs = 3000;    // 기본값 3초
         private int readTimeoutMs = 5000;       // 기본값 5초
         private int maxPerRoute = 20;           // 파트너별 동시 커넥션 상한 (미지정시 기본 10)
+        private int keepAliveSec = 20;
     }
 }

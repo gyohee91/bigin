@@ -103,6 +103,11 @@ dependencies {
     // Apache HttpClient
     implementation 'org.apache.httpcomponents.client5:httpclient5'
 
+    // logback-spring.xml의 FILE(JSON) appender용 - 원래 JSON 콘솔 appender가 이 의존성 없이
+    // 정의만 돼 있어서 root에 붙이지 않는 한 조용히 무시되고 있었다. FILE appender를 실제로
+    // 쓰려면(로그 파일 -> Loki/Alloy 수집) 필수.
+    implementation 'net.logstash.logback:logstash-logback-encoder:8.0'
+
     // Test
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

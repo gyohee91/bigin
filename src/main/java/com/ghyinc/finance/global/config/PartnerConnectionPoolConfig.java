@@ -4,9 +4,11 @@ import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.common.ConnectionType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.hc.client5.http.ConnectionKeepAliveStrategy;
 import org.apache.hc.client5.http.HttpRoute;
 import org.apache.hc.client5.http.config.ConnectionConfig;
 import org.apache.hc.client5.http.config.RequestConfig;
+import org.apache.hc.client5.http.impl.DefaultConnectionKeepAliveStrategy;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManager;
@@ -38,7 +40,7 @@ public class PartnerConnectionPoolConfig {
     public static final long CONNECTION_REQUEST_TIMEOUT_MS = 500;
 
     /**
-     * partnerApiExecutor(max 300 스레드, 50개 파트너 동시 팬아웃 기준 재산정)가 만들어낼 수 있는
+     * partnerApiExecutor(max 400 스레드, 50개 파트너 동시 팬아웃 기준 재산정)가 만들어낼 수 있는
      * 최대 동시 호출 수보다 여유를 둔 전체 상한 + 파트너별(HttpRoute) 상한을 함께 등록한다.
      * <p>
      * 목표 20 req/s × 최대 49개 REST 파트너 팬아웃 × 응답시간 ~300ms 가정 시
@@ -53,6 +55,8 @@ public class PartnerConnectionPoolConfig {
 
         ConnectionConfig fallbackConnectionConfig = ConnectionConfig.custom()
                 .setConnectTimeout(Timeout.ofMilliseconds(1000))
+                .setTimeToLive(TimeValue.ofMinutes(5))
+                .setValidateAfterInactivity(TimeValue.ofSeconds(2))
                 .build();
         Map<HttpRoute, ConnectionConfig> routeConnectionConfigs = new HashMap<>();
 
@@ -108,7 +112,8 @@ public class PartnerConnectionPoolConfig {
      */
     public CloseableHttpClient buildPartnerHttpClient(
             PoolingHttpClientConnectionManager connectionManager,
-            int readTimeoutMs
+            int readTimeoutMs,
+            int keepAliveSec
     ) {
         RequestConfig requestConfig = RequestConfig.custom()
                 .setResponseTimeout(Timeout.ofMilliseconds(readTimeoutMs))
@@ -117,12 +122,22 @@ public class PartnerConnectionPoolConfig {
                 .setConnectionRequestTimeout(Timeout.ofMilliseconds(CONNECTION_REQUEST_TIMEOUT_MS))
                 .build();
 
+        // 서버 헤더가 있으면 헤더 값, 없거나 더 길면 파트너별 상한 사용
+        ConnectionKeepAliveStrategy keepAliveStrategy = (response, context) -> {
+            TimeValue server = DefaultConnectionKeepAliveStrategy.INSTANCE.getKeepAliveDuration(response, context);
+            TimeValue cap = TimeValue.ofSeconds(keepAliveSec);
+            return (server == null || server.getDuration() < 0 || server.compareTo(cap) > 0) ? cap : server;
+        };
+
         return HttpClients.custom()
+                .setKeepAliveStrategy(keepAliveStrategy)
                 .setConnectionManager(connectionManager)
                 .setConnectionManagerShared(true)
                 .setDefaultRequestConfig(requestConfig)
-                .evictExpiredConnections()
-                .evictIdleConnections(TimeValue.ofSeconds(30))
+                .disableAutomaticRetries()
+                // evict 풀 정리는 스케줄러가 담당 (PartnerConnectionEvictionScheduler)
+                //.evictExpiredConnections()
+                //.evictIdleConnections(TimeValue.ofSeconds(30))
                 .build();
     }
 

@@ -57,7 +57,7 @@ public class PartnerOrTimeoutConfig {
         long total = 0;
         long currentWait = waitMs;
         for (int attempt = 1; attempt  < maxAttempts; attempt++) {
-            long cappedWait = Math.max(currentWait, maxWaitMs);
+            long cappedWait = Math.min(currentWait, maxWaitMs);
             total += (long) (cappedWait * (1 + jitter));
             currentWait = (long) (currentWait * multiplier);
         }
