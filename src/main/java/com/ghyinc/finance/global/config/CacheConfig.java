@@ -60,8 +60,8 @@ public class CacheConfig {
                 )
                 .disableCachingNullValues();
 
-        RedisCacheConfiguration productConfig = RedisCacheConfiguration.defaultCacheConfig()
-                .entryTtl((key, value) -> Duration.ofHours(6)
+        RedisCacheConfiguration productConfig = configuration.entryTtl(
+                (key, value) -> Duration.ofHours(6)
                         .plusSeconds(ThreadLocalRandom.current().nextLong(0, 1800)));   // TTL jitter
 
         return RedisCacheManager.builder(connectionFactory)
