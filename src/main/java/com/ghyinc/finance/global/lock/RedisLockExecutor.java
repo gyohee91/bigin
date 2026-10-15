@@ -5,8 +5,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
-import org.redisson.client.RedisConnectionException;
-import org.redisson.client.RedisTimeoutException;
+import org.redisson.client.RedisException;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.TimeUnit;
@@ -27,8 +26,8 @@ public class RedisLockExecutor {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return onLockUnavailable.get();
-        } catch (RedisConnectionException | RedisTimeoutException e) {
-            log.error("[분산 락] Redis 연결 실패. lockKey={}", lockKey, e);
+        } catch (RedisException e) {    // 연결/타임아웃(RedisConnectionException, RedisTimeoutException) 포함 Redisson 명령 수준 장애
+            log.error("[분산 락] Redis 연결 오류. lockKey={}", lockKey, e);
             throw new LockUnavailableException("일시적으로 처리할 수 없습니다. 잠시 후 다시 시도해 주세요.", e);
         }
 

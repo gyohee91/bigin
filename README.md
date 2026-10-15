@@ -54,18 +54,6 @@
 <a id="tech-stack"></a>
 ## 🛠 기술 스택
 
-### 실무 vs 개인 프로젝트 비교
-
-| 구분           | 실무                   | 개인 프로젝트 (Bigin)                 |
-|--------------|----------------------|---------------------------------|
-| Language     | Java 8               | Java 17                         |
-| Framework    | Spring Boot 2.7      | Spring Boot 3.5                 |
-| Architecture | Layered Architecture | Domain-driven Package Structure |
-| DB           | Oracle DB            | H2 DB (In-memory)               |
-| API 통신       | RestTemplate         | RestClient + Apache HttpClient5 (커넥션 풀) |
-
-### 개인 프로젝트 상세 스택
-
 | 구분        | 기술                                      |
 |-----------|-----------------------------------------|
 | Language  | Java 17                                 |
