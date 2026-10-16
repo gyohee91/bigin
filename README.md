@@ -54,18 +54,6 @@
 <a id="tech-stack"></a>
 ## 🛠 기술 스택
 
-### 실무 vs 개인 프로젝트 비교
-
-| 구분           | 실무                   | 개인 프로젝트 (Bigin)                 |
-|--------------|----------------------|---------------------------------|
-| Language     | Java 8               | Java 17                         |
-| Framework    | Spring Boot 2.7      | Spring Boot 3.5                 |
-| Architecture | Layered Architecture | Domain-driven Package Structure |
-| DB           | Oracle DB            | H2 DB (In-memory)               |
-| API 통신       | RestTemplate         | RestClient + Apache HttpClient5 (커넥션 풀) |
-
-### 개인 프로젝트 상세 스택
-
 | 구분        | 기술                                      |
 |-----------|-----------------------------------------|
 | Language  | Java 17                                 |
@@ -1188,8 +1176,8 @@ try-catch로 감싸 어떤 상황에서도 예외를 밖으로 던지지 않도�
 | 적용 대상 | 상품 정보 (`ProductCache`) | 암호화 키 (`CryptoService`) |
 | 선택 이유 | 멀티 Pod 간 정합성 필요 | 보안상 외부 저장소 저장 불가 |
 | Pod 간 동기화 | O (Redis 공유) | X (Pod별 독립) |
-| 무효화 방식 | `@CacheEvict` + TTL | `@CacheEvict` + TTL |
-| TTL | 6시간 | 1시간 |
+| 무효화 방식 | 커밋 후 evict(`TransactionSynchronization`) + TTL | `@CacheEvict` + TTL |
+| TTL | 6시간 + 0~30분 jitter | 1시간 |
 
 ```
 멀티 인스턴스 환경에서 상품 정보를 로컬 캐시로 관리하면
@@ -1239,34 +1227,82 @@ public List<ProductCache> getActiveProducts(PartnerCode partnerCode, LoanType lo
         return this.loadActiveProducts(partnerCode, loanType);
     }
 
-    List<ProductCache> cached = cache.get(lockKey, List.class);
+    List<ProductCache> cached = this.readCache(cache, lockKey);   // Redis 예외 → null(미스로 취급)
     if (cached != null) return cached;
 
-    return lockExecutor.execute(LOCK_PREFIX + lockKey, 3, 5,
-            () -> {
-                // 더블 체크 - 락 대기 중 다른 Thread가 이미 채웠을 수도 있음
-                List<ProductCache> doubleChecked = cache.get(lockKey, List.class);
-                if (doubleChecked != null) return doubleChecked;
+    try {
+        return lockExecutor.execute(LOCK_PREFIX + lockKey, 3, 5,
+                () -> {
+                    // 더블 체크 - 락 대기 중 다른 Thread가 이미 채웠을 수도 있음
+                    List<ProductCache> doubleChecked = this.readCache(cache, lockKey);
+                    if (doubleChecked != null) return doubleChecked;
 
-                List<ProductCache> result = this.loadActiveProducts(partnerCode, loanType);
-                if (!result.isEmpty()) cache.put(lockKey, result);
-                return result;
-            },
-            () -> this.loadActiveProducts(partnerCode, loanType)
-    );
+                    List<ProductCache> result = this.loadActiveProducts(partnerCode, loanType);
+                    if (!result.isEmpty()) this.writeCache(cache, lockKey, result);   // 저장 실패는 무시
+                    return result;
+                },
+                () -> this.loadActiveProducts(partnerCode, loanType)   // 락 대기 초과 시 DB 직접 조회
+        );
+    } catch (LockUnavailableException e) {
+        // 락은 성능 최적화용이므로 Redis 장애 시 DB로 fail-open
+        log.warn("[상품 캐시] 락 불가(Redis 장애), DB 직접 조회 key={}", lockKey);
+        return this.loadActiveProducts(partnerCode, loanType);
+    }
 }
 
-// 상품 변경 시 캐시 무효화 - 캐시를 채우는 방식과 무관하게 그대로 유효
-@CacheEvict(value = "products",
-            key = "#product.partnerCode.name() + ':' + #product.loanType.name()")
-public void updateProductStatus(ProductCache product, boolean active) { ... }
+// 상품 변경 시 커밋 이후에 캐시 무효화
+@Transactional
+public void updateProductStatus(ProductCache productCache, boolean active) {
+    productRepository.findById(productCache.getId())
+            .ifPresent(product -> product.changeActive(active));
+
+    String key = productCache.getPartnerCode().name() + ":" + productCache.getLoanType().name();
+    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+        @Override
+        public void afterCommit() {
+            evictCache(key);   // 실패해도 예외를 전파하지 않음 (TTL 만료로 보정)
+        }
+    });
+}
 
 // 전체 캐시 초기화 (관리자 API)
 @CacheEvict(value = "products", allEntries = true)
 public void evictAllProductCache() { ... }
 ```
 
-락 획득에 실패한 요청은 캐시를 갱신하지 않고 DB를 직접 조회해 응답 지연 없이 Fallback합니다.
+락 대기 시간(3초)을 넘긴 요청은 캐시를 갱신하지 않고 DB를 직접 조회해 Fallback합니다. 캐시 읽기·쓰기 예외(연결 장애, 역직렬화 실패)는 캐시 미스로 취급하고, `RedisLockExecutor`가 Redis 계열 예외(`RedisException`)를 `LockUnavailableException`으로 변환하면 `getActiveProducts()`가 DB 조회로 내려갑니다. 캐시와 이 락은 성능 최적화 수단이라 Redis 장애 시 **fail-open**으로 동작하며, 락을 못 얻거나 캐시가 실패해도 상품 조회는 실패하지 않습니다. (중복 요청을 막는 한도조회 요청 락은 정합성용이라 별개로 동작합니다.)
+
+#### 캐시 무효화 — 커밋 후 evict
+
+`@CacheEvict`는 메서드가 끝난 직후 캐시를 지우는데, `@Transactional`과 함께 쓰면 **커밋보다 먼저** 실행될 수 있습니다. 이 사이에 다른 요청이 캐시 미스로 DB에서 아직 바뀌지 않은 값을 읽어 다시 캐시에 넣으면, 변경이 TTL이 끝날 때까지 반영되지 않습니다.
+
+```
+@CacheEvict 시점 (커밋 전 evict 가능)
+  요청 A: 상품 상태 변경 → 캐시 evict → (아직 커밋 전)
+  요청 B: 캐시 미스 → DB에서 변경 전 값 조회 → 캐시에 다시 저장
+  요청 A: 커밋 → 캐시에는 변경 전 값이 남음 (TTL까지 stale)
+
+커밋 후 evict (TransactionSynchronization.afterCommit)
+  요청 A: 커밋 완료 → 캐시 evict
+  요청 B: 이후 캐시 미스 → 커밋된 값을 조회해 캐시에 저장
+```
+
+- evict 실패(Redis 장애 등)는 로그만 남기고 예외를 전파하지 않습니다. 이 경우 이전 값은 TTL 만료 시점까지 유지됩니다.
+- 전체 초기화(`evictAllProductCache`)는 관리자 API라 `@CacheEvict(allEntries = true)`를 그대로 사용합니다.
+- 무효화는 서비스 메서드 호출을 기준으로 동작합니다. DB를 직접 수정한 경우는 감지할 수 없으므로 전체 초기화 API로 보정하거나 TTL 만료를 기다려야 합니다.
+
+#### TTL + Jitter
+
+`products` 캐시의 TTL은 **6시간 + 0~30분 무작위 값**을 엔트리마다 더해 설정합니다.
+
+```java
+RedisCacheConfiguration productConfig = configuration.entryTtl(
+        (key, value) -> Duration.ofHours(6)
+                .plusSeconds(ThreadLocalRandom.current().nextLong(0, 1800)));   // 6h + 0~30분
+```
+
+- 같은 시점에 채워진 키들이 한꺼번에 만료되는 것을 분산합니다. 키별 락으로 중복 조회는 이미 합쳐지지만, 만료 시점이 몰리는 것 자체를 줄입니다.
+- TTL은 정합성의 주된 수단이 아니라 **evict를 거치지 않은 변경**(DB 직접 수정, evict 실패)의 최대 지연을 정하는 안전망입니다.
 
 #### JPA Entity 직렬화 문제 해결
 
@@ -1334,7 +1370,7 @@ public CryptoService getCryptoService(PartnerCode partnerCode) { ... }
 ```java
 // Redis 캐시 — 상품 정보 (멀티 인스턴스 정합성)
 @Primary
-RedisCacheManager → "products" 캐시, TTL 6시간
+RedisCacheManager → "products" 캐시, TTL 6시간 + 0~30분 jitter
 
 // Caffeine 캐시 — 암호화 키 (보안 민감 데이터)
 CaffeineCacheManager → "cryptoService" 캐시, TTL 1시간, 최대 100개

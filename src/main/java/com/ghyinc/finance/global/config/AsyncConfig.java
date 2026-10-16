@@ -164,4 +164,25 @@ public class AsyncConfig {
         executor.initialize();
         return executor;
     }
+
+    /**
+     * 에러 이벤트 수집 전용 - 감지(Redis Lua) + DB 이력 저장
+     * 에러가 급증하는 순간 = 이 풀에 작업이 몰리는 순간이므로, 수집 경로가 요청 스레드나 hikari를
+     * 끌고 내려가지 않도록 작은 풀 + 큰 큐로 제한한다. 큐까지 넘치면 AbortPolicy로 거절하고
+     * ErrorEventRecorder가 이를 잡아 dropped 메트릭만 올린다 (모니터링 때문에 본 요청이 실패하면 안 됨)
+     */
+    @Bean(name = "errorEventExecutor")
+    public Executor errorEventExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(4);
+        executor.setQueueCapacity(2000);
+        executor.setThreadNamePrefix("error-event-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(10);
+        executor.setTaskDecorator(new MdcTaskDecorator());
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+        executor.initialize();
+        return executor;
+    }
 }
