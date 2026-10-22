@@ -5,6 +5,7 @@ import com.ghyinc.finance.domain.loan.dto.*;
 import com.ghyinc.finance.domain.loan.service.LoanApplyService;
 import com.ghyinc.finance.domain.loan.service.LoanLimitResultService;
 import com.ghyinc.finance.domain.loan.service.LoanLimitService;
+import com.ghyinc.finance.domain.loan.service.LoanLimitSummaryService;
 import com.ghyinc.finance.global.common.ApiCommResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -33,18 +34,21 @@ public class LoanController {
     private final LoanLimitService loanLimitService;    //한도조회
     private final LoanLimitResultService loanLimitResultService;    //한도결과
     private final LoanApplyService loanApplyService;    //대출신청
+    private final LoanLimitSummaryService loanLimitSummaryService;  // 한도결과 (요약)
 
     @Operation(
             summary = "금리 한도조회",
             description = "제휴 금융사를 대상으로 금리 한도조회 API 전송"
     )
-    @ApiResponses(
+    @ApiResponses({
             @ApiResponse(
                     responseCode = "200",
                     description = "한도조회 요청 성공",
                     content = @Content(schema = @Schema(implementation = LoanLimitInquiryResponse.class))
-            )
-    )
+            ),
+            @ApiResponse(responseCode = "400", description = "잘못된 요청"),
+            @ApiResponse(responseCode = "500", description = "서버 오류")
+    })
     @PostMapping("/request-compare-loan")
     public ResponseEntity<ApiCommResponse<LoanLimitInquiryResponse>> requestCompareLoan(
             @Valid @RequestBody LoanLimitRequest request
@@ -137,5 +141,29 @@ public class LoanController {
         LoanApplyResponse response = loanApplyService.apply(request);
 
         return ResponseEntity.ok(ApiCommResponse.success("대출신청 성공", response));
+    }
+
+    @Operation(
+            summary = "한도결과 조회 (결과 화면)",
+            description = "대출가능/불가 금융사 분류, 상품별 그룹핑을 포함한 결과 화면 전용 요약 화면"
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "처리 성공",
+                    content = @Content(schema = @Schema(implementation = LoanLimitSummaryResponse.class))
+            ),
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "잘못된 요청"
+            )
+    })
+    @GetMapping("/inquiry/{inquiryNo}/summary")
+    public ResponseEntity<ApiCommResponse<LoanLimitSummaryResponse>> getCompareLoanSummary(
+            @Parameter(description = "업무 식별번호", example = "LL20260416q2g09nhgap", required = true)
+            @PathVariable String inquiryNo
+    ) {
+        LoanLimitSummaryResponse response = loanLimitSummaryService.getCompareLoanSummary(inquiryNo);
+        return ResponseEntity.ok(ApiCommResponse.success("한도결과 조회 성공", response));
     }
 }

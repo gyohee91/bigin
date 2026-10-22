@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.repository;
 
+import com.ghyinc.finance.domain.loan.dto.ProductNameDto;
 import com.ghyinc.finance.domain.loan.entity.Product;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
@@ -8,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 
 @Repository
@@ -25,4 +27,15 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
             @Param("partnerCode") PartnerCode partnerCode,
             @Param("loanType") LoanType loanType
     );
+
+    @Query("""
+            SELECT com.ghyinc.finance.domain.loan.dto.ProductNameDto(
+                p.partner.partnerCode,
+                p.productCode,
+                p.productName
+            )
+            FROM Product p
+            WHERE p.productCode IN :productCodes
+           """)
+    List<ProductNameDto> findNamesByProductCodes(@Param("productCodes") Collection<String> productCodes);
 }
