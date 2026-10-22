@@ -14,7 +14,7 @@ public record LoanLimitSummaryResponse(
         LoanType loanType,
         InquiryStatus status,
         @Schema(description = "상품별 대출 가능 금융사 그룹")
-        List<ProductGroupSummary> availableProducts,
+        List<AvailablePartnerSummary> availablePartners,
         @Schema(description = "대출 불가 금융사")
         List<UnavailablePartnerSummary> unavailablePartners
 ) {

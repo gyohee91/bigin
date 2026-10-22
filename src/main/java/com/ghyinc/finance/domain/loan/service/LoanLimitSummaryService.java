@@ -58,12 +58,13 @@ public class LoanLimitSummaryService {
                 .collect(Collectors.groupingBy(LoanLimitProductResultResponse::partnerCode));
 
         // 상품명 -> 오퍼 목록 (등장 순서 유지)
-        Map<String, List<ProductOfferSummary>> offersByProduct = new LinkedHashMap<>();
+        List<AvailablePartnerSummary> availablePartners = new ArrayList<>();
         List<UnavailablePartnerSummary> unavailablePartners = new ArrayList<>();
 
         for (LoanLimitResult partnerResult : inquiry.getResults()) {
             PartnerCode partnerCode = partnerResult.getPartnerCode();
             List<LoanLimitProductResultResponse> productResults = byPartner.getOrDefault(partnerCode, List.of());
+            String partnerName = partnerNameMap.getOrDefault(partnerCode, partnerCode.getPartnerName());
 
             List<LoanLimitProductResultResponse> available = productResults.stream()
                     .filter(r -> Objects.nonNull(r.resultCode()) && r.resultCode().isSuccess()
@@ -71,19 +72,27 @@ public class LoanLimitSummaryService {
                     .toList();
 
             if (!available.isEmpty()) {
-                String partnerName = partnerNameMap.getOrDefault(partnerCode, partnerCode.getPartnerName());
-                for(LoanLimitProductResultResponse response : available) {
-                    String productName = productNameMap.getOrDefault(response.partnerCode().name() + ":" + response.productCode(), response.productCode());
-                    offersByProduct.computeIfAbsent(productName, s -> new ArrayList<>())
-                            .add(ProductOfferSummary.builder()
-                                    .partnerCode(partnerCode)
-                                    .partnerName(partnerName)
-                                    .productCode(response.productCode())
-                                    .amount(response.amount())
-                                    .interestRate(response.interestRate())
-                                    .build()
-                            );
-                }
+                List<AvailableProductSummary> products = available.stream()
+                        .map(r -> AvailableProductSummary.builder()
+                                .productCode(r.productCode())
+                                .productName(productNameMap.getOrDefault(r.partnerCode().name() + ":" + r.productCode(), r.productCode()))
+                                .amount(r.amount())
+                                .interestRate(r.interestRate())
+                                .build()
+                        )
+                        .sorted(Comparator.comparing(AvailableProductSummary::amount, Comparator.reverseOrder())
+                                .thenComparingDouble(AvailableProductSummary::interestRate))
+                        .toList();
+
+                availablePartners.add(
+                        AvailablePartnerSummary.builder()
+                                .partnerCode(partnerCode)
+                                .partnerName(partnerName)
+                                .lowestInterestRate(products.stream().mapToDouble(AvailableProductSummary::interestRate).min().orElse(0))
+                                .highestAmount(products.stream().mapToLong(AvailableProductSummary::amount).max().orElse(0))
+                                .products(products)
+                                .build()
+                );
                 continue;
             }
 
@@ -99,26 +108,14 @@ public class LoanLimitSummaryService {
             );
         }
 
-        List<ProductGroupSummary> availableProducts = offersByProduct.entrySet().stream()
-                .map(e -> {
-                    List<ProductOfferSummary> offers = e.getValue().stream()
-                            .sorted(Comparator.comparing(ProductOfferSummary::amount, Comparator.reverseOrder()))
-                            .toList();
-                    return ProductGroupSummary.builder()
-                            .productName(e.getKey())
-                            .lowestInterestRate(offers.stream().mapToDouble(ProductOfferSummary::interestRate).min().orElse(0))
-                            .highestInterestAmount(offers.stream().mapToLong(ProductOfferSummary::amount).max().orElse(0))
-                            .offers(offers)
-                            .build();
-                })
-                .sorted(Comparator.comparing(ProductGroupSummary::highestInterestAmount).reversed())
-                .toList();
+        availablePartners.sort(Comparator.comparingLong(AvailablePartnerSummary::highestAmount).reversed()
+                .thenComparing(AvailablePartnerSummary::lowestInterestRate));
 
         return LoanLimitSummaryResponse.builder()
                 .inquiryNo(inquiry.getInquiryNo())
                 .loanType(inquiry.getLoanType())
                 .status(inquiry.getStatus())
-                .availableProducts(availableProducts)
+                .availablePartners(availablePartners)
                 .unavailablePartners(unavailablePartners)
                 .build();
     }

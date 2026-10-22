@@ -111,22 +111,29 @@ class LoanLimitSummaryServiceTest {
         given(productRepository.findNamesByProductCodes(anyCollection())).willReturn(names);
     }
 
-    // --------------------- 대출 가능 상품 그룹 ---------------------
+    // --------------------- 대출 가능 금융사 ---------------------
 
     @Test
-    @DisplayName("같은 상품의 오퍼는 한 그룹으로 묶이고 한도 내림차순, 최저 금리/최고 한도가 계산된다")
-    void groupsOffersByProductName() {
+    @DisplayName("금융사별로 묶이고, 금융사 안의 상품은 한도 내림차순이며, 금융사의 최저 금리/최고 한도가 계산된다")
+    void groupsProductsByPartner() {
         LoanLimitInquiry inquiry = this.inquiry(
                 this.partnerResult(PartnerCode.KAKAO_BANK, InquiryStatus.SUCCESS),
+                this.partnerResult(PartnerCode.LINE_BANK, InquiryStatus.SUCCESS),
                 this.partnerResult(PartnerCode.TOSS_BANK, InquiryStatus.SUCCESS)
         );
 
         this.givenData(inquiry,
-                List.of(this.received(PartnerCode.KAKAO_BANK, "k1", LoanLimitResultCode.SUCCESS, 30_000_000L, 4.5),
-                        this.received(PartnerCode.TOSS_BANK, "t1", LoanLimitResultCode.SUCCESS, 40_000_000L, 3.9)),
-                List.of(this.partner(PartnerCode.KAKAO_BANK, "카카오뱅크"), this.partner(PartnerCode.TOSS_BANK, "토스뱅크")),
-                List.of(new ProductNameDto(PartnerCode.KAKAO_BANK, "k1", "신용대출"),
-                        new ProductNameDto(PartnerCode.TOSS_BANK, "t1", "신용대출"))
+                List.of(this.received(PartnerCode.KAKAO_BANK, "ta", LoanLimitResultCode.SUCCESS, 30_000_000L, 4.5),
+                        this.received(PartnerCode.LINE_BANK, "p205", LoanLimitResultCode.SUCCESS, 10_000_000L, 9.5),
+                        this.received(PartnerCode.LINE_BANK, "p206", LoanLimitResultCode.SUCCESS, 20_000_000L, 7.5),
+                        this.received(PartnerCode.TOSS_BANK, "fnq005", LoanLimitResultCode.SUCCESS, 40_000_000L, 2.5)),
+                List.of(this.partner(PartnerCode.KAKAO_BANK, "카카오뱅크"),
+                        this.partner(PartnerCode.LINE_BANK, "라인뱅크"),
+                        this.partner(PartnerCode.TOSS_BANK, "토스뱅크")),
+                List.of(new ProductNameDto(PartnerCode.KAKAO_BANK, "ta", "갈아타기OK론"),
+                        new ProductNameDto(PartnerCode.LINE_BANK, "p205", "드림론"),
+                        new ProductNameDto(PartnerCode.LINE_BANK, "p206", "사잇돌"),
+                        new ProductNameDto(PartnerCode.TOSS_BANK, "fnq005", "kiwi비상금"))
         );
 
         LoanLimitSummaryResponse response = loanLimitSummaryService.getCompareLoanSummary(INQUIRY_NO);
@@ -135,38 +142,64 @@ class LoanLimitSummaryServiceTest {
         assertThat(response.loanType()).isEqualTo(LoanType.PERSONAL_CREDIT);
         assertThat(response.status()).isEqualTo(InquiryStatus.IN_PROGRESS);
         assertThat(response.unavailablePartners()).isEmpty();
-        assertThat(response.availableProducts()).hasSize(1);
+        assertThat(response.availablePartners()).extracting(AvailablePartnerSummary::partnerCode)
+                .containsExactly(PartnerCode.TOSS_BANK, PartnerCode.KAKAO_BANK, PartnerCode.LINE_BANK);
 
-        ProductGroupSummary group = response.availableProducts().get(0);
-        assertThat(group.productName()).isEqualTo("신용대출");
-        assertThat(group.lowestInterestRate()).isEqualTo(3.9);
-        assertThat(group.highestInterestAmount()).isEqualTo(40_000_000L);
-        assertThat(group.offers()).extracting(ProductOfferSummary::partnerCode)
-                .containsExactly(PartnerCode.TOSS_BANK, PartnerCode.KAKAO_BANK);
+        // 같은 금융사의 상품은 한 항목에 묶인다
+        AvailablePartnerSummary line = response.availablePartners().get(2);
+        assertThat(line.partnerName()).isEqualTo("라인뱅크");
+        assertThat(line.lowestInterestRate()).isEqualTo(7.5);
+        assertThat(line.highestAmount()).isEqualTo(20_000_000L);
+        assertThat(line.products()).extracting(AvailableProductSummary::productName)
+                .containsExactly("사잇돌", "드림론");
     }
 
     @Test
-    @DisplayName("상품 그룹은 최고 한도 내림차순으로 정렬된다")
-    void sortsGroupsByHighestAmountDescending() {
+    @DisplayName("금융사는 최고 한도 내림차순이고, 한도가 같으면 최저 금리가 낮은 금융사가 먼저다")
+    void sortsPartnersByHighestAmountThenLowestRate() {
         LoanLimitInquiry inquiry = this.inquiry(
                 this.partnerResult(PartnerCode.KAKAO_BANK, InquiryStatus.SUCCESS),
-                this.partnerResult(PartnerCode.TOSS_BANK, InquiryStatus.SUCCESS)
+                this.partnerResult(PartnerCode.TOSS_BANK, InquiryStatus.SUCCESS),
+                this.partnerResult(PartnerCode.LINE_BANK, InquiryStatus.SUCCESS)
         );
 
-        givenData(inquiry,
-                List.of(this.received(PartnerCode.KAKAO_BANK, "k1", LoanLimitResultCode.SUCCESS, 30_000_000L, 4.5)),
-                List.of(this.partner(PartnerCode.KAKAO_BANK, "카카오뱅크")),
+        this.givenData(inquiry,
+                List.of(this.received(PartnerCode.KAKAO_BANK, "k1", LoanLimitResultCode.SUCCESS, 30_000_000L, 4.5),
+                        this.received(PartnerCode.TOSS_BANK, "t1", LoanLimitResultCode.SUCCESS, 30_000_000L, 3.9),
+                        this.received(PartnerCode.LINE_BANK, "l1", LoanLimitResultCode.SUCCESS, 50_000_000L, 7.5)),
+                List.of(this.partner(PartnerCode.KAKAO_BANK, "카카오뱅크"),
+                        this.partner(PartnerCode.TOSS_BANK, "토스뱅크"),
+                        this.partner(PartnerCode.LINE_BANK, "라인뱅크")),
                 List.of()
         );
 
         LoanLimitSummaryResponse response = loanLimitSummaryService.getCompareLoanSummary(INQUIRY_NO);
 
-        assertThat(response.availableProducts()).extracting(ProductGroupSummary::productName)
-                .containsExactly("k1");
+        assertThat(response.availablePartners()).extracting(AvailablePartnerSummary::partnerCode)
+                .containsExactly(PartnerCode.LINE_BANK, PartnerCode.TOSS_BANK, PartnerCode.KAKAO_BANK);
     }
 
     @Test
-    @DisplayName("상품명을 못 찾으면 상품코드를 그룹명으로 쓴다")
+    @DisplayName("금융사 안에서 한도가 같으면 금리가 낮은 상품이 먼저다")
+    void sortsProductsByAmountThenInterestRate() {
+        LoanLimitInquiry inquiry = this.inquiry(this.partnerResult(PartnerCode.LINE_BANK, InquiryStatus.SUCCESS));
+
+        this.givenData(inquiry,
+                List.of(this.received(PartnerCode.LINE_BANK, "a", LoanLimitResultCode.SUCCESS, 10_000_000L, 9.5),
+                        this.received(PartnerCode.LINE_BANK, "b", LoanLimitResultCode.SUCCESS, 10_000_000L, 7.5)),
+                List.of(this.partner(PartnerCode.LINE_BANK, "라인뱅크")),
+                List.of()
+        );
+
+        LoanLimitSummaryResponse response = loanLimitSummaryService.getCompareLoanSummary(INQUIRY_NO);
+
+        assertThat(response.availablePartners().get(0).products())
+                .extracting(AvailableProductSummary::productCode)
+                .containsExactly("b", "a");
+    }
+
+    @Test
+    @DisplayName("상품명을 못 찾으면 상품코드를 상품명으로 쓴다")
     void fallsBackToProductCodeWhenNameMissing() {
         LoanLimitInquiry inquiry = this.inquiry(this.partnerResult(PartnerCode.KAKAO_BANK, InquiryStatus.SUCCESS));
 
@@ -177,7 +210,8 @@ class LoanLimitSummaryServiceTest {
 
         LoanLimitSummaryResponse response = loanLimitSummaryService.getCompareLoanSummary(INQUIRY_NO);
 
-        assertThat(response.availableProducts()).extracting(ProductGroupSummary::productName)
+        assertThat(response.availablePartners().get(0).products())
+                .extracting(AvailableProductSummary::productName)
                 .containsExactly("k1");
     }
 
@@ -194,7 +228,7 @@ class LoanLimitSummaryServiceTest {
 
         LoanLimitSummaryResponse response = loanLimitSummaryService.getCompareLoanSummary(INQUIRY_NO);
 
-        assertThat(response.availableProducts().get(0).offers().get(0).partnerName()).isEqualTo("카카오뱅크");
+        assertThat(response.availablePartners().get(0).partnerName()).isEqualTo("카카오뱅크");
         assertThat(response.unavailablePartners()).extracting(UnavailablePartnerSummary::partnerName)
                 .containsExactly(PartnerCode.TOSS_BANK.getPartnerName());
     }
@@ -217,7 +251,10 @@ class LoanLimitSummaryServiceTest {
 
         LoanLimitSummaryResponse response = loanLimitSummaryService.getCompareLoanSummary(INQUIRY_NO);
 
-        assertThat(response.availableProducts()).hasSize(1);
+        assertThat(response.availablePartners()).hasSize(1);
+        assertThat(response.availablePartners().get(0).products())
+                .extracting(AvailableProductSummary::productCode)
+                .containsExactly("k1");   // 부결 상품(k2)은 목록에서 제외
         assertThat(response.unavailablePartners()).isEmpty();
     }
 
@@ -235,7 +272,7 @@ class LoanLimitSummaryServiceTest {
 
         LoanLimitSummaryResponse response = loanLimitSummaryService.getCompareLoanSummary(INQUIRY_NO);
 
-        assertThat(response.availableProducts()).isEmpty();
+        assertThat(response.availablePartners()).isEmpty();
         assertThat(response.unavailablePartners())
                 .extracting(UnavailablePartnerSummary::partnerCode)
                 .containsExactly(PartnerCode.KAKAO_BANK);
@@ -255,7 +292,7 @@ class LoanLimitSummaryServiceTest {
 
         LoanLimitSummaryResponse response = loanLimitSummaryService.getCompareLoanSummary(INQUIRY_NO);
 
-        assertThat(response.availableProducts()).isEmpty();
+        assertThat(response.availablePartners()).isEmpty();
         assertThat(response.unavailablePartners()).isEmpty();   // 대기 중이라 어느 쪽에도 없음
     }
 
@@ -296,7 +333,7 @@ class LoanLimitSummaryServiceTest {
 
         LoanLimitSummaryResponse response = loanLimitSummaryService.getCompareLoanSummary(INQUIRY_NO);
 
-        assertThat(response.availableProducts()).isEmpty();
+        assertThat(response.availablePartners()).isEmpty();
         assertThat(response.unavailablePartners()).isEmpty();
     }
 
@@ -313,7 +350,7 @@ class LoanLimitSummaryServiceTest {
 
         LoanLimitSummaryResponse response = loanLimitSummaryService.getCompareLoanSummary(INQUIRY_NO);
 
-        assertThat(response.availableProducts()).isEmpty();
+        assertThat(response.availablePartners()).isEmpty();
         assertThat(response.unavailablePartners()).hasSize(1);
     }
 

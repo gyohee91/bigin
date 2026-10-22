@@ -29,7 +29,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     );
 
     @Query("""
-            SELECT com.ghyinc.finance.domain.loan.dto.ProductNameDto(
+            SELECT new com.ghyinc.finance.domain.loan.dto.ProductNameDto(
                 p.partner.partnerCode,
                 p.productCode,
                 p.productName
