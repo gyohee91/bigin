@@ -25,6 +25,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import com.ghyinc.finance.global.event.PartnerTransmissionBatchAuditEvent;
+import com.ghyinc.finance.global.metrics.PartnerSlaMetrics;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -58,6 +59,9 @@ class LoanLimitInquiryPersistenceServiceTest {
     private OutboxEventWriter outboxEventWriter;
 
     @Mock
+    private PartnerSlaMetrics partnerSlaMetrics;
+
+    @Mock
     private LoReqtNoGenerator generator;
 
     @Mock
@@ -66,7 +70,7 @@ class LoanLimitInquiryPersistenceServiceTest {
     @BeforeEach
     void setUp() {
         persistenceService = new LoanLimitInquiryPersistenceService(
-                loanLimitInquiryRepository, productService, outboxEventWriter, generator, applicationEventPublisher
+                loanLimitInquiryRepository, productService, outboxEventWriter, partnerSlaMetrics, generator, applicationEventPublisher
         );
     }
 
@@ -437,6 +441,7 @@ class LoanLimitInquiryPersistenceServiceTest {
         then(outboxEventWriter).should(times(1))
                 .enqueue(eq("PartnerTransmission"), any(), eq("PARTNER_TRANSMISSION"), payload.capture());
         assertThat(((PartnerTransmissionBatchAuditEvent) payload.getValue()).transmissions()).hasSize(2);
+        then(partnerSlaMetrics).should(times(2)).recordTransmission(any());
     }
 
     // ─── markFailed ───────────────────────────────────────────────────────────

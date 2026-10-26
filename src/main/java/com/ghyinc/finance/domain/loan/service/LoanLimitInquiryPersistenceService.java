@@ -18,6 +18,7 @@ import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.global.event.LoanLimitInquiryCreatedEvent;
 import com.ghyinc.finance.global.event.PartnerTransmissionAuditEvent;
 import com.ghyinc.finance.global.event.PartnerTransmissionBatchAuditEvent;
+import com.ghyinc.finance.global.metrics.PartnerSlaMetrics;
 import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -55,6 +56,7 @@ public class LoanLimitInquiryPersistenceService {
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
     private final ProductService productService;
     private final OutboxEventWriter outboxEventWriter;
+    private final PartnerSlaMetrics partnerSlaMetrics;
     private final LoReqtNoGenerator generator;
 
     private final ApplicationEventPublisher applicationEventPublisher;
@@ -152,6 +154,9 @@ public class LoanLimitInquiryPersistenceService {
                 productResultMap.get(adaptorResponse.partnerCode())
                         .forEach(LoanLimitProductResult::sendFail);
             }
+
+            // 파트너 SLA 지표 - 앱 안에서 바로 기록 (Kafka 경유 불필요)
+            partnerSlaMetrics.recordTransmission(adaptorResponse);
         });
 
         // 파트너 전송 이력 감사 로그 - 조회 1건당 Outbox 1건(전 파트너 결과 묶음)
