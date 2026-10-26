@@ -32,6 +32,7 @@ spring:
       hibernate:
         format_sql: false
         dialect: org.hibernate.dialect.H2Dialect
+        generate_statistics: true
   sql:
     init:
       mode: always
@@ -107,6 +108,10 @@ management:
       # 모든 매트릭에 애플리케이션 이름 태그 추가
       # Grafana에서 application="bigin" 로 필터링 가능
       application: bigin
+  observations:
+    enable:
+      spring:
+        security: false
 
 springdoc:
   swagger-ui:
