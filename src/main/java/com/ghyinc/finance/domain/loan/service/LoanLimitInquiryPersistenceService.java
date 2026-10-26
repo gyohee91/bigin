@@ -17,6 +17,7 @@ import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.global.event.LoanLimitInquiryCreatedEvent;
 import com.ghyinc.finance.global.event.PartnerTransmissionAuditEvent;
+import com.ghyinc.finance.global.event.PartnerTransmissionBatchAuditEvent;
 import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -151,15 +152,19 @@ public class LoanLimitInquiryPersistenceService {
                 productResultMap.get(adaptorResponse.partnerCode())
                         .forEach(LoanLimitProductResult::sendFail);
             }
-
-            // 파트너 전송 이력 감사 로그
-            outboxEventWriter.enqueue(
-                    "PartnerTransmission",
-                    loanLimitInquiry.getInquiryNo(),
-                    "PARTNER_TRANSMISSION",
-                    PartnerTransmissionAuditEvent.from(loanLimitInquiry.getInquiryNo(), adaptorResponse)
-            );
         });
+
+        // 파트너 전송 이력 감사 로그 - 조회 1건당 Outbox 1건(전 파트너 결과 묶음)
+        outboxEventWriter.enqueue(
+                "PartnerTransmission",
+                loanLimitInquiry.getInquiryNo(),
+                "PARTNER_TRANSMISSION",
+                PartnerTransmissionBatchAuditEvent.of(
+                        loanLimitInquiry.getInquiryNo(),
+                        adaptorResponses.stream()
+                                .map(r -> PartnerTransmissionAuditEvent.from(loanLimitInquiry.getInquiryNo(), r))
+                                .toList())
+        );
 
         // 성공 금융사 수에 따라 Inquiry 최종 상태 결정
         // 전체 성공: SUCCESS, 전체 실패: FAILED, 일부 성공: PARTIAL_SUCCESS

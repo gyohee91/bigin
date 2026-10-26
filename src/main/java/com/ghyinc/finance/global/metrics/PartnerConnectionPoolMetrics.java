@@ -50,6 +50,7 @@ public class PartnerConnectionPoolMetrics {
     private void registerGauge(String scope, String partnerTag, String state,
                                Supplier<PoolStats> statsSupplier, ToIntFunction<PoolStats> extractor) {
         Gauge.builder("partner.http.pool.connections", statsSupplier, s -> extractor.applyAsInt(s.get()))
+                .strongReference(true)          // 추가
                 .tag("scope", scope)
                 .tag("partner", partnerTag)
                 .tag("state", state)

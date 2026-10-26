@@ -24,6 +24,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import com.ghyinc.finance.global.event.PartnerTransmissionBatchAuditEvent;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -414,8 +415,8 @@ class LoanLimitInquiryPersistenceServiceTest {
     }
 
     @Test
-    @DisplayName("applyResults - 금융사별 PARTNER_TRANSMISSION Outbox 이벤트 1건씩 발행")
-    void applyResults_publishesPartnerTransmissionAuditEventPerPartner() {
+    @DisplayName("applyResults - PARTNER_TRANSMISSION Outbox 이벤트는 조회 1건당 1건(전 파트너 묶음)")
+    void applyResults_publishesSingleBatchedPartnerTransmissionAuditEvent() {
         LoanLimitInquiry inquiry = buildInquiry();
         inquiry.addResult(LoanLimitResult.builder().partnerCode(PartnerCode.KAKAO_BANK).build());
         inquiry.addResult(LoanLimitResult.builder().partnerCode(PartnerCode.TOSS_BANK).build());
@@ -432,8 +433,10 @@ class LoanLimitInquiryPersistenceServiceTest {
                 LoanLimitAdaptorResponse.success(PartnerCode.TOSS_BANK, 150L)
         ));
 
-        then(outboxEventWriter).should(times(2))
-                .enqueue(eq("PartnerTransmission"), any(), eq("PARTNER_TRANSMISSION"), any());
+        ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
+        then(outboxEventWriter).should(times(1))
+                .enqueue(eq("PartnerTransmission"), any(), eq("PARTNER_TRANSMISSION"), payload.capture());
+        assertThat(((PartnerTransmissionBatchAuditEvent) payload.getValue()).transmissions()).hasSize(2);
     }
 
     // ─── markFailed ───────────────────────────────────────────────────────────

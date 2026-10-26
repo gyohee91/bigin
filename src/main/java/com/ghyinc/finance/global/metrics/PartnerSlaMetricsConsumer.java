@@ -2,6 +2,7 @@ package com.ghyinc.finance.global.metrics;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.global.event.PartnerTransmissionAuditEvent;
+import com.ghyinc.finance.global.event.PartnerTransmissionBatchAuditEvent;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -36,25 +37,27 @@ public class PartnerSlaMetricsConsumer {
     )
     public void consume(String payload, ConsumerRecord<String, String> record) {
         try {
-            PartnerTransmissionAuditEvent event = objectMapper.readValue(payload, PartnerTransmissionAuditEvent.class);
+            PartnerTransmissionBatchAuditEvent batch = objectMapper.readValue(payload, PartnerTransmissionBatchAuditEvent.class);
 
-            String partner = event.partnerCode().name();
-            String result = event.success() ? "success" : "fail";
+            for (PartnerTransmissionAuditEvent event : batch.transmissions()) {
+                String partner = event.partnerCode().name();
+                String result = event.success() ? "success" : "fail";
 
-            Counter.builder("partner.transmission.count")
-                    .tag("partner", partner)
-                    .tag("result", result)
-                    .description("파트너별 전송 성공/실패 건수")
-                    .register(meterRegistry)
-                    .increment();
+                Counter.builder("partner.transmission.count")
+                        .tag("partner", partner)
+                        .tag("result", result)
+                        .description("파트너별 전송 성공/실패 건수")
+                        .register(meterRegistry)
+                        .increment();
 
-            Timer.builder("partner.transmission.duration")
-                    .tag("partner", partner)
-                    .tag("result", result)
-                    .description("파트너별 응답 시간")
-                    .publishPercentiles(0.5, 0.95, 0.99)
-                    .register(meterRegistry)
-                    .record(event.resTimeMs(), TimeUnit.MILLISECONDS);
+                Timer.builder("partner.transmission.duration")
+                        .tag("partner", partner)
+                        .tag("result", result)
+                        .description("파트너별 응답 시간")
+                        .publishPercentiles(0.5, 0.95, 0.99)
+                        .register(meterRegistry)
+                        .record(event.resTimeMs(), TimeUnit.MILLISECONDS);
+            }
 
         } catch (Exception e) {
             // 지표 수집 실패가 비즈니스 처리에 영향을 주면 안 되므로 절대 예외를 전파하지 않는다.
