@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.service;
 
+import com.ghyinc.finance.domain.audit.service.AuditLogWriter;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitInquiryResponse;
@@ -56,6 +57,7 @@ public class LoanLimitInquiryPersistenceService {
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
     private final ProductService productService;
     private final OutboxEventWriter outboxEventWriter;
+    private final AuditLogWriter auditLogWriter;
     private final PartnerSlaMetrics partnerSlaMetrics;
     private final LoReqtNoGenerator generator;
 
@@ -159,11 +161,10 @@ public class LoanLimitInquiryPersistenceService {
             partnerSlaMetrics.recordTransmission(adaptorResponse);
         });
 
-        // 파트너 전송 이력 감사 로그 - 조회 1건당 Outbox 1건(전 파트너 결과 묶음)
-        outboxEventWriter.enqueue(
-                "PartnerTransmission",
-                loanLimitInquiry.getInquiryNo(),
+        // 파트너 전송 이력 감사 로그 - 조회 1건당 audit_log 1행(전 파트너 결과 묶음), 같은 트랜잭션에서 직접 INSERT
+        auditLogWriter.write(
                 "PARTNER_TRANSMISSION",
+                loanLimitInquiry.getInquiryNo(),
                 PartnerTransmissionBatchAuditEvent.of(
                         loanLimitInquiry.getInquiryNo(),
                         adaptorResponses.stream()

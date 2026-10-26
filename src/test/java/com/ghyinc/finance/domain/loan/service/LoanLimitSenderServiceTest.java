@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.service;
 
+import com.ghyinc.finance.domain.audit.service.AuditLogWriter;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
@@ -64,6 +65,9 @@ class LoanLimitSenderServiceTest {
     private OutboxEventWriter outboxEventWriter;
 
     @Mock
+    private AuditLogWriter auditLogWriter;
+
+    @Mock
     private MeterRegistry meterRegistry;
 
     @Mock
@@ -75,7 +79,7 @@ class LoanLimitSenderServiceTest {
     @BeforeEach
     void setUp() {
         LoanLimitInquiryPersistenceService persistenceService = new LoanLimitInquiryPersistenceService(
-                loanLimitInquiryRepository, productService, outboxEventWriter, partnerSlaMetrics, generator, applicationEventPublisher
+                loanLimitInquiryRepository, productService, outboxEventWriter, auditLogWriter, partnerSlaMetrics, generator, applicationEventPublisher
         );
 
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

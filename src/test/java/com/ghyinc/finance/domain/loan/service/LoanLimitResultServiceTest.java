@@ -2,6 +2,7 @@ package com.ghyinc.finance.domain.loan.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ghyinc.finance.domain.audit.service.AuditLogWriter;
 import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptor;
 import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptorFactory;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResultRequest;
@@ -48,6 +49,9 @@ class LoanLimitResultServiceTest {
 
     @Mock
     private RedisLockExecutor lockExecutor;
+
+    @Mock
+    private AuditLogWriter auditLogWriter;
 
     private LoanLimitInquiry buildInquiry() {
         return LoanLimitInquiry.builder()
@@ -138,6 +142,7 @@ class LoanLimitResultServiceTest {
         assertThat(productResult.getAmount()).isEqualTo(30_000_000);
         assertThat(productResult.getResultCode()).isEqualTo(LoanLimitResultCode.SUCCESS);
         then(loanLimitCounterService).should().incrementSuccessCount("LR20260410AAA", "P060100206");
+        then(auditLogWriter).should().write(eq("PARTNER_CALLBACK"), eq("LR20260410AAA"), any());
     }
 
     /*
@@ -206,6 +211,7 @@ class LoanLimitResultServiceTest {
         assertThat(inquiry.getSuccessProductCount()).isEqualTo(0);
         assertThat(productResult.getStatus()).isEqualTo(PartnerInquiryStatus.PENDING);
         then(loanLimitCounterService).should(never()).incrementSuccessCount(anyString(), anyString());
+        then(auditLogWriter).should(never()).write(anyString(), anyString(), any());
     }
 
     @Test
@@ -232,6 +238,7 @@ class LoanLimitResultServiceTest {
         assertThat(inquiry.getSuccessProductCount()).isEqualTo(0);
         assertThat(productResult.getStatus()).isEqualTo(PartnerInquiryStatus.SUCCESS);
         then(loanLimitCounterService).should(never()).incrementSuccessCount(anyString(), anyString());
+        then(auditLogWriter).should(never()).write(anyString(), anyString(), any());
     }
 
     @Test

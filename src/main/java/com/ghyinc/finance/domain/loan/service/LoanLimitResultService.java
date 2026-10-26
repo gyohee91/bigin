@@ -1,6 +1,7 @@
 package com.ghyinc.finance.domain.loan.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.ghyinc.finance.domain.audit.service.AuditLogWriter;
 import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptor;
 import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptorFactory;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResultRequest;
@@ -10,7 +11,6 @@ import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepository;
 import com.ghyinc.finance.global.event.PartnerCallbackAuditEvent;
 import com.ghyinc.finance.global.lock.RedisLockExecutor;
-import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
@@ -57,7 +57,7 @@ public class LoanLimitResultService {
     private final LoanLimitProductResultRepository loanLimitProductResultRepository;
     private final LoanLimitCounterService loanLimitCounterService;
     private final RedisLockExecutor lockExecutor;
-    private final OutboxEventWriter outboxEventWriter;
+    private final AuditLogWriter auditLogWriter;
 
     /**
      * 금융사 한도조회 콜백을 수신하여 처리한다
@@ -121,10 +121,9 @@ public class LoanLimitResultService {
                         productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
 
                         // Callback 정상 처리 시
-                        outboxEventWriter.enqueue(
-                                "PartnerCallback",
+                        auditLogWriter.write(
+                                "PARTNER_CALLBACK",
                                 item.getLoReqtNo(),
-                                "PARTNER_CALLBACK_AUDIT",
                                 PartnerCallbackAuditEvent.builder()
                                         .loReqtNo(item.getLoReqtNo())
                                         .partnerCode(partnerCode)
@@ -165,11 +164,10 @@ public class LoanLimitResultService {
         );
 
         // Callback 정상 처리 시
-        outboxEventWriter.enqueue(
-                "PartnerCallback",
-                item.getLoReqtNo(),
-                "PARTNER_CALLBACK_AUDIT",
-                PartnerCallbackAuditEvent.builder()
+        auditLogWriter.write(
+                                "PARTNER_CALLBACK",
+                                item.getLoReqtNo(),
+                                PartnerCallbackAuditEvent.builder()
                         .loReqtNo(item.getLoReqtNo())
                         .partnerCode(partnerCode)
                         .productCode(item.getProductCode())

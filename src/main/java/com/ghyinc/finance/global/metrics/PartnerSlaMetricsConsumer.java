@@ -9,7 +9,6 @@ import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.TimeUnit;
@@ -31,10 +30,12 @@ public class PartnerSlaMetricsConsumer {
     private final MeterRegistry meterRegistry;
     private final ObjectMapper objectMapper;
 
+    /*
     @KafkaListener(
             topics = "audit.partner-transmission",
             groupId = "partner-sla-metrics-group"
     )
+    */
     public void consume(String payload, ConsumerRecord<String, String> record) {
         try {
             PartnerTransmissionBatchAuditEvent batch = objectMapper.readValue(payload, PartnerTransmissionBatchAuditEvent.class);
