@@ -296,8 +296,8 @@ class LoanLimitServiceTest {
     // 같은 onLockUnavailable("요청이 처리 중입니다...")로 합쳐졌다)
 
     @Test
-    @DisplayName("폴링 - 진행 중 (콜백 미완료) -> productResults 빈 리스트 반환")
-    void getInquiryResult_inProgress_emptyProductResults() {
+    @DisplayName("폴링 - 진행 중 (콜백 일부 수신) -> 현재까지 수신된 productResults 반환")
+    void getInquiryResult_inProgress_returnsReceivedProductResults() {
         // given
         LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
                 .inquiryNo("LL20260410A3F2C891")
@@ -313,21 +313,28 @@ class LoanLimitServiceTest {
         given(loanLimitInquiryRepository.findByInquiryNo("LL20260410A3F2C891"))
                 .willReturn(Optional.of(inquiry));
 
+        // 3개 상품 중 1개만 콜백 수신 (SUCCESS), 나머지는 아직 대기 (SEND_SUCCESS)
+        List<LoanLimitProductResultDto> dtos = List.of(
+                new LoanLimitProductResultDto("LR20260410AAA", PartnerCode.KAKAO_BANK, "TA", PartnerInquiryStatus.SUCCESS, LoanLimitResultCode.SUCCESS, 30_000_000L, 3.5),
+                new LoanLimitProductResultDto("LR20260410BBB", PartnerCode.LINE_BANK, "TA", PartnerInquiryStatus.SEND_SUCCESS, null, null, 0.0),
+                new LoanLimitProductResultDto("LR20260410CCC", PartnerCode.TOSS_BANK, "TA", PartnerInquiryStatus.SEND_SUCCESS, null, null, 0.0)
+        );
+
         Pageable pageable = PageRequest.of(0, 20);
+        given(loanLimitProductResultRepository.findProductResultsByInquiryId(any(), eq(pageable)))
+                .willReturn(new PageImpl<>(dtos, pageable, dtos.size()));
 
         // when
         LoanLimitPollingResponse response =
                 loanLimitService.getInquiryResult("LL20260410A3F2C891", pageable);
 
-        // then
-        assertThat(response.productResults()).isEmpty();
+        // then - 진행 중이어도 수신된 결과 목록이 내려간다
         assertThat(response.progressRate()).isEqualTo(33);
         assertThat(response.allResultReceived()).isFalse();
-        assertThat(response.productResults()).isEmpty();
-
-        // 진행 중 -> ProductResult 조회 안됨
-        then(loanLimitProductResultRepository).should(never())
-                .findProductResultsByInquiryId(any(), any());
+        assertThat(response.productResults()).hasSize(3);
+        assertThat(response.productResults().get(0).status()).isEqualTo(PartnerInquiryStatus.SUCCESS);
+        then(loanLimitProductResultRepository).should()
+                .findProductResultsByInquiryId(any(), eq(pageable));
     }
 
     @Test
@@ -347,8 +354,8 @@ class LoanLimitServiceTest {
                 .willReturn(Optional.of(inquiry));
 
         List<LoanLimitProductResultDto> dtos = List.of(
-                new LoanLimitProductResultDto("LR20260410AAA", PartnerCode.KAKAO_BANK, "TA", LoanLimitResultCode.SUCCESS, 30_000_000L, 3.5),
-                new LoanLimitProductResultDto("LR20260410BBB", PartnerCode.LINE_BANK, "TA", LoanLimitResultCode.SUCCESS, 20_000_000L, 4.5)
+                new LoanLimitProductResultDto("LR20260410AAA", PartnerCode.KAKAO_BANK, "TA", PartnerInquiryStatus.SEND_SUCCESS, LoanLimitResultCode.SUCCESS, 30_000_000L, 3.5),
+                new LoanLimitProductResultDto("LR20260410BBB", PartnerCode.LINE_BANK, "TA", PartnerInquiryStatus.SEND_SUCCESS, LoanLimitResultCode.SUCCESS, 20_000_000L, 4.5)
         );
 
         Pageable pageable = PageRequest.of(0, 20);

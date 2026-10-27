@@ -147,9 +147,10 @@ public class LoanLimitService {
         LoanLimitInquiry inquiry = loanLimitInquiryRepository.findByInquiryNo(inquiryNo)
                 .orElseThrow(() -> new InvalidRequestException("존재하지 않는 조회이력입니다: " + inquiryNo));
 
-        Page<LoanLimitProductResultDto> productResults = inquiry.isAllResultReceived()
-                ? loanLimitProductResultRepository.findProductResultsByInquiryId(inquiry.getId(), pageable)
-                : Page.empty(pageable);
+        // 진행 중(콜백 일부 수신)에도 현재까지 수신된 금융사별 결과 목록을 함께 반환한다.
+        // FE는 폴링할 때마다 이 목록으로 어느 금융사가 결과를 보내왔는지 점진적으로 표시한다.
+        Page<LoanLimitProductResultDto> productResults =
+                loanLimitProductResultRepository.findProductResultsByInquiryId(inquiry.getId(), pageable);
 
         return LoanLimitPollingResponse.from(inquiry, productResults);
     }
