@@ -2,10 +2,7 @@ package com.ghyinc.finance.domain.loan.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.ghyinc.finance.domain.loan.dto.*;
-import com.ghyinc.finance.domain.loan.service.LoanApplyService;
-import com.ghyinc.finance.domain.loan.service.LoanLimitResultService;
-import com.ghyinc.finance.domain.loan.service.LoanLimitService;
-import com.ghyinc.finance.domain.loan.service.LoanLimitSummaryService;
+import com.ghyinc.finance.domain.loan.service.*;
 import com.ghyinc.finance.global.common.ApiCommResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -19,8 +16,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -32,6 +27,7 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class LoanController {
     private final LoanLimitService loanLimitService;    //한도조회
+    private final LoanLimitPollingService loanLimitPollingService;  //FE 폴링
     private final LoanLimitResultService loanLimitResultService;    //한도결과
     private final LoanApplyService loanApplyService;    //대출신청
     private final LoanLimitSummaryService loanLimitSummaryService;  // 한도결과 (요약)
@@ -116,10 +112,11 @@ public class LoanController {
             @Parameter(description = "페이지 번호 (0부터 시작)", example = "0")
             @RequestParam(defaultValue = "0") int page,
             @Parameter(description = "페이지 크기", example = "20")
-            @RequestParam(defaultValue = "20") int size
+            @RequestParam(defaultValue = "20") int size,
+            @Parameter(description = "직전 응답의 version. 같은 page/size로 폴링할 때만 전달 (page 변경 시 생략)")
+            @RequestParam(required = false) Long version
     ) {
-        Pageable pageable = PageRequest.of(page, size);
-        LoanLimitPollingResponse response = loanLimitService.getInquiryResult(inquiryNo, pageable);
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult(inquiryNo, page, size, version);
 
         return ResponseEntity.ok(ApiCommResponse.success("한도조회 요청 성공", response));
     }
