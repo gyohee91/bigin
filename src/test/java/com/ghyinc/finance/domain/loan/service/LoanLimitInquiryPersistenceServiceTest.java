@@ -24,6 +24,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import com.ghyinc.finance.global.event.PartnerTransmissionBatchAuditEvent;
+import com.ghyinc.finance.domain.audit.service.AuditLogWriter;
+import com.ghyinc.finance.global.metrics.PartnerSlaMetrics;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -57,6 +60,12 @@ class LoanLimitInquiryPersistenceServiceTest {
     private OutboxEventWriter outboxEventWriter;
 
     @Mock
+    private PartnerSlaMetrics partnerSlaMetrics;
+
+    @Mock
+    private AuditLogWriter auditLogWriter;
+
+    @Mock
     private LoReqtNoGenerator generator;
 
     @Mock
@@ -65,7 +74,8 @@ class LoanLimitInquiryPersistenceServiceTest {
     @BeforeEach
     void setUp() {
         persistenceService = new LoanLimitInquiryPersistenceService(
-                loanLimitInquiryRepository, productService, outboxEventWriter, generator, applicationEventPublisher
+                loanLimitInquiryRepository, productService, outboxEventWriter, auditLogWriter,
+                partnerSlaMetrics, generator, applicationEventPublisher
         );
     }
 
@@ -414,8 +424,8 @@ class LoanLimitInquiryPersistenceServiceTest {
     }
 
     @Test
-    @DisplayName("applyResults - 금융사별 PARTNER_TRANSMISSION Outbox 이벤트 1건씩 발행")
-    void applyResults_publishesPartnerTransmissionAuditEventPerPartner() {
+    @DisplayName("applyResults - 전송 감사는 조회 1건당 audit_log 1행(전 파트너 묶음)을 직접 INSERT")
+    void applyResults_writesSingleBatchedTransmissionAuditLog() {
         LoanLimitInquiry inquiry = buildInquiry();
         inquiry.addResult(LoanLimitResult.builder().partnerCode(PartnerCode.KAKAO_BANK).build());
         inquiry.addResult(LoanLimitResult.builder().partnerCode(PartnerCode.TOSS_BANK).build());
@@ -432,8 +442,11 @@ class LoanLimitInquiryPersistenceServiceTest {
                 LoanLimitAdaptorResponse.success(PartnerCode.TOSS_BANK, 150L)
         ));
 
-        then(outboxEventWriter).should(times(2))
-                .enqueue(eq("PartnerTransmission"), any(), eq("PARTNER_TRANSMISSION"), any());
+        ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
+        then(auditLogWriter).should(times(1))
+                .write(eq("PARTNER_TRANSMISSION"), any(), payload.capture());
+        assertThat(((PartnerTransmissionBatchAuditEvent) payload.getValue()).transmissions()).hasSize(2);
+        then(partnerSlaMetrics).should(times(2)).recordTransmission(any());
     }
 
     // ─── markFailed ───────────────────────────────────────────────────────────

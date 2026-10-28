@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.service;
 
+import com.ghyinc.finance.domain.audit.service.AuditLogWriter;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.adaptor.impl.LoanLimitAdaptor;
@@ -14,6 +15,7 @@ import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.global.exception.ExternalApiFailException;
+import com.ghyinc.finance.global.metrics.PartnerSlaMetrics;
 import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,15 +65,21 @@ class LoanLimitSenderServiceTest {
     private OutboxEventWriter outboxEventWriter;
 
     @Mock
+    private AuditLogWriter auditLogWriter;
+
+    @Mock
     private MeterRegistry meterRegistry;
 
     @Mock
     private ApplicationEventPublisher applicationEventPublisher;
 
+    @Mock
+    private PartnerSlaMetrics partnerSlaMetrics;
+
     @BeforeEach
     void setUp() {
         LoanLimitInquiryPersistenceService persistenceService = new LoanLimitInquiryPersistenceService(
-                loanLimitInquiryRepository, productService, outboxEventWriter, generator, applicationEventPublisher
+                loanLimitInquiryRepository, productService, outboxEventWriter, auditLogWriter, partnerSlaMetrics, generator, applicationEventPublisher
         );
 
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

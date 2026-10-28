@@ -53,7 +53,11 @@ public class OutboxEventWriter {
 
         // Spring 이벤트 발행 -> AFTER_COMMIT 후 OutboxEventService가 Kafka 발행
         applicationEventPublisher.publishEvent(
-                new OutboxCreatedEvent(savedOutboxEvent.getId()));
+                new OutboxCreatedEvent(
+                        savedOutboxEvent.getId(),
+                        savedOutboxEvent.getAggregateType(),
+                        savedOutboxEvent.getAggregateId(),
+                        savedOutboxEvent.getPayload()));
 
         return savedOutboxEvent;
     }

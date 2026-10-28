@@ -66,6 +66,7 @@ public interface LoanLimitProductResultRepository extends JpaRepository<LoanLimi
                t.loReqtNo,
                t.partnerCode,
                t.productCode,
+               t.status,
                t.resultCode,
                t.amount,
                t.interestRate

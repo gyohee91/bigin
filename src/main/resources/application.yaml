@@ -32,6 +32,7 @@ spring:
       hibernate:
         format_sql: false
         dialect: org.hibernate.dialect.H2Dialect
+        generate_statistics: true
   sql:
     init:
       mode: always
@@ -107,6 +108,10 @@ management:
       # 모든 매트릭에 애플리케이션 이름 태그 추가
       # Grafana에서 application="bigin" 로 필터링 가능
       application: bigin
+  observations:
+    enable:
+      spring:
+        security: false
 
 springdoc:
   swagger-ui:
@@ -888,3 +893,10 @@ error-monitor:
   dooray:
     enabled: false
     webhookUrl: ${DOORAY_WEBHOOK_URL:}
+
+polling:
+  read-model:
+    enabled: false          # 실행 시 -Dpolling.read-model.enabled=true 로 켠다
+    ttl-seconds: 3600
+    reconcile-seconds: 15   # 종료 전 조회건은 이 간격마다 DB로 재조정
+    down-backoff-ms: 3000   # Redis 오류 후 이 시간 동안 DB fallback

@@ -54,18 +54,6 @@
 <a id="tech-stack"></a>
 ## 🛠 기술 스택
 
-### 실무 vs 개인 프로젝트 비교
-
-| 구분           | 실무                   | 개인 프로젝트 (Bigin)                 |
-|--------------|----------------------|---------------------------------|
-| Language     | Java 8               | Java 17                         |
-| Framework    | Spring Boot 2.7      | Spring Boot 3.5                 |
-| Architecture | Layered Architecture | Domain-driven Package Structure |
-| DB           | Oracle DB            | H2 DB (In-memory)               |
-| API 통신       | RestTemplate         | RestClient + Apache HttpClient5 (커넥션 풀) |
-
-### 개인 프로젝트 상세 스택
-
 | 구분        | 기술                                      |
 |-----------|-----------------------------------------|
 | Language  | Java 17                                 |
@@ -136,8 +124,8 @@ com.ghyinc.finance
 │   │   │   └── NotificationEvent.java
 │   │   ├── entity / repository / dto / enums
 │   ├── audit                                  # 감사 로그
-│   │   ├── event
-│   │   │   └── AuditLogConsumer.java               # audit.partner-transmission / audit.partner-callback 배치 적재
+│   │   ├── service
+│   │   │   └── AuditLogWriter.java                 # 호출자 트랜잭션에서 audit_log 직접 INSERT (Kafka 미경유)
 │   │   └── entity / repository
 │   ├── kcbcredit                              # KCB 신용변동 파일 수신 · Spring Batch 처리
 │   │   ├── scheduler
@@ -183,7 +171,7 @@ com.ghyinc.finance
     │       ├── DlqRetryScheduler.java                  # 지수 백오프 자동 재시도
     │       └── PoisonPillClassifier.java               # Poison Pill 판별
     └── metrics                                # Micrometer 지표
-        ├── PartnerSlaMetricsConsumer.java          # audit.partner-transmission 독립 구독, 파트너사별 SLA 지표
+        ├── PartnerSlaMetrics.java                  # 전송 결과 반영 시점에 파트너사별 SLA 지표를 앱 내에서 직접 기록
         ├── PartnerConnectionPoolMetrics.java       # 금융사 HTTP 커넥션 풀 사용량
         └── TaskExecutorMetrics.java                # 스레드풀 사용량
 ```
@@ -246,7 +234,7 @@ FE → POST /api/loan/request-compare-loan
   │
   └── ③ [Tx 2] PersistenceService.applyResults()      ◀ 결과반영 (짧게 COMMIT)
         ├── 금융사별 Result / ProductResult 상태 UPDATE (SEND_SUCCESS / SEND_FAILED)
-        ├── 금융사별 전송 이력 Outbox INSERT (PartnerTransmission)
+        ├── 전송 감사 audit_log 직접 INSERT (조회당 1행, 전 금융사 결과 묶음) + 금융사별 SLA 지표 기록
         ├── Inquiry 최종 상태 결정: SUCCESS / PARTIAL_SUCCESS / FAILED
         └── FAILED가 아니면 완료 이벤트 Outbox INSERT (LOAN_LIMIT_COMPLETED) — 같은 트랜잭션, 원자적
 
@@ -289,7 +277,7 @@ FE → POST /api/loan/request-compare-loan
   ├── LoanLimitCounterService.incrementSuccessCount()      ◀ 콜백 카운트 원자적 UPDATE, REQUIRES_NEW 별도 트랜잭션
   │     └── UPDATE 직후 COMMIT → Inquiry row lock 즉시 해제 (동일 Inquiry에 다수 금융사 콜백이 몰려도 서로 대기하지 않음)
   ├── ProductResult UPDATE (resultCode, 한도, 금리)
-  ├── 콜백 이력 Outbox INSERT (PartnerCallback)
+  ├── 콜백 감사 audit_log 직접 INSERT (같은 트랜잭션, Kafka 미경유)
   └── 금융사에는 항상 금융사 포맷의 응답 반환 — 처리 실패 시 실패 응답을 내려 재전송 여부를 금융사가 판단하도록 함
 ```
 
@@ -327,28 +315,20 @@ loan-limit-completed   loan → notification 도메인 간 이벤트 전달
 notification.send      notification 도메인 내부 비동기 발송 처리
                         Notification INSERT 후 실제 발송 분리
 
-audit.partner-transmission   파트너사 API 전송 이력 감사 로그 (inquiryNo가 partition key)
-                              독립된 컨슈머 그룹 2개가 같은 토픽을 병렬 구독:
-                              ├── audit-log-group           → AuditLogConsumer (감사 로그 DB 배치 적재)
-                              └── partner-sla-metrics-group → PartnerSlaMetricsConsumer (Micrometer 지표 수집)
-                              한쪽이 느려지거나 장애가 나도 다른 쪽 처리에 영향 없음 (컨슈머 그룹 단위로 완전히 독립)
-
-audit.partner-callback       파트너사 콜백 수신 이력 감사 로그 (loReqtNo가 partition key, AuditLogConsumer가 구독)
-
-*.DLT                        loan-limit-completed / notification.send / audit.partner-transmission / audit.partner-callback
-                              각 토픽별 처리 실패 메시지 보관 (총 4개)
+※ 감사 로그(전송/콜백)는 Kafka 토픽을 사용하지 않습니다. 소비자가 audit_log 적재 하나뿐이라
+   같은 트랜잭션에서 audit_log에 직접 INSERT 합니다 (아래 "감사 로그와 SLA 지표" 참고).
 ```
 
-모든 토픽은 Outbox의 `aggregateType`으로 분기하여 발행합니다.
+Outbox를 거치는 토픽은 `aggregateType`으로 분기하여 발행합니다.
 
 | aggregateType | 토픽 | 이벤트 |
 |---|---|---|
 | `LoanLimitInquiry` | `loan-limit-completed` | 한도조회 완료 |
 | `Notification` | `notification.send` | 알림 발송 요청 |
-| `PartnerTransmission` | `audit.partner-transmission` | 금융사 전송 이력 |
-| `PartnerCallback` | `audit.partner-callback` | 금융사 콜백 수신 이력 |
 
-**파트너사별 SLA 모니터링 (`PartnerSlaMetricsConsumer`)**: `audit.partner-transmission` 이벤트(`PartnerTransmissionAuditEvent`)에는 이미 `partnerCode`/`success`/`resTimeMs`가 담겨 있어, DB 재조회 없이 payload만으로 Micrometer `Counter`(`partner.transmission.count`)와 `Timer`(`partner.transmission.duration`)를 `partner`/`result` 태그로 기록합니다. `/actuator/prometheus`로 그대로 노출되어 파트너사별 실패율·p95 응답시간을 Grafana에서 바로 확인할 수 있습니다. 감사 로그(`AuditLogConsumer`)와 달리 완전성보다 가용성을 우선해 파싱 실패 시에도 예외를 전파하지 않고 로그만 남긴 뒤 다음 메시지로 넘어갑니다(재시도/DLT 없음).
+**감사 로그와 SLA 지표 — Kafka를 쓰지 않는 이유**: 전송·콜백 감사 이벤트의 소비자는 `audit_log` 적재 하나뿐이었습니다. 소비자가 하나인 파이프에 Outbox + Kafka를 두면 이벤트당 DB 쓰기가 3회(Outbox INSERT, PUBLISHED UPDATE, audit_log INSERT)에 Kafka 프로듀서/컨슈머 비용이 더해지기만 하고 얻는 것이 없습니다. 그래서 `AuditLogWriter`가 비즈니스 트랜잭션과 같은 트랜잭션에서 `audit_log`에 직접 INSERT 합니다(이벤트당 DB 쓰기 1회, 유실 없음). 전송 감사는 조회 1건당 전 금융사 결과를 묶은 1행으로 저장합니다. 소비자가 여러 개로 늘어나면 그때 Outbox + CDC(또는 Kafka)로 전환합니다.
+
+**파트너사별 SLA 지표 (`PartnerSlaMetrics`)**: 지표는 payload만으로 계산되는 메모리 연산이라 전송 결과를 얻는 시점에 앱 내에서 Micrometer `Counter`(`partner.transmission.count`)와 `Timer`(`partner.transmission.duration`)를 `partner`/`result` 태그로 바로 기록합니다. Kafka 재전달로 인한 중복 집계가 없고, 인스턴스별 지표는 Prometheus가 합산합니다. `/actuator/prometheus`로 노출되어 파트너사별 실패율·p95 응답시간을 Grafana에서 확인할 수 있고, 지표 기록 실패는 예외를 전파하지 않고 로그만 남깁니다.
 
 ### 3. 디자인 패턴
 
@@ -1136,7 +1116,7 @@ public void handleDlt(...) { ... }  // 재시도 소진 - DlqEvent(DEAD) 기록,
 > `retryableTopicListenerContainerFactory`에는 커스텀 `commonErrorHandler`를 설정하지 않습니다.
 > 같은 factory에 커스텀 에러 핸들러를 같이 걸면 `@RetryableTopic`의 내부 처리와 충돌합니다.
 > `errorHandler`(지수 백오프+jitter, `.DLT` 라우팅) + `kafkaListenerContainerFactory` 조합은
-> 아직 `@RetryableTopic`으로 전환하지 않은 나머지 Consumer(`AuditLogConsumer` 등)에 계속 쓰입니다.
+> 아직 `@RetryableTopic`으로 전환하지 않은 나머지 Consumer에 계속 쓰입니다.
 
 `@DltHandler`는 재시도 토픽 체인을 전부 소진한 뒤 도달하는 마지막 지점이라, 여기서 다시 예외가 나면
 (`dltStrategy = DltStrategy.FAIL_ON_ERROR`) 같은 메시지를 무한 재처리하게 됩니다. 그래서 내부 로직 전체를
@@ -1188,8 +1168,8 @@ try-catch로 감싸 어떤 상황에서도 예외를 밖으로 던지지 않도�
 | 적용 대상 | 상품 정보 (`ProductCache`) | 암호화 키 (`CryptoService`) |
 | 선택 이유 | 멀티 Pod 간 정합성 필요 | 보안상 외부 저장소 저장 불가 |
 | Pod 간 동기화 | O (Redis 공유) | X (Pod별 독립) |
-| 무효화 방식 | `@CacheEvict` + TTL | `@CacheEvict` + TTL |
-| TTL | 6시간 | 1시간 |
+| 무효화 방식 | 커밋 후 evict(`TransactionSynchronization`) + TTL | `@CacheEvict` + TTL |
+| TTL | 6시간 + 0~30분 jitter | 1시간 |
 
 ```
 멀티 인스턴스 환경에서 상품 정보를 로컬 캐시로 관리하면
@@ -1239,34 +1219,82 @@ public List<ProductCache> getActiveProducts(PartnerCode partnerCode, LoanType lo
         return this.loadActiveProducts(partnerCode, loanType);
     }
 
-    List<ProductCache> cached = cache.get(lockKey, List.class);
+    List<ProductCache> cached = this.readCache(cache, lockKey);   // Redis 예외 → null(미스로 취급)
     if (cached != null) return cached;
 
-    return lockExecutor.execute(LOCK_PREFIX + lockKey, 3, 5,
-            () -> {
-                // 더블 체크 - 락 대기 중 다른 Thread가 이미 채웠을 수도 있음
-                List<ProductCache> doubleChecked = cache.get(lockKey, List.class);
-                if (doubleChecked != null) return doubleChecked;
+    try {
+        return lockExecutor.execute(LOCK_PREFIX + lockKey, 3, 5,
+                () -> {
+                    // 더블 체크 - 락 대기 중 다른 Thread가 이미 채웠을 수도 있음
+                    List<ProductCache> doubleChecked = this.readCache(cache, lockKey);
+                    if (doubleChecked != null) return doubleChecked;
 
-                List<ProductCache> result = this.loadActiveProducts(partnerCode, loanType);
-                if (!result.isEmpty()) cache.put(lockKey, result);
-                return result;
-            },
-            () -> this.loadActiveProducts(partnerCode, loanType)
-    );
+                    List<ProductCache> result = this.loadActiveProducts(partnerCode, loanType);
+                    if (!result.isEmpty()) this.writeCache(cache, lockKey, result);   // 저장 실패는 무시
+                    return result;
+                },
+                () -> this.loadActiveProducts(partnerCode, loanType)   // 락 대기 초과 시 DB 직접 조회
+        );
+    } catch (LockUnavailableException e) {
+        // 락은 성능 최적화용이므로 Redis 장애 시 DB로 fail-open
+        log.warn("[상품 캐시] 락 불가(Redis 장애), DB 직접 조회 key={}", lockKey);
+        return this.loadActiveProducts(partnerCode, loanType);
+    }
 }
 
-// 상품 변경 시 캐시 무효화 - 캐시를 채우는 방식과 무관하게 그대로 유효
-@CacheEvict(value = "products",
-            key = "#product.partnerCode.name() + ':' + #product.loanType.name()")
-public void updateProductStatus(ProductCache product, boolean active) { ... }
+// 상품 변경 시 커밋 이후에 캐시 무효화
+@Transactional
+public void updateProductStatus(ProductCache productCache, boolean active) {
+    productRepository.findById(productCache.getId())
+            .ifPresent(product -> product.changeActive(active));
+
+    String key = productCache.getPartnerCode().name() + ":" + productCache.getLoanType().name();
+    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+        @Override
+        public void afterCommit() {
+            evictCache(key);   // 실패해도 예외를 전파하지 않음 (TTL 만료로 보정)
+        }
+    });
+}
 
 // 전체 캐시 초기화 (관리자 API)
 @CacheEvict(value = "products", allEntries = true)
 public void evictAllProductCache() { ... }
 ```
 
-락 획득에 실패한 요청은 캐시를 갱신하지 않고 DB를 직접 조회해 응답 지연 없이 Fallback합니다.
+락 대기 시간(3초)을 넘긴 요청은 캐시를 갱신하지 않고 DB를 직접 조회해 Fallback합니다. 캐시 읽기·쓰기 예외(연결 장애, 역직렬화 실패)는 캐시 미스로 취급하고, `RedisLockExecutor`가 Redis 계열 예외(`RedisException`)를 `LockUnavailableException`으로 변환하면 `getActiveProducts()`가 DB 조회로 내려갑니다. 캐시와 이 락은 성능 최적화 수단이라 Redis 장애 시 **fail-open**으로 동작하며, 락을 못 얻거나 캐시가 실패해도 상품 조회는 실패하지 않습니다. (중복 요청을 막는 한도조회 요청 락은 정합성용이라 별개로 동작합니다.)
+
+#### 캐시 무효화 — 커밋 후 evict
+
+`@CacheEvict`는 메서드가 끝난 직후 캐시를 지우는데, `@Transactional`과 함께 쓰면 **커밋보다 먼저** 실행될 수 있습니다. 이 사이에 다른 요청이 캐시 미스로 DB에서 아직 바뀌지 않은 값을 읽어 다시 캐시에 넣으면, 변경이 TTL이 끝날 때까지 반영되지 않습니다.
+
+```
+@CacheEvict 시점 (커밋 전 evict 가능)
+  요청 A: 상품 상태 변경 → 캐시 evict → (아직 커밋 전)
+  요청 B: 캐시 미스 → DB에서 변경 전 값 조회 → 캐시에 다시 저장
+  요청 A: 커밋 → 캐시에는 변경 전 값이 남음 (TTL까지 stale)
+
+커밋 후 evict (TransactionSynchronization.afterCommit)
+  요청 A: 커밋 완료 → 캐시 evict
+  요청 B: 이후 캐시 미스 → 커밋된 값을 조회해 캐시에 저장
+```
+
+- evict 실패(Redis 장애 등)는 로그만 남기고 예외를 전파하지 않습니다. 이 경우 이전 값은 TTL 만료 시점까지 유지됩니다.
+- 전체 초기화(`evictAllProductCache`)는 관리자 API라 `@CacheEvict(allEntries = true)`를 그대로 사용합니다.
+- 무효화는 서비스 메서드 호출을 기준으로 동작합니다. DB를 직접 수정한 경우는 감지할 수 없으므로 전체 초기화 API로 보정하거나 TTL 만료를 기다려야 합니다.
+
+#### TTL + Jitter
+
+`products` 캐시의 TTL은 **6시간 + 0~30분 무작위 값**을 엔트리마다 더해 설정합니다.
+
+```java
+RedisCacheConfiguration productConfig = configuration.entryTtl(
+        (key, value) -> Duration.ofHours(6)
+                .plusSeconds(ThreadLocalRandom.current().nextLong(0, 1800)));   // 6h + 0~30분
+```
+
+- 같은 시점에 채워진 키들이 한꺼번에 만료되는 것을 분산합니다. 키별 락으로 중복 조회는 이미 합쳐지지만, 만료 시점이 몰리는 것 자체를 줄입니다.
+- TTL은 정합성의 주된 수단이 아니라 **evict를 거치지 않은 변경**(DB 직접 수정, evict 실패)의 최대 지연을 정하는 안전망입니다.
 
 #### JPA Entity 직렬화 문제 해결
 
@@ -1334,7 +1362,7 @@ public CryptoService getCryptoService(PartnerCode partnerCode) { ... }
 ```java
 // Redis 캐시 — 상품 정보 (멀티 인스턴스 정합성)
 @Primary
-RedisCacheManager → "products" 캐시, TTL 6시간
+RedisCacheManager → "products" 캐시, TTL 6시간 + 0~30분 jitter
 
 // Caffeine 캐시 — 암호화 키 (보안 민감 데이터)
 CaffeineCacheManager → "cryptoService" 캐시, TTL 1시간, 최대 100개
@@ -1386,7 +1414,7 @@ if (productResult.getStatus() != PartnerInquiryStatus.SEND_SUCCESS) {
 // 원자적 UPDATE를 별도 트랜잭션(REQUIRES_NEW)으로 → 즉시 커밋, row lock 해제
 loanLimitCounterService.incrementSuccessCount(item.getLoReqtNo(), item.getProductCode());
 productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
-// 콜백 수신 이력 Outbox INSERT (PartnerCallback)
+// 콜백 감사 audit_log 직접 INSERT (같은 트랜잭션)
 ```
 
 ```java
@@ -1452,7 +1480,7 @@ KcbFileIngestScheduler                    [매일 03:00 · ShedLock]
 | 지표 | 제공 클래스 | 설명 |
 |---|---|---|
 | Resilience4j (CB / Retry / RateLimiter / Bulkhead) | `resilience4j-micrometer` | 금융사별 상태·호출 수 |
-| `partner.transmission.count` / `.duration` | `PartnerSlaMetricsConsumer` | 파트너사별 전송 성공·실패 및 응답시간 (audit 토픽 구독) |
+| `partner.transmission.count` / `.duration` | `PartnerSlaMetrics` | 파트너사별 전송 성공·실패 및 응답시간 (전송 결과 반영 시점에 앱 내 기록) |
 | 금융사 HTTP 커넥션 풀 | `PartnerConnectionPoolMetrics` | leased / pending / available / max (전체·파트너별) |
 | 스레드풀 | `TaskExecutorMetrics` | Executor별 사용량 |
 | 상태 확인 | `RedissonHealthIndicator`, CB health indicator | Redis / Circuit Breaker 상태 |
@@ -1484,7 +1512,7 @@ CB 상태 전환·Retry·Rate Limiter 이벤트는 각각 `CircuitBreakerEventLi
 | | LoanLimitInquiryPersistenceServiceTest | 최초 INSERT / 선저장 / 결과반영 / FAILED 처리 각 트랜잭션 구간 |
 | | LoanLimitEventHandlerTest | AFTER_COMMIT 팬아웃 제출, executor 포화 시 보상 처리 |
 | | LoanLimitSenderServiceTest | 비동기 팬아웃 및 fallback(CB_OPEN / RATE_LIMIT / BULKHEAD / THREAD_POOL_EXHAUSTED) 상태 처리 |
-| | LoanLimitResultServiceTest, LoanLimitCounterServiceTest | 콜백 수신, 중복·처리불가 skip, 카운트 원자적 증가, Outbox INSERT |
+| | LoanLimitResultServiceTest, LoanLimitCounterServiceTest | 콜백 수신, 중복·처리불가 skip, 카운트 원자적 증가, 감사 로그 INSERT |
 | | LoanLimitStrategyFactoryTest | 대출유형별 전략 선택 |
 | | ProductServiceTest, ProductServiceStampedeTest | 상품 캐싱, 캐시 스탬피드 방지(분산 락 + 더블 체크) |
 | Outbox | OutboxEventServiceTest, OutboxEventWriterTest, OutboxEventTest | 즉시 발행 / 실패 시 PENDING 유지 / 이벤트 발행 |
@@ -1494,7 +1522,7 @@ CB 상태 전환·Retry·Rate Limiter 이벤트는 각각 `CircuitBreakerEventLi
 | | JitteredExponentialBackOffTest | 지수 백오프 + jitter |
 | 알림 (notification) | AbstractNotificationSenderTest, Sms/Email/KakaoNotificationSenderTest, NotificationSenderFactoryTest | Template Method 골격(CB/Retry/Fallback), 채널별 발송, Factory |
 | | NotificationServiceTest, NotificationSenderServiceTest | 알림 등록·발송 서비스 |
-| 감사 / 지표 | AuditLogConsumerTest, PartnerSlaMetricsConsumerTest | 감사 로그 배치 적재, 파트너 SLA 지표 |
+| 감사 / 지표 | AuditLogWriterTest, PartnerSlaMetricsTest | 감사 로그 직접 INSERT, 파트너 SLA 지표 |
 | 배치 (kcbcredit) | KcbFileIngestSchedulerTest, KcbCreditItemWriterTest, KcbCreditBatchLoadTest | 파일 수신 멱등성, Writer, 대용량 파일 엔드투엔드 처리(포맷 오류 skip 포함) |
 | 인증 | AuthServiceTest, AuthenticationIntegrationTest, JwtTokenProviderTest | 로그인/재발급, 인증 통합, 토큰 발급·검증 |
 | 인프라 (global) | RestApiClientTest | CB 상태 전환 (CLOSED→OPEN→HALF_OPEN→CLOSED) |

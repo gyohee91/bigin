@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.global.event.PartnerTransmissionAuditEvent;
+import com.ghyinc.finance.global.event.PartnerTransmissionBatchAuditEvent;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,7 +44,8 @@ class PartnerSlaMetricsConsumerTest {
                 .resTimeMs(120)
                 .occurredAt(LocalDateTime.now())
                 .build();
-        String payload = objectMapper.writeValueAsString(event);
+        String payload = objectMapper.writeValueAsString(
+                PartnerTransmissionBatchAuditEvent.of(event.inquiryNo(), List.of(event)));
 
         consumer.consume(payload, this.buildRecord(payload));
 
@@ -71,7 +74,8 @@ class PartnerSlaMetricsConsumerTest {
                 .resTimeMs(7000)
                 .occurredAt(LocalDateTime.now())
                 .build();
-        String payload = objectMapper.writeValueAsString(event);
+        String payload = objectMapper.writeValueAsString(
+                PartnerTransmissionBatchAuditEvent.of(event.inquiryNo(), List.of(event)));
 
         consumer.consume(payload, this.buildRecord(payload));
 
@@ -101,7 +105,8 @@ class PartnerSlaMetricsConsumerTest {
                 .resTimeMs(100)
                 .occurredAt(LocalDateTime.now())
                 .build();
-        String payload = objectMapper.writeValueAsString(event);
+        String payload = objectMapper.writeValueAsString(
+                PartnerTransmissionBatchAuditEvent.of(event.inquiryNo(), List.of(event)));
 
         consumer.consume(payload, this.buildRecord(payload));
         consumer.consume(payload, this.buildRecord(payload));
@@ -111,5 +116,25 @@ class PartnerSlaMetricsConsumerTest {
                 .tag("result", "success")
                 .counter().count();
         assertThat(count).isEqualTo(2.0);
+    }
+
+    @Test
+    @DisplayName("한 묶음에 여러 파트너 결과가 있으면 각각 집계한다")
+    void consume_recordsEachTransmission_inBatch() throws JsonProcessingException {
+        PartnerTransmissionAuditEvent ok = PartnerTransmissionAuditEvent.builder()
+                .inquiryNo("INQ-4").partnerCode(PartnerCode.TOSS_BANK).success(true)
+                .resTimeMs(100).occurredAt(LocalDateTime.now()).build();
+        PartnerTransmissionAuditEvent ng = PartnerTransmissionAuditEvent.builder()
+                .inquiryNo("INQ-4").partnerCode(PartnerCode.KAKAO_BANK).success(false)
+                .failReason("TIMEOUT").resTimeMs(7000).occurredAt(LocalDateTime.now()).build();
+        String payload = objectMapper.writeValueAsString(
+                PartnerTransmissionBatchAuditEvent.of("INQ-4", List.of(ok, ng)));
+
+        consumer.consume(payload, this.buildRecord(payload));
+
+        assertThat(meterRegistry.get("partner.transmission.count")
+                .tag("partner", "TOSS_BANK").tag("result", "success").counter().count()).isEqualTo(1.0);
+        assertThat(meterRegistry.get("partner.transmission.count")
+                .tag("partner", "KAKAO_BANK").tag("result", "fail").counter().count()).isEqualTo(1.0);
     }
 }

@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.service;
 
+import com.ghyinc.finance.domain.audit.service.AuditLogWriter;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorResponse;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitInquiryResponse;
@@ -17,6 +18,8 @@ import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.global.event.LoanLimitInquiryCreatedEvent;
 import com.ghyinc.finance.global.event.PartnerTransmissionAuditEvent;
+import com.ghyinc.finance.global.event.PartnerTransmissionBatchAuditEvent;
+import com.ghyinc.finance.global.metrics.PartnerSlaMetrics;
 import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -54,6 +57,8 @@ public class LoanLimitInquiryPersistenceService {
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
     private final ProductService productService;
     private final OutboxEventWriter outboxEventWriter;
+    private final AuditLogWriter auditLogWriter;
+    private final PartnerSlaMetrics partnerSlaMetrics;
     private final LoReqtNoGenerator generator;
 
     private final ApplicationEventPublisher applicationEventPublisher;
@@ -152,14 +157,20 @@ public class LoanLimitInquiryPersistenceService {
                         .forEach(LoanLimitProductResult::sendFail);
             }
 
-            // 파트너 전송 이력 감사 로그
-            outboxEventWriter.enqueue(
-                    "PartnerTransmission",
-                    loanLimitInquiry.getInquiryNo(),
-                    "PARTNER_TRANSMISSION",
-                    PartnerTransmissionAuditEvent.from(loanLimitInquiry.getInquiryNo(), adaptorResponse)
-            );
+            // 파트너 SLA 지표 - 앱 안에서 바로 기록 (Kafka 경유 불필요)
+            partnerSlaMetrics.recordTransmission(adaptorResponse);
         });
+
+        // 파트너 전송 이력 감사 로그 - 조회 1건당 audit_log 1행(전 파트너 결과 묶음), 같은 트랜잭션에서 직접 INSERT
+        auditLogWriter.write(
+                "PARTNER_TRANSMISSION",
+                loanLimitInquiry.getInquiryNo(),
+                PartnerTransmissionBatchAuditEvent.of(
+                        loanLimitInquiry.getInquiryNo(),
+                        adaptorResponses.stream()
+                                .map(r -> PartnerTransmissionAuditEvent.from(loanLimitInquiry.getInquiryNo(), r))
+                                .toList())
+        );
 
         // 성공 금융사 수에 따라 Inquiry 최종 상태 결정
         // 전체 성공: SUCCESS, 전체 실패: FAILED, 일부 성공: PARTIAL_SUCCESS

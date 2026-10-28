@@ -18,6 +18,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.concurrent.TimeUnit;
 
 import static com.ghyinc.finance.global.common.LoggingConstants.REQUEST_ID_KEY;
@@ -36,48 +37,38 @@ public class OutboxEventService {
      * 트랜잭션 커밋 후 즉시 Kafka 발행
      */
     @Async("outboxPublishExecutor")
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void publishAfterCommit(OutboxCreatedEvent event) {
-        outboxEventRepository.findById(event.id())
-                .ifPresent(this::publishToKafka);
+        // 이벤트가 발행에 필요한 값을 모두 들고 있으므로 방금 저장한 행을 다시 조회(findById)하지 않는다.
+        // 별도 트랜잭션(REQUIRES_NEW)도 열지 않는다 - 발행 완료 UPDATE는 repository 메서드가 자기 트랜잭션으로 수행한다.
+        this.publishToKafka(event.id(), event.aggregateType(), event.aggregateId(), event.payload());
     }
 
-    public void publishToKafka(OutboxEvent outboxEvent) {
-        ProducerRecord<String, Object> record = new ProducerRecord<>(
-                this.resolveTopic(outboxEvent.getAggregateType()),
-                null,
-                outboxEvent.getAggregateId(),
-                outboxEvent.getPayload()
-        );
-
-        // requestId를 Kafka 헤더로 전파 -> Consumer의 RecordInterceptor가 MDC 복원에 사용
-        // (배치 재시도 등 원 요청 스레드 컨텍스트가 없는 경우 null -> Interceptor가 새 UUID를 발급)
-        String requestId = MDC.get(REQUEST_ID_KEY);
-        if (requestId != null) {
-            record.headers().add(REQUEST_ID_KEY, requestId.getBytes(StandardCharsets.UTF_8));
-        }
+    public void publishToKafka(Long outboxId, String aggregateType, String aggregateId, String payload) {
+        ProducerRecord<String, Object> record = this.buildRecord(
+                this.resolveTopic(aggregateType), aggregateId, payload);
 
         try {
-            kafkaTemplate.send(
-                            this.resolveTopic(outboxEvent.getAggregateType()),
-                            outboxEvent.getAggregateId(),
-                            outboxEvent.getPayload())
+            kafkaTemplate.send(record)
                     .whenComplete((result, ex) -> {
                         if(ex != null) {
                             log.error("Kafka 발행 실패", ex);
                             // 실패 시 PENDING 유지. 배치가 재시도
                         } else {
-                            // 성공 시 PUBLISHED UPDATE
-                            outboxEvent.markAsPublished();
-                            outboxEventRepository.save(outboxEvent);
+                            // 성공 시 PUBLISHED UPDATE (엔티티 로드/merge 없이 id 기준 UPDATE 1건)
+                            try {
+                                outboxEventRepository.markAsPublished(outboxId, LocalDateTime.now());
+                            } catch (Exception updateEx) {
+                                // 상태 반영 실패 시 PENDING 으로 남아 배치가 재발행한다(at-least-once)
+                                log.error("Outbox PUBLISHED 반영 실패. outboxId={}", outboxId, updateEx);
+                            }
                             log.info("Kafka 발행 성공. partition={}",
                                     result.getRecordMetadata().partition());
                         }
                     });
         } catch (Exception e) {
             // send() 자체 실패 (브로커 연결 불가 등)
-            log.error("Kafka send() 실패. outboxId={}", outboxEvent.getId(), e);
+            log.error("Kafka send() 실패. outboxId={}", outboxId, e);
             // PENDING 유지 -> 배치 재시도
         }
     }
@@ -89,12 +80,10 @@ public class OutboxEventService {
      */
     public boolean publishToKafkaSync(OutboxEvent outboxEvent, Duration timeout) {
         try {
-            ProducerRecord<String, Object> record = new ProducerRecord<>(
+            ProducerRecord<String, Object> record = this.buildRecord(
                     this.resolveTopic(outboxEvent.getAggregateType()),
-                    null,
                     outboxEvent.getAggregateId(),
-                    outboxEvent.getPayload()
-            );
+                    outboxEvent.getPayload());
 
             kafkaTemplate.send(record)
                     .get(timeout.toMillis(), TimeUnit.MILLISECONDS);
@@ -120,6 +109,21 @@ public class OutboxEventService {
                 outboxEvent.markAsFailed();
             }
         });
+    }
+
+    /**
+     * ProducerRecord 생성 + 현재 스레드 MDC의 requestId를 Kafka 헤더로 전파한다.
+     * Consumer의 RecordInterceptor가 이 헤더로 MDC를 복원한다.
+     * (원 요청 스레드 컨텍스트가 없는 배치 재시도 등은 헤더 없음 -> Interceptor가 새 UUID를 발급)
+     */
+    private ProducerRecord<String, Object> buildRecord(String topic, String key, String payload) {
+        ProducerRecord<String, Object> record = new ProducerRecord<>(topic, null, key, payload);
+
+        String requestId = MDC.get(REQUEST_ID_KEY);
+        if (requestId != null) {
+            record.headers().add(REQUEST_ID_KEY, requestId.getBytes(StandardCharsets.UTF_8));
+        }
+        return record;
     }
 
     /**
