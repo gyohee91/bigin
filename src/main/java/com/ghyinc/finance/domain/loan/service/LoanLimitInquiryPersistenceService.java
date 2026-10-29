@@ -13,6 +13,7 @@ import com.ghyinc.finance.domain.loan.entity.LoanLimitResult;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
+import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelEvent;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
@@ -117,6 +118,7 @@ public class LoanLimitInquiryPersistenceService {
                 .mapToInt(List::size)
                 .sum();
         loanLimitInquiry.initProductCount(totalProductCount);
+        applicationEventPublisher.publishEvent(InquiryReadModelEvent.seed(loanLimitInquiry));
 
         return new PreparedFanout(loanLimitInquiry.getId(), requestProductMap);
     }
@@ -181,6 +183,10 @@ public class LoanLimitInquiryPersistenceService {
                 : (successCount == 0 ? InquiryStatus.FAILED : InquiryStatus.PARTIAL_SUCCESS);
 
         loanLimitInquiry.updateInquiryStatus(resultStatus);
+        applicationEventPublisher.publishEvent(InquiryReadModelEvent.delta(
+                loanLimitInquiry.getInquiryNo(), resultStatus.name(),
+                InquiryReadModelEvent.toDtos(loanLimitInquiry.getProductResults())
+        ));
 
         // 알림 발송 - notification 도메인을 직접 알지 못함
         if (!Objects.equals(InquiryStatus.FAILED, resultStatus)) {
@@ -203,6 +209,8 @@ public class LoanLimitInquiryPersistenceService {
         loanLimitInquiryRepository.findById(id).ifPresentOrElse(
                 loanLimitInquiry -> {
                     loanLimitInquiry.updateInquiryStatus(InquiryStatus.FAILED);
+                    applicationEventPublisher.publishEvent(
+                            InquiryReadModelEvent.delta(loanLimitInquiry.getInquiryNo(), "FAILED", List.of()));
                     log.error("한도조회 처리 중 오류로 FAILED 처리. id={}", id);
                 },
                 () -> log.error("FAILED 처리 대상 조회 이력 없음. id={}", id)

@@ -14,6 +14,7 @@ import com.ghyinc.finance.domain.loan.enums.JobType;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
+import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelEvent;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
@@ -469,5 +470,100 @@ class LoanLimitInquiryPersistenceServiceTest {
 
         persistenceService.markFailed(99L);
         // 예외 없이 정상 종료
+    }
+
+    @Test
+    @DisplayName("preSave - 전체 상품이 담긴 읽기모델 seed 이벤트를 발행한다")
+    void preSave_publishesRealModelSeedEvent() {
+        LoanLimitInquiry inquiry = this.buildInquiry();
+        given(loanLimitInquiryRepository.findById(1L)).willReturn(Optional.of(inquiry));
+        given(productService.getActiveProducts(PartnerCode.LINE_BANK, LoanType.PERSONAL_CREDIT))
+                .willReturn(List.of(
+                        this.buildProductCache("P001", PartnerCode.LINE_BANK),
+                        this.buildProductCache("P002", PartnerCode.LINE_BANK)
+                ));
+        given(generator.generate("LR")).willReturn("LR_AAA", "LR_BBB");
+
+        persistenceService.preSave(1L, List.of(PartnerCode.LINE_BANK), this.buildAdaptorRequest());
+
+        ArgumentCaptor<InquiryReadModelEvent> captor = ArgumentCaptor.forClass(InquiryReadModelEvent.class);
+        then(applicationEventPublisher).should().publishEvent(captor.capture());
+        InquiryReadModelEvent event = captor.getValue();
+        assertThat(event.seed()).isTrue();
+        assertThat(event.inquiryNo()).isEqualTo("INQ20260101AAA");
+        assertThat(event.total()).isEqualTo(2);
+        assertThat(event.inquiryStatus()).isEqualTo("IN_PROGRESS");
+        assertThat(event.items()).extracting("loReqtNo").containsExactlyInAnyOrder("LR_AAA", "LR_BBB");
+        assertThat(event.items()).allMatch(i -> i.status() == PartnerInquiryStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("applyResults - 결과 상태와 전체 상품 상태를 담은 delta 이벤트를 발행한다")
+    void applyResults_publishesReadModelDeltaWithStatusAndItems() {
+        LoanLimitInquiry inquiry = this.buildInquiry();
+        inquiry.addResult(LoanLimitResult.builder().partnerCode(PartnerCode.KAKAO_BANK).build());
+        inquiry.addResult(LoanLimitResult.builder().partnerCode(PartnerCode.TOSS_BANK).build());
+        inquiry.addProductResult(LoanLimitProductResult.builder().loReqtNo("LR_A").partnerCode(PartnerCode.KAKAO_BANK).productCode("P1").status(PartnerInquiryStatus.PENDING).build());
+        inquiry.addProductResult(LoanLimitProductResult.builder().loReqtNo("LR_B").partnerCode(PartnerCode.TOSS_BANK).productCode("P2").status(PartnerInquiryStatus.PENDING).build());
+        given(loanLimitInquiryRepository.findById(1L)).willReturn(Optional.of(inquiry));
+
+        persistenceService.applyResults(1L, List.of(
+                LoanLimitAdaptorResponse.success(PartnerCode.KAKAO_BANK, 100L),
+                LoanLimitAdaptorResponse.fail(PartnerCode.TOSS_BANK, "timeout", 5000L))
+        );
+
+        ArgumentCaptor<InquiryReadModelEvent> captor = ArgumentCaptor.forClass(InquiryReadModelEvent.class);
+        then(applicationEventPublisher).should().publishEvent(captor.capture());
+        InquiryReadModelEvent event = captor.getValue();
+        assertThat(event.seed()).isFalse();
+        assertThat(event.total()).isEqualTo(-1);
+        assertThat(event.inquiryStatus()).isEqualTo("PARTIAL_SUCCESS");
+        assertThat(event.items()).hasSize(2);
+        assertThat(event.items()).filteredOn(i -> i.loReqtNo().equals("LR_A"))
+                .allMatch(i -> i.status() == PartnerInquiryStatus.SEND_SUCCESS);
+        assertThat(event.items()).filteredOn(i -> i.loReqtNo().equals("LR_B"))
+                .allMatch(i -> i.status() == PartnerInquiryStatus.SEND_FAILED);
+
+    }
+
+    @Test
+    @DisplayName("applyResults - 전체 실패여도 FAILED 상태 delta 이벤트를 발행한다 (폴링 종료 판정용)")
+    void applyResults_allFailed_publishesFailedStatusEvent() {
+        LoanLimitInquiry inquiry = buildInquiryWithResult(PartnerCode.LINE_BANK, "LR_001", "P001");
+        given(loanLimitInquiryRepository.findById(1L)).willReturn(Optional.of(inquiry));
+
+        persistenceService.applyResults(1L,
+                List.of(LoanLimitAdaptorResponse.fail(PartnerCode.LINE_BANK, "5xx 오류", 100L)));
+
+        ArgumentCaptor<InquiryReadModelEvent> captor = ArgumentCaptor.forClass(InquiryReadModelEvent.class);
+        then(applicationEventPublisher).should().publishEvent(captor.capture());
+        assertThat(captor.getValue().inquiryStatus()).isEqualTo("FAILED");
+    }
+
+    @Test
+    @DisplayName("markFailed - FAILED 상태 delta 이벤트를 발행한다")
+    void markFailed_publishesFailedDeltaEvent() {
+        LoanLimitInquiry inquiry = buildInquiry();
+        given(loanLimitInquiryRepository.findById(1L)).willReturn(Optional.of(inquiry));
+
+        persistenceService.markFailed(1L);
+
+        ArgumentCaptor<InquiryReadModelEvent> captor = ArgumentCaptor.forClass(InquiryReadModelEvent.class);
+        then(applicationEventPublisher).should().publishEvent(captor.capture());
+        InquiryReadModelEvent event = captor.getValue();
+        assertThat(event.seed()).isFalse();
+        assertThat(event.inquiryNo()).isEqualTo("INQ20260101AAA");
+        assertThat(event.inquiryStatus()).isEqualTo("FAILED");
+        assertThat(event.items()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("markFailed - 조회 이력이 없으면 이벤트를 발행하지 않는다")
+    void markFailed_doesNotPublish_whenInquiryNotFound() {
+        given(loanLimitInquiryRepository.findById(99L)).willReturn(Optional.empty());
+
+        persistenceService.markFailed(99L);
+
+        then(applicationEventPublisher).should(never()).publishEvent(any(Object.class));
     }
 }
