@@ -17,7 +17,7 @@
   "title": "bigin - loadtest (Executor / Connection Pool / Resilience4j)",
   "uid": "bigin-loadtest",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": true,
   "graphTooltip": 1,
   "timezone": "",
@@ -228,6 +228,61 @@
           { "expr": "k6_poll_to_complete_ms_p99", "legendFormat": "p99", "refId": "B" }
         ]
       }
-    ] }
+    ] },
+
+    {
+      "type": "row",
+      "title": "6. JVM (GC / Heap / Blocked Thread / Uptime) - 서버 자체가 GC/OOM으로 응답 불능이 됐는지 확인",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 58 },
+      "id": 500,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "GC Pause - 평균 정지시간 & 발생 빈도 (평균이 튀거나 빈도가 급증하면 GC가 원인)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 59 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [ { "matcher": { "id": "byName", "options": "pause count (1m rate)" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] },
+      "targets": [
+        { "expr": "rate(jvm_gc_pause_seconds_sum[1m]) / rate(jvm_gc_pause_seconds_count[1m])", "legendFormat": "avg pause duration - {{action}}/{{cause}}", "refId": "A" },
+        { "expr": "rate(jvm_gc_pause_seconds_count[1m])", "legendFormat": "pause count (1m rate)", "refId": "B" }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Heap Used vs Max (max에 붙어서 못 내려오면 OOM 직전)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 59 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "expr": "jvm_memory_used_bytes{area=\"heap\"}", "legendFormat": "used - {{id}}", "refId": "A" },
+        { "expr": "jvm_memory_max_bytes{area=\"heap\"}", "legendFormat": "max - {{id}}", "refId": "B" }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Blocked 상태 스레드 수 - 0이 정상, 여기가 뜨면 락/커넥션 대기 중이라는 뜻",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 67 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "line", "fillOpacity": 20 }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "targets": [
+        { "expr": "jvm_threads_states_threads{state=\"blocked\"}", "legendFormat": "blocked", "refId": "A" }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Process Uptime - 테스트 도중 이 값이 0 근처로 리셋되면 프로세스가 죽었다 재시작한 것",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 67 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [
+        { "expr": "process_uptime_seconds", "legendFormat": "uptime", "refId": "A" }
+      ]
+    }
   ]
 }
