@@ -1388,8 +1388,8 @@ CaffeineCacheManager → "cryptoService" 캐시, TTL 1시간, 최대 100개
 ### 변천 과정
 
 ```
-1) Redis 분산 락            → leaseTime 고정 시 GC pause 중 락 만료로 상호배제가 깨질 수 있음 (fencing token 부재)
-2) DB 비관적 락(PESSIMISTIC_WRITE) → 락 보유 시간이 트랜잭션 전체 길이만큼이라, 동일 Inquiry에 다수 금융사 콜백이 몰리면 순차 대기
+1) DB 비관적 락(PESSIMISTIC_WRITE) → 락 보유 시간이 트랜잭션 전체 길이만큼이라, 동일 Inquiry에 다수 금융사 콜백이 몰리면 순차 대기
+2) Redis 분산 락            → leaseTime 고정 시 GC pause 중 락 만료로 상호배제가 깨질 수 있음 (fencing token 부재)
 3) 원자적 UPDATE 단독       → 락은 UPDATE 문장이 아니라 "그 UPDATE가 속한 트랜잭션이 커밋될 때까지" 유지됨
                               → 호출부와 같은 트랜잭션이면 이후 flush / Outbox INSERT / commit까지 row lock을 붙든 채 대기 (커넥션도 함께 점유)
 4) 원자적 UPDATE + REQUIRES_NEW 분리 (현재)
