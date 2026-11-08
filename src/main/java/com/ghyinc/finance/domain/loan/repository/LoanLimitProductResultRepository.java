@@ -7,6 +7,7 @@ import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -18,6 +19,7 @@ import java.util.Optional;
 
 @Repository
 public interface LoanLimitProductResultRepository extends JpaRepository<LoanLimitProductResult, Long> {
+    @EntityGraph(attributePaths = "loanLimitInquiry")
     Optional<LoanLimitProductResult> findByLoReqtNoAndProductCode(
             @Param("loReqtNo") String loReqtNo,
             @Param("productCode") String productCode

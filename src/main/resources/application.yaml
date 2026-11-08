@@ -900,3 +900,10 @@ polling:
     ttl-seconds: 3600
     reconcile-seconds: 15   # 종료 전 조회건은 이 간격마다 DB로 재조정
     down-backoff-ms: 3000   # Redis 오류 후 이 시간 동안 DB fallback
+
+app:
+  redis:
+    connect-timeout-ms: 1000
+    timeout-ms: 300        # 명령 1회 타임아웃
+    retry-attempts: 1      # 재시도 횟수 (최악 약 0.7초)
+    retry-interval-ms: 100

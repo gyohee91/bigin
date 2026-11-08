@@ -10,15 +10,18 @@ import com.ghyinc.finance.domain.loan.dto.ResultResponse;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
 import com.ghyinc.finance.domain.loan.enums.*;
+import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelEvent;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepository;
 import com.ghyinc.finance.global.lock.RedisLockExecutor;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.List;
 import java.util.Optional;
@@ -29,8 +32,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willAnswer;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class LoanLimitResultServiceTest {
@@ -52,6 +54,9 @@ class LoanLimitResultServiceTest {
 
     @Mock
     private AuditLogWriter auditLogWriter;
+
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
 
     private LoanLimitInquiry buildInquiry() {
         return LoanLimitInquiry.builder()
@@ -116,6 +121,15 @@ class LoanLimitResultServiceTest {
             onLockUnavailable.run();
             return null;
         }).given(lockExecutor).execute(anyString(), anyLong(), anyLong(), any(Runnable.class), any(Runnable.class));
+    }
+
+    private LoanLimitInquiry buildInquiryWithNo(String inquiryNo) {
+        return LoanLimitInquiry.builder()
+                .inquiryNo(inquiryNo)
+                .userId(1L)
+                .jobType(JobType.EMPLOYEE)
+                .loanType(LoanType.PERSONAL_CREDIT)
+                .build();
     }
 
     @Test
@@ -212,6 +226,8 @@ class LoanLimitResultServiceTest {
         assertThat(productResult.getStatus()).isEqualTo(PartnerInquiryStatus.PENDING);
         then(loanLimitCounterService).should(never()).incrementSuccessCount(anyString(), anyString());
         then(auditLogWriter).should(never()).write(anyString(), anyString(), any());
+
+        then(applicationEventPublisher).should(never()).publishEvent(any(Object.class));
     }
 
     @Test
@@ -239,6 +255,8 @@ class LoanLimitResultServiceTest {
         assertThat(productResult.getStatus()).isEqualTo(PartnerInquiryStatus.SUCCESS);
         then(loanLimitCounterService).should(never()).incrementSuccessCount(anyString(), anyString());
         then(auditLogWriter).should(never()).write(anyString(), anyString(), any());
+
+        then(applicationEventPublisher).should(never()).publishEvent(any(Object.class));
     }
 
     @Test
@@ -275,5 +293,94 @@ class LoanLimitResultServiceTest {
 
         // then
         then(adaptor).should().buildResponse(eq(false), eq("처리 중 오류가 발생했습니다"));
+    }
+
+    @Test
+    @DisplayName("쿨백 정상 처리 시 read model delta 이벤트를 발행한다")
+    void responseCompareLoanResult_publishesReadModelDelta() {
+        LoanLimitInquiry inquiry = this.buildInquiryWithNo("INQ1");
+        LoanLimitProductResult productResult = this.buildProductResult(inquiry, "LR_A", "P1");
+        LoanLimitResultRequest.LoanApplyResult item = this.buildSuccessItem("LR_A", "P1");
+
+        LoanLimitResultAdaptor adaptor = mock(LoanLimitResultAdaptor.class);
+        given(resultAdaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
+        given(adaptor.convert(any())).willReturn(this.buildRequestDto(List.of(item)));
+        given(loanLimitProductResultRepository.findByLoReqtNoAndProductCode("LR_A", "P1"))
+                .willReturn(Optional.of(productResult));
+
+        loanLimitResultService.responseCompareLoanResult("LINE_BANK", this.buildRequest(List.of(item)));
+
+        ArgumentCaptor<InquiryReadModelEvent> captor = ArgumentCaptor.forClass(InquiryReadModelEvent.class);
+        then(applicationEventPublisher).should().publishEvent(captor.capture());
+        InquiryReadModelEvent event = captor.getValue();
+        assertThat(event.seed()).isFalse();
+        assertThat(event.inquiryNo()).isEqualTo("INQ1");
+        assertThat(event.total()).isEqualTo(-1);
+        assertThat(event.inquiryStatus()).isNull();
+        assertThat(event.items()).hasSize(1);
+        assertThat(event.items().get(0).loReqtNo()).isEqualTo("LR_A");
+        assertThat(event.items().get(0).status()).isEqualTo(PartnerInquiryStatus.SUCCESS);
+        assertThat(event.items().get(0).amount()).isEqualTo(30_000_000L);
+    }
+
+    @Test
+    @DisplayName("같은 inquiry의 여러 상품 콜백은 이벤트 1건으로 묶어서 발행한다")
+    void responseCompareLoanResult_groupsItemsOfSameInquiryIntoOneEvent() {
+        LoanLimitInquiry inquiry = this.buildInquiryWithNo("INQ1");
+        LoanLimitProductResult productResult1 = this.buildProductResult(inquiry, "LR_A", "P1");
+        LoanLimitProductResult productResult2 = this.buildProductResult(inquiry, "LR_B", "P2");
+        var item1 = this.buildSuccessItem("LR_A", "P1");
+        var item2 = this.buildSuccessItem("LR_B", "P2");
+
+        LoanLimitResultAdaptor adaptor = mock(LoanLimitResultAdaptor.class);
+        given(resultAdaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
+        given(adaptor.convert(any())).willReturn(this.buildRequestDto(List.of(item1, item2)));
+        given(loanLimitProductResultRepository.findByLoReqtNoAndProductCode("LR_A", "P1")).willReturn(Optional.of(productResult1));
+        given(loanLimitProductResultRepository.findByLoReqtNoAndProductCode("LR_B", "P2")).willReturn(Optional.of(productResult2));
+
+        loanLimitResultService.responseCompareLoanResult("LINE_BANK", this.buildRequest(List.of(item1, item2)));
+
+        ArgumentCaptor<InquiryReadModelEvent> captor = ArgumentCaptor.forClass(InquiryReadModelEvent.class);
+        then(applicationEventPublisher).should(times(1)).publishEvent(captor.capture());
+        assertThat(captor.getValue().items()).extracting("loReqtNo").containsExactly("LR_A", "LR_B");
+    }
+
+    @Test
+    @DisplayName("inquiryNo를 알 수 없으면 이벤트를 발행하지 않는다")
+    void responseCompareLoanResult_doesNotPublish_whenInquiryNoMissing() {
+        LoanLimitInquiry inquiry = this.buildInquiry();     // inquiryNo 없음
+        LoanLimitProductResult productResult = this.buildProductResult(inquiry, "LR_A", "P1");
+        var item = this.buildSuccessItem("LR_A", "P1");
+
+        LoanLimitResultAdaptor adaptor = mock(LoanLimitResultAdaptor.class);
+        given(resultAdaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
+        given(adaptor.convert(any())).willReturn(this.buildRequestDto(List.of(item)));
+        given(loanLimitProductResultRepository.findByLoReqtNoAndProductCode("LR_A", "P1")).willReturn(Optional.of(productResult));
+
+        loanLimitResultService.responseCompareLoanResult("LINE_BANK", this.buildRequest(List.of(item)));
+
+        then(applicationEventPublisher).should(never()).publishEvent(any(Object.class));
+    }
+
+    @Test
+    @DisplayName("중간 항목에서 예외가 나도 이미 처리된 항목은 이벤트로 발행한다")
+    void responseCompareLoanResult_publishesProcessedItems_evenWhenLaterItemFails() {
+        LoanLimitInquiry inquiry = this.buildInquiryWithNo("INQ1");
+        LoanLimitProductResult productResult = this.buildProductResult(inquiry, "LR_A", "P1");
+        var item1 = this.buildSuccessItem("LR_A", "P1");
+        var item2 = this.buildSuccessItem("LR_x", "P9");
+
+        LoanLimitResultAdaptor adaptor = mock(LoanLimitResultAdaptor.class);
+        given(resultAdaptorFactory.getAdaptor(PartnerCode.LINE_BANK)).willReturn(adaptor);
+        given(adaptor.convert(any())).willReturn(this.buildRequestDto(List.of(item1, item2)));
+        given(loanLimitProductResultRepository.findByLoReqtNoAndProductCode("LR_A", "P1")).willReturn(Optional.of(productResult));
+        given(loanLimitProductResultRepository.findByLoReqtNoAndProductCode("LR_X", "P9")).willReturn(Optional.empty());
+        given(adaptor.buildResponse(eq(false), anyString())).willReturn(mock(ResultResponse.class));
+
+        loanLimitResultService.responseCompareLoanResult("LINE_BANK", this.buildRequest(List.of(item1, item2)));
+
+        ArgumentCaptor<InquiryReadModelEvent> captor = ArgumentCaptor.forClass(InquiryReadModelEvent.class);
+        then(applicationEventPublisher).should().publishEvent(captor.capture());
+        assertThat(captor.getValue().items()).extracting("loReqtNo").containsExactly("LR_A");
     }
 }

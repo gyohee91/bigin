@@ -5,6 +5,7 @@ import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
 import lombok.Builder;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -29,11 +30,7 @@ public record InquiryReadModelEvent(
                 .seed(true)
                 .total(inquiry.getTotalProductCount())
                 .inquiryStatus(inquiry.getStatus().name())
-                .items(
-                        inquiry.getProductResults().stream()
-                                .map(InquiryReadModelEvent::toDto)
-                                .toList()
-                )
+                .items(toDtos(inquiry.getProductResults()))
                 .build();
     }
 
@@ -45,6 +42,12 @@ public record InquiryReadModelEvent(
                 .inquiryStatus(inquiryStatus)
                 .items(items)
                 .build();
+    }
+
+    public static List<LoanLimitProductResultDto> toDtos(Collection<LoanLimitProductResult> list) {
+        return list.stream()
+                .map(InquiryReadModelEvent::toDto)
+                .toList();
     }
 
     public static LoanLimitProductResultDto toDto(LoanLimitProductResult productResult) {

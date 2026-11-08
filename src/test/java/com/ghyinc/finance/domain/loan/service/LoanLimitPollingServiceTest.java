@@ -9,6 +9,7 @@ import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelStore;
 import com.ghyinc.finance.domain.loan.readmodel.InquirySnapShot;
 import com.ghyinc.finance.domain.loan.readmodel.InquirySnapShotLoader;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -41,7 +42,7 @@ class LoanLimitPollingServiceTest {
 
     @BeforeEach
     void setUp() {
-        loanLimitPollingService = new LoanLimitPollingService(store, loanLimitService, snapShotLoader, objectMapper);
+        loanLimitPollingService = new LoanLimitPollingService(store, loanLimitService, snapShotLoader, objectMapper, new SimpleMeterRegistry());
     }
 
     private LoanLimitProductResultDto dto(String loReqtNo, Long amount, PartnerInquiryStatus status) {

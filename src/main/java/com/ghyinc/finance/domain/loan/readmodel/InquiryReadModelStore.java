@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -194,8 +195,18 @@ public class InquiryReadModelStore {
                 args.add(String.valueOf(stage(d.status())));
                 args.add(objectMapper.writeValueAsString(d));
             }
-            Long ver = redis.execute(writeScript, keys(inquiryNo), args.toArray());
-            this.count(ver != null && ver == -1 ? "write_skipped_no_meta": "write_ok");
+
+            Long version;
+            Timer.Sample sample = Timer.start(meterRegistry);
+            String outcome = "error";
+            try {
+                version = redis.execute(writeScript, keys(inquiryNo), args.toArray());
+                outcome = "ok";
+            } finally {
+                this.stopTimer(sample, "write", outcome);
+            }
+
+            this.count(version != null && version == -1 ? "write_skipped_no_meta": "write_ok");
             return true;
         } catch (Exception ex) {
             this.count("write_fail");
@@ -214,13 +225,23 @@ public class InquiryReadModelStore {
         if (this.isDown())  return ReadResult.of(Type.DOWN);
         try {
             List<String> keyList = keys(inquiryNo);
-            List<?> redisList = redis.execute(readScript, keyList.subList(0, 3),
-                    clientVersion == null ? "" : String.valueOf(clientVersion),
-                    String.valueOf(page * size),
-                    String.valueOf(size),
-                    String.valueOf(System.currentTimeMillis()),
-                    String.valueOf(reconcileMs)
-            );
+
+            List<?> redisList;
+            Timer.Sample sample = Timer.start(meterRegistry);
+            String outcome = "error";
+            try {
+                redisList = redis.execute(readScript, keyList.subList(0, 3),
+                        clientVersion == null ? "" : String.valueOf(clientVersion),
+                        String.valueOf(page * size),
+                        String.valueOf(size),
+                        String.valueOf(System.currentTimeMillis()),
+                        String.valueOf(reconcileMs)
+                );
+                outcome = "ok";
+            } finally {
+                this.stopTimer(sample, "read", outcome);
+            }
+
             if (redisList == null || redisList.isEmpty()) {
                 this.count("miss");
                 return ReadResult.of(Type.MISS);
@@ -259,5 +280,14 @@ public class InquiryReadModelStore {
             this.markDown(e);
             return ReadResult.of(Type.DOWN);
         }
+    }
+
+    private void stopTimer(Timer.Sample sample, String op, String outcome) {
+        sample.stop(Timer.builder("polling.readmodel.redis")
+                        .description("Redis 읽기모델 호출 시간 (redis.execute 구간만)")
+                        .tag("op", op)
+                        .tag("outcome", outcome)
+                        .publishPercentiles(0.5, 0.95, 0.99)
+                .register(meterRegistry));
     }
 }

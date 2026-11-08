@@ -7,6 +7,8 @@ import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelStore;
 import com.ghyinc.finance.domain.loan.readmodel.InquirySnapShot;
 import com.ghyinc.finance.domain.loan.readmodel.InquirySnapShotLoader;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -26,50 +28,65 @@ public class LoanLimitPollingService {
     private final LoanLimitService loanLimitService;
     private final InquirySnapShotLoader snapShotLoader;
     private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
 
     public LoanLimitPollingResponse getInquiryResult(String inquiryNo, int page, int size, Long version) {
         Pageable pageable = PageRequest.of(page, size);
 
-        // 플래그 OFF -> AS-IS 그대로
-        if (!store.isEnabled()) {
-            return loanLimitService.getInquiryResult(inquiryNo, pageable);
-        }
+        Timer.Sample sample = Timer.start(meterRegistry);
+        String path = "db";   // 플래그 OFF(AS-IS) 경로
 
-        InquiryReadModelStore.ReadResult readResult = store.read(inquiryNo, version, page, size);
-
-        // Redis 장애 -> 기존 DB 경로
-        if (readResult.type() == InquiryReadModelStore.Type.DOWN) {
-            store.count("fallback");
-            return loanLimitService.getInquiryResult(inquiryNo, pageable);
-        }
-
-        // MISS/stale -> DB 재구성 + 병합 적재
-        if (readResult.type() == InquiryReadModelStore.Type.MISS) {
-            InquirySnapShot snapShot = snapShotLoader.load(inquiryNo);
-            if (store.seed(snapShot)) {
-                // 적재본을 다시 읽어 version과 내용을 일치시킨다
-                readResult = store.read(inquiryNo, version, page, size);
+        try {
+            if (!store.isEnabled()) {
+                return loanLimitService.getInquiryResult(inquiryNo, pageable);
             }
-            if (readResult.type() == InquiryReadModelStore.Type.MISS || readResult.type() == InquiryReadModelStore.Type.DOWN) {
+
+            InquiryReadModelStore.ReadResult readResult = store.read(inquiryNo, version, page, size);
+            path = "redis";
+
+            // Redis 장애 -> 기존 DB 경로
+            if (readResult.type() == InquiryReadModelStore.Type.DOWN) {
+                path = "fallback_down";
                 store.count("fallback");
-                return this.fromSnapShot(snapShot, page, size);
+                return loanLimitService.getInquiryResult(inquiryNo, pageable);
             }
-        }
 
-        if (readResult.type() == InquiryReadModelStore.Type.SAME) {
-            return LoanLimitPollingResponse.unchanged(inquiryNo, readResult.version());
-        }
+            // MISS/stale -> DB 재구성 + 병합 적재
+            if (readResult.type() == InquiryReadModelStore.Type.MISS) {
+                path = "rebuild";
+                InquirySnapShot snapShot = snapShotLoader.load(inquiryNo);
+                if (store.seed(snapShot)) {
+                    // 적재본을 다시 읽어 version과 내용을 일치시킨다
+                    readResult = store.read(inquiryNo, version, page, size);
+                }
+                if (readResult.type() == InquiryReadModelStore.Type.MISS || readResult.type() == InquiryReadModelStore.Type.DOWN) {
+                    path = "fallback_seed";
+                    store.count("fallback");
+                    return this.fromSnapShot(snapShot, page, size);
+                }
+            }
 
-        return this.toResponse(inquiryNo, readResult, page, size);
+            if (readResult.type() == InquiryReadModelStore.Type.SAME) {
+                path = path.equals("rebuild") ? "rebuild" : "unchanged";
+                return LoanLimitPollingResponse.unchanged(inquiryNo, readResult.version());
+            }
+
+            return this.toResponse(inquiryNo, readResult, page, size);
+        } finally {
+            sample.stop(this.timer("polling.service", path));
+        }
     }
 
     private LoanLimitPollingResponse toResponse(String inquiryNo, InquiryReadModelStore.ReadResult readResult, int page, int size) {
         List<LoanLimitProductResultDto> items = new ArrayList<>(readResult.itemsJson().size());
+        Timer.Sample parse = Timer.start(meterRegistry);
         try {
             for (String json : readResult.itemsJson())
                 items.add(objectMapper.readValue(json, LoanLimitProductResultDto.class));
         } catch (Exception e) {
             throw new IllegalStateException("읽기모델 역직렬화 실패. inquiryNo=" + inquiryNo, e);
+        } finally {
+            parse.stop(this.timer("polling.readmodel.parse", null));
         }
         int totalPages = size == 0 ? 1 : (int) Math.ceil((double) readResult.card() / size);
         return LoanLimitPollingResponse.builder()
@@ -111,5 +128,11 @@ public class LoanLimitPollingService {
                 .hasNext(page + 1 < totalPages)
                 .inquiryStatus(snapShot.status())
                 .build();
+    }
+
+    private Timer timer(String name, String path) {
+        Timer.Builder b = Timer.builder(name).publishPercentiles(0.5, 0.95, 0.99);
+        if (path != null) b.tag("path", path);
+        return b.register(meterRegistry);
     }
 }

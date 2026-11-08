@@ -4,21 +4,23 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.ghyinc.finance.domain.audit.service.AuditLogWriter;
 import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptor;
 import com.ghyinc.finance.domain.loan.adaptor.callback.LoanLimitResultAdaptorFactory;
+import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitResultRequest;
 import com.ghyinc.finance.domain.loan.dto.ResultResponse;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
+import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelEvent;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepository;
 import com.ghyinc.finance.global.event.PartnerCallbackAuditEvent;
-import com.ghyinc.finance.global.lock.RedisLockExecutor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.errors.InvalidRequestException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.Optional;
+import java.util.*;
 
 /**
  * 한도결과 콜백 수신 서비스
@@ -56,8 +58,8 @@ public class LoanLimitResultService {
     private final LoanLimitResultAdaptorFactory resultAdaptorFactory;
     private final LoanLimitProductResultRepository loanLimitProductResultRepository;
     private final LoanLimitCounterService loanLimitCounterService;
-    private final RedisLockExecutor lockExecutor;
     private final AuditLogWriter auditLogWriter;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     /**
      * 금융사 한도조회 콜백을 수신하여 처리한다
@@ -92,6 +94,9 @@ public class LoanLimitResultService {
 
         LoanLimitResultAdaptor adaptor = resultAdaptorFactory.getAdaptor(partnerCode);
 
+        // inquiryNo -> 이번 콜백으로 갱신된 상품 결과 (커밋 후 Redis delta 반영용)
+        Map<String, List<LoanLimitProductResultDto>> updated = new LinkedHashMap<>();
+
         try {
             // 금융사별 응답 포맷에 맞는 Adaptor를 선택한다
             LoanLimitResultRequest request = adaptor.convert(reqBody);
@@ -120,6 +125,13 @@ public class LoanLimitResultService {
                         loanLimitCounterService.incrementSuccessCount(item.getLoReqtNo(), item.getProductCode());
                         productResult.updateResult(item.getResultCode(), item.getAmount(), item.getInterestRate());
 
+                        // read model 반영 대상 수집 (updateResult 이후 상태 = SUCCESS)
+                        var inquiry = productResult.getLoanLimitInquiry();
+                        if (inquiry != null && inquiry.getInquiryNo() != null) {
+                            updated.computeIfAbsent(inquiry.getInquiryNo(), k -> new ArrayList<>())
+                                    .add(InquiryReadModelEvent.toDto(productResult));
+                        }
+
                         // Callback 정상 처리 시
                         auditLogWriter.write(
                                 "PARTNER_CALLBACK",
@@ -146,6 +158,11 @@ public class LoanLimitResultService {
         catch (Exception e) {
             log.error("[{}] 한도결과 API 처리 중 오류. ", requestPartnerCode, e);
             return adaptor.buildResponse(false, "처리 중 오류가 발생했습니다");
+        }
+        finally {
+            // 예외로 중간에 끊겨도, 이미 dirty-checking으로 커밋될 항목은 Redis에서도 반영되도록 finally에서 발행
+            updated.forEach((inquiryNo, items) ->
+                    applicationEventPublisher.publishEvent(InquiryReadModelEvent.delta(inquiryNo, null, items)));
         }
     }
 
