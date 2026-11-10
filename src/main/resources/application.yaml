@@ -907,3 +907,5 @@ app:
     timeout-ms: 300        # 명령 1회 타임아웃
     retry-attempts: 1      # 재시도 횟수 (최악 약 0.7초)
     retry-interval-ms: 100
+  kafka:
+    auto-create-topics: true

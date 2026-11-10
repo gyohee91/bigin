@@ -45,8 +45,6 @@
 실무에서 직접 경험한 **제휴 금융사 한도조회 시스템의 핵심 도메인**을 새로운 기술 스택과 아키텍처로 재설계하여 구현했습니다.
 
 - 실무와 동일한 비즈니스 로직 (콜백 기반 비동기 한도조회, 상품별 채번, 디자인 패턴 등)
-- Java 17 + Spring Boot 3.5로 업그레이드하여 최신 기능 적용
-- Layered Architecture → Domain-driven Package Structure로 전환
 - 또한, 개인 프로젝트에서 설계·검증한 개선 방식 중 실무 환경에 적용 가능하다고 판단된 항목을 실제 운영 시스템에도 반영
 
 <br>
@@ -63,7 +61,7 @@
 | 비동기       | Spring @Async / CompletableFuture, 용도별 전용 ThreadPoolTaskExecutor 5종 |
 | 장애격리      | Resilience4j Circuit Breaker / Retry / Rate Limiter / Bulkhead (금융사별 독립 인스턴스) |
 | HTTP Client | Spring RestClient + Apache HttpClient5 (`PoolingHttpClientConnectionManager`) |
-| 메시지큐 | Apache Kafka (Outbox Pattern, DLQ, `@RetryableTopic` 지수 백오프 재시도) |
+| 메시지큐 | Apache Kafka (Outbox Pattern, DLQ, `@RetryableTopic` 고정 지연 재시도 · 단일 재시도 토픽) |
 | 캐싱 | Redis Cache (Redisson 분산 락 기반), Caffeine (로컬 캐시) |
 | 분산처리 | Redis (Redisson 분산 락, INCR 채번), Bucket4j (분산 Rate Limiting) |
 | 스케줄링 | Spring @Scheduled + ShedLock (JDBC) |
@@ -254,7 +252,7 @@ FE → POST /api/loan/request-compare-loan
   └── applyRetryResult(): PUBLISHED / FAILED 반영 (REQUIRES_NEW, id로 재조회)
          │
          ▼ Kafka (loan-limit-completed)
-  LoanLimitCompletedEventConsumer (notification 도메인)   [@RetryableTopic: 지수 백오프 재시도 + DLT]
+  LoanLimitCompletedEventConsumer (notification 도메인)   [@RetryableTopic: 고정 지연 재시도(단일 토픽) + DLT]
   └── NotificationService → Notification INSERT + notification.send 이벤트 발행
          │
          ▼ Kafka (notification.send)
@@ -1078,13 +1076,9 @@ notification.send (원본 토픽)
       │     → 재시도 없이 즉시 -dlt 토픽으로 이동
       │
       └── 그 외 예외
-            → notification.send-retry-0 (약 1초 뒤, ±jitter)
-                  │ 실패
-                  ▼
-            notification.send-retry-1 (약 2초 뒤, ±jitter)
-                  │ 실패
-                  ▼
-            notification.send-retry-2 (약 4초 뒤, ±jitter)
+            → notification.send-retry (5초 뒤 재시도 1회차)
+                  │ 실패 → 같은 -retry 토픽으로 재발행 (5초 뒤 2회차)
+                  │ 실패 → 같은 -retry 토픽으로 재발행 (5초 뒤 3회차)
                   │ 실패 (최대 attempts 소진)
                   ▼
             notification.send-dlt
@@ -1094,15 +1088,52 @@ notification.send (원본 토픽)
 ```
 
 원본 토픽 `notification.send`는 이 과정 내내 멈추지 않습니다 — 실패한 메시지는 즉시 재시도 토픽으로 넘어가고,
-원본 파티션은 바로 다음 메시지를 계속 처리합니다. 각 `-retry-N` 토픽은 독립된 파티션(`numPartitions`)을
-가지므로, 특정 재시도 단계에 적체가 생겨도 그 단계만 컨슈머를 늘려 대응할 수 있습니다.
+원본 파티션은 바로 다음 메시지를 계속 처리합니다.
+
+#### As-Is → To-Be: 블로킹 재시도에서 단일 재시도 토픽 기반 논블로킹 재시도로
+
+**As-Is** — `@RetryableTopic` 없이 `@KafkaListener`만 사용하고, 재시도·DLT 이동은 `DefaultErrorHandler`(`errorHandler`)가 처리했습니다.
+
+```java
+// @RetryableTopic 없음
+@KafkaListener(topics = "loan-limit-completed", groupId = "loan-limit-completed-group")
+public void consume(String payload, ConsumerRecord<String, String> record)
+```
+
+- 재시도: `JitteredExponentialBackOff`(1초 → 2초 → 4초 상한, ±30% jitter, 최대 3회)로 **같은 파티션에서 제자리 재시도(seek)**
+- 한계: 재시도 중에는 해당 파티션의 **뒤 메시지도 함께 멈춤**(블로킹). 소진 후 `.DLT`로 이동하고 `DlqEventConsumer` → `DlqEvent` 테이블 → `DlqRetryScheduler`(30초 주기)가 원본 토픽에 재발행
+
+**To-Be** — `@RetryableTopic`으로 전환해 재시도를 원본이 아닌 **별도 재시도 토픽 1개(`-retry`)**에서 수행합니다.
+
+```java
+@RetryableTopic(attempts = "4", backoff = @Backoff(delay = 5000),
+                sameIntervalTopicReuseStrategy = SameIntervalTopicReuseStrategy.SINGLE_TOPIC, ...)
+@KafkaListener(topics = "loan-limit-completed", groupId = "loan-limit-completed-group")
+```
+
+- 얻은 것 ① 논블로킹: 실패 메시지는 즉시 `-retry` 토픽으로 넘어가 원본 파티션이 막히지 않음
+- 얻은 것 ② 관리 토픽 고정: 원본 토픽당 `-retry`, `-dlt` 2개. 재시도 횟수(attempts)를 바꿔도 토픽 수가 늘지 않음
+- 얻은 것 ③ 재시도 일정이 Kafka(토픽)에 있으므로 DB 폴링 스케줄러(`DlqRetryScheduler`)에 의존하지 않음
+
+**왜 재시도 토픽을 1개로 고정했는가** — 지수 백오프를 유지한 채 `@RetryableTopic`을 쓰면 논블로킹 재시도는 지연 값마다
+별도 토픽이 필요해서 `-retry-0/1/2`처럼 단계별 토픽이 생깁니다. 운영 환경에서는 앱의 토픽 생성 권한이 제한되는 경우가
+많고(브로커 `auto.create.topics.enable=false`, 토픽은 사전 승인·IaC로 관리), 원본 토픽 수에 비례해 관리 대상 토픽이
+늘어납니다. 그래서 **재시도 지연을 고정값(5초)으로 맞춰 재시도 토픽을 1개로 줄였습니다.** 같은 지연으로 들어온 메시지는
+도착 순서대로 만료되므로 한 토픽에서 순서대로 지연을 기다려도 뒤 메시지가 막히지 않고, 그래서 토픽을 공유할 수 있습니다
+(`SameIntervalTopicReuseStrategy.SINGLE_TOPIC`).
+
+**트레이드오프**
+- 포기한 것: 지수 백오프와 jitter. 제휴사처럼 오래 지속되는 장애에서는 5초 간격 3회 시도한 뒤 DLT로 이동합니다.
+- 대안: 재시도 토픽 없이 기존 `DefaultErrorHandler`로 같은 파티션에서 블로킹 재시도(지수 백오프 유지, 대신 재시도 중 파티션 정지).
 
 ```java
 @RetryableTopic(
-        attempts = "4",
-        backoff = @Backoff(delayExpression = "1000", multiplierExpression = "2.0",
-                            maxDelayExpression = "10000", random = true),   // ±jitter로 동시 재시도 몰림 방지
+        attempts = "4",                                   // 최초 1회 + 재시도 3회
+        backoff = @Backoff(delay = 5000),                 // 고정 지연 → 재시도 토픽 1개 공유
+        sameIntervalTopicReuseStrategy = SameIntervalTopicReuseStrategy.SINGLE_TOPIC,
         listenerContainerFactory = "retryableTopicListenerContainerFactory",
+        autoCreateTopics = "${app.kafka.auto-create-topics:false}",   // 운영은 false (사전 생성), local만 true
+        dltStrategy = DltStrategy.FAIL_ON_ERROR,
         exclude = { KafkaMessageDeserializationException.class, IllegalArgumentException.class }
 )
 @KafkaListener(topics = "notification.send", groupId = "notification-send-group")
@@ -1118,6 +1149,18 @@ public void handleDlt(...) { ... }  // 재시도 소진 - DlqEvent(DEAD) 기록,
 > `errorHandler`(지수 백오프+jitter, `.DLT` 라우팅) + `kafkaListenerContainerFactory` 조합은
 > 아직 `@RetryableTopic`으로 전환하지 않은 나머지 Consumer에 계속 쓰입니다.
 
+#### 운영 토픽 사전 생성
+
+`auto-create-topics=false`(기본값)에서는 앱이 토픽을 만들지 않으므로 다음 토픽을 미리 만들어야 합니다.
+
+| 원본 토픽 | 재시도 토픽 | DLT |
+|---|---|---|
+| `notification.send` | `notification.send-retry` | `notification.send-dlt` |
+| `loan-limit-completed` | `loan-limit-completed-retry` | `loan-limit-completed-dlt` |
+
+재시도 토픽과 DLT는 원본과 같은 파티션 번호로 발행되므로 **파티션 수가 원본 이상**이어야 합니다.
+`@RetryableTopic`의 DLT 이름(`-dlt`)은 `DefaultErrorHandler` 경로의 `.DLT`와 다른 토픽입니다.
+
 `@DltHandler`는 재시도 토픽 체인을 전부 소진한 뒤 도달하는 마지막 지점이라, 여기서 다시 예외가 나면
 (`dltStrategy = DltStrategy.FAIL_ON_ERROR`) 같은 메시지를 무한 재처리하게 됩니다. 그래서 내부 로직 전체를
 try-catch로 감싸 어떤 상황에서도 예외를 밖으로 던지지 않도록 구현했습니다.
@@ -1132,7 +1175,7 @@ try-catch로 감싸 어떤 상황에서도 예외를 밖으로 던지지 않도�
 묶여 있어 장애 발생 시 재처리량 자체가 병목이 될 수 있습니다.
 
 `@RetryableTopic`은 재시도를 원본 토픽이 아닌 별도 토픽에서 수행하므로 원본 파티션이 막히지 않고, 재시도
-단계별로 독립적인 파티션/컨슈머를 가져 수평 확장이 가능합니다. 이에 따라 `DlqEventConsumer`,
+전용 토픽/컨슈머를 가져 원본과 독립적으로 처리됩니다. 이에 따라 `DlqEventConsumer`,
 `DlqRetryScheduler`, `dlqErrorHandler`/`dlqKafkaListenerContainerFactory`는 `notification.send`/
 `loan-limit-completed` 두 토픽에 대해서는 더 이상 쓰이지 않고, `@DltHandler`가 그 역할(최종 실패 기록)을
 대신합니다. 아직 `@RetryableTopic`으로 전환하지 않은 Consumer가 있다면 기존 DB 폴링 방식이 계속 그 Consumer를
@@ -1389,10 +1432,9 @@ CaffeineCacheManager → "cryptoService" 캐시, TTL 1시간, 최대 100개
 
 ```
 1) DB 비관적 락(PESSIMISTIC_WRITE) → 락 보유 시간이 트랜잭션 전체 길이만큼이라, 동일 Inquiry에 다수 금융사 콜백이 몰리면 순차 대기
-2) Redis 분산 락            → leaseTime 고정 시 GC pause 중 락 만료로 상호배제가 깨질 수 있음 (fencing token 부재)
-3) 원자적 UPDATE 단독       → 락은 UPDATE 문장이 아니라 "그 UPDATE가 속한 트랜잭션이 커밋될 때까지" 유지됨
+2) 원자적 UPDATE 단독       → 락은 UPDATE 문장이 아니라 "그 UPDATE가 속한 트랜잭션이 커밋될 때까지" 유지됨
                               → 호출부와 같은 트랜잭션이면 이후 flush / Outbox INSERT / commit까지 row lock을 붙든 채 대기 (커넥션도 함께 점유)
-4) 원자적 UPDATE + REQUIRES_NEW 분리 (현재)
+3) 원자적 UPDATE + REQUIRES_NEW 분리 (현재)
 ```
 
 ### 현재 구조
