@@ -15,6 +15,9 @@ public record LoanLimitPollingResponse(
         @Schema(description = "업무 식별번호")
         String inquiryNo,
 
+        @Schema(description = "Inquiry 응답 결과")
+        String status,
+
         // Polling 진행률 정보
         @Schema(description = "전체 상품 수")
         int totalProductCount,
@@ -48,6 +51,7 @@ public record LoanLimitPollingResponse(
     public static LoanLimitPollingResponse from(LoanLimitInquiry inquiry, Page<LoanLimitProductResultDto> productResults) {
         return LoanLimitPollingResponse.builder()
                 .inquiryNo(inquiry.getInquiryNo())
+                .status(inquiry.getStatus().name())
                 .totalProductCount(inquiry.getTotalProductCount())
                 .successProductCount(inquiry.getSuccessProductCount())
                 .progressRate(inquiry.getProgressRate())

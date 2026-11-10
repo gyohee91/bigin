@@ -111,7 +111,6 @@ public class LoanLimitInquiry extends BaseTimeEntity {
 
     /**
      * 한도결과 수신 진행률 (0 ~ 100)
-     * @return
      */
     public int getProgressRate() {
         if (totalProductCount == 0)
@@ -120,6 +119,6 @@ public class LoanLimitInquiry extends BaseTimeEntity {
     }
 
     public boolean isAllResultReceived() {
-        return successProductCount >= totalProductCount;
+        return totalProductCount > 0 && successProductCount >= totalProductCount;
     }
 }
