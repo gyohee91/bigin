@@ -86,8 +86,11 @@ com.ghyinc.finance
 │   │   ├── controller
 │   │   │   └── LoanController.java               # 한도조회 / 콜백 수신 / 폴링 / 결과요약 / 대출신청 API
 │   │   ├── service
-│   │   │   ├── LoanLimitService.java                     # 요청 수신 · 중복요청 방어(Redis 락) · Strategy 실행 · 결과 폴링
-│   │   │   ├── LoanLimitInquiryPersistenceService.java   # DB 트랜잭션 전용 협력자 (최초 INSERT / 선저장 / 결과반영 / FAILED 처리)
+│   │   │   ├── LoanLimitService.java                     # 요청 수신 · 당일 중복 방어 오케스트레이션(dedup_key 사전 조회 → Redis 락 → 장애 시 DB 선점) · 결과 폴링
+│   │   │   ├── LoanLimitInquiryCreator.java              # Inquiry 생성 전략 2종: processWithRedisLock(1차) / processWithDbClaim(2차, Redis 장애)
+│   │   │   ├── LoanLimitDispatchPlanner.java             # 검증 · 외부 데이터 조회 · 금융사 선정 → PartnerDispatchPlan (DB 미사용, 두 경로 공유)
+│   │   │   ├── LoanLimitInquiryClaimService.java         # DB 선점 전용 (REQUIRES_NEW): claim(ACCEPTED INSERT) / abort(FAILED + 슬롯 반납)
+│   │   │   ├── LoanLimitInquiryPersistenceService.java   # DB 트랜잭션 전용 협력자 (최초 INSERT·완료 / 선저장 / 결과반영 / FAILED 처리)
 │   │   │   ├── LoanLimitEventHandler.java                # AFTER_COMMIT 이벤트 리스너 → 팬아웃 제출, 포화 시 보상 처리
 │   │   │   ├── LoanLimitSenderService.java               # 금융사 병렬 팬아웃 (무트랜잭션 구간)
 │   │   │   ├── LoanLimitResultService.java               # 금융사 콜백 수신 처리
@@ -104,7 +107,7 @@ com.ghyinc.finance
 │   │   ├── strategy                           # 대출유형별 전략 (Personal / Auto / Mortgage / Business)
 │   │   ├── entity                             # LoanLimitInquiry(Aggregate Root) / LoanLimitResult / LoanLimitProductResult / Partner / Product / LoanApply ...
 │   │   ├── repository                         # Spring Data JPA
-│   │   ├── dto                                # 요청/응답 DTO, PreparedFanout(선저장 결과), ExternalDataContext
+│   │   ├── dto                                # 요청/응답 DTO, PreparedFanout(선저장 결과), PartnerDispatchPlan(전송 계획), ExternalDataContext
 │   │   └── enums                              # InquiryStatus / PartnerInquiryStatus / PartnerCode / LoanType ...
 │   ├── notification
 │   │   ├── controller
@@ -191,19 +194,32 @@ FE → POST /api/loan/request-compare-loan
   └── Bucket4j + Redis, 클라이언트(IP)당 초당 20건 초과 시 429 (인스턴스 수와 무관)
          │
          ▼
-  LoanLimitService.requestCompareLoan()
-  ├── Redis 분산 락 (userId + loanType, 대기 0초) — 동시 중복 요청 차단
-  ├── 진행 중 조회(PENDING / IN_PROGRESS) 존재 여부 확인 → 있으면 거절
-  ├── Strategy 선택 (대출유형별) → validate()
-  ├── 외부데이터 조회 (Nice DNR, KB시세 등 — 필요한 유형만)
-  ├── 조회 가능 금융사 선정
-  │     ├── strategy.getSupportedBanks()       : 대출유형별 지원 금융사 (코드 레벨)
-  │     └── strategy.filterAvailablePartners() : 외부데이터 실패 시 해당 금융사 동적 제외
-  ├── strategy.toAdaptorRequest() — 금융사 전송용 공통 요청 DTO 생성
-  └── PersistenceService.createLoanLimitInquiry()      ◀ [Tx 0] 짧은 트랜잭션
-        ├── LoanLimitInquiry INSERT (inquiryNo 채번, PENDING)
-        ├── LoanLimitInquiryCreatedEvent 발행 (Spring 이벤트)
-        └── COMMIT 후 inquiryNo 포함 즉시 응답
+  LoanLimitService.requestCompareLoan()               ※ 하루 1회 제한: dedup_key = userId:loanType:yyyyMMdd (unique)
+  ├── dedup_key 사전 조회 — 이미 있으면 락·외부 조회 비용 없이 즉시 거절
+  │
+  ├── [1차 · 평상시] Redis 분산 락 (userId + loanType, 대기 0초) — 동시 중복 요청 차단
+  │   └── LoanLimitInquiryCreator.processWithRedisLock()
+  │         ├── DispatchPlanner.plan()                   ※ 2차 경로와 공유
+  │         │     ├── Strategy 선택 (대출유형별) → validate()
+  │         │     ├── 외부데이터 조회 (Nice DNR, KB시세 등 — 필요한 유형만)
+  │         │     ├── 조회 가능 금융사 선정
+  │         │     │     ├── strategy.getSupportedBanks()       : 대출유형별 지원 금융사 (코드 레벨)
+  │         │     │     └── strategy.filterAvailablePartners() : 외부데이터 실패 시 해당 금융사 동적 제외
+  │         │     └── strategy.toAdaptorRequest() — 금융사 전송용 공통 요청 DTO 생성
+  │         └── PersistenceService.createLoanLimitInquiry()  ◀ [Tx 0] 짧은 트랜잭션
+  │               ├── LoanLimitInquiry INSERT (inquiryNo 채번, PENDING, dedup_key 저장)
+  │               │     └── 락을 우회한 동시 요청은 여기서 unique 위반 → "오늘은 이미 한도조회를 진행했습니다"
+  │               ├── LoanLimitInquiryCreatedEvent 발행 (Spring 이벤트)
+  │               └── COMMIT 후 inquiryNo 포함 즉시 응답
+  │
+  └── [2차 · Redis 장애 시] 락 획득 단계에서 RedisException → LockUnavailableException 일 때만 전환
+      (락을 못 잡은 "처리 중" 상태와는 구분 — 그 경우는 즉시 거절)
+      └── LoanLimitInquiryCreator.processWithDbClaim()  ※ 외부 조회 전에 unique 로 먼저 선점
+            ├── ClaimService.claim()                   ◀ [Tx REQUIRES_NEW] ACCEPTED 행 INSERT 후 즉시 COMMIT
+            │     └── 중복이면 unique 위반 → 외부 조회 없이 거절 (inquiryNo는 Redis 없는 UUID 채번)
+            ├── DispatchPlanner.plan()                 (위와 동일, 트랜잭션 밖)
+            ├── PersistenceService.completeInquiry()   ◀ [Tx 0] ACCEPTED→PENDING (CAS) + 요청정보 반영 + 이벤트 발행
+            └── 2~3단계 실패 시 ClaimService.abort()    ◀ ACCEPTED→FAILED + dedup_key 해제 → 당일 재조회 허용
          │
          ▼ @TransactionalEventListener(AFTER_COMMIT)
   LoanLimitEventHandler.handleInquiryCreated()
@@ -237,6 +253,7 @@ FE → POST /api/loan/request-compare-loan
         └── FAILED가 아니면 완료 이벤트 Outbox INSERT (LOAN_LIMIT_COMPLETED) — 같은 트랜잭션, 원자적
 
       ※ ①②③ 어디서든 예외 발생 시 markFailed()로 Inquiry를 FAILED 처리 (best-effort)
+      ※ FAILED가 되면 dedup_key가 null로 해제되어 당일 재조회 가능 (SUCCESS / PARTIAL_SUCCESS는 유지 → 하루 1회)
       ※ ①③은 별도 빈(PersistenceService)으로 분리 — 같은 클래스 내부 호출은 AOP 프록시를 우회해 @Transactional이 무효화됨
          │
          ▼ @TransactionalEventListener(AFTER_COMMIT)
@@ -363,7 +380,8 @@ LoanLimitResultAdaptorFactory  partnerCode → 콜백 수신 Adaptor
 
 ```
 LoanLimitSenderService        → 트랜잭션 없이 팬아웃 오케스트레이션
-LoanLimitInquiryPersistenceService → 최초 INSERT / preSave / applyResults / markFailed 각각 짧은 트랜잭션
+LoanLimitInquiryClaimService → claim / abort (REQUIRES_NEW, Redis 장애 시 DB 선점)
+LoanLimitInquiryPersistenceService → 최초 INSERT(createLoanLimitInquiry) · 완료(completeInquiry) / preSave / applyResults / markFailed 각각 짧은 트랜잭션
 LoanLimitCounterService       → 콜백 카운트 증가만 REQUIRES_NEW
 OutboxEventService            → 즉시발행(REQUIRES_NEW) / 배치 결과 반영(REQUIRES_NEW)
 ```
@@ -1550,8 +1568,13 @@ CB 상태 전환·Retry·Rate Limiter 이벤트는 각각 `CircuitBreakerEventLi
 
 | 영역 | 테스트 클래스 | 검증 항목 |
 |---|---|---|
-| 한도조회 (loan) | LoanLimitServiceTest | 한도조회 요청 비즈니스 로직 (중복 요청 방어, Strategy 연동) |
-| | LoanLimitInquiryPersistenceServiceTest | 최초 INSERT / 선저장 / 결과반영 / FAILED 처리 각 트랜잭션 구간 |
+| 한도조회 (loan) | LoanLimitServiceTest | 중복 방어 오케스트레이션 (dedup_key 사전 조회 → Redis 락 → 장애 시 DB 선점 전환) |
+| | LoanLimitInquiryCreatorTest | Redis 락 경로 / DB 선점 경로 (unique 위반 변환, 실패 시 abort) |
+| | LoanLimitDispatchPlannerTest | 검증 · 외부 데이터 · 금융사 선정 |
+| | LoanLimitInquiryClaimServiceTest | claim / abort, REQUIRES_NEW |
+| | LoanLimitInquiryPersistenceServiceTest | 최초 INSERT·완료 / 선저장 / 결과반영 / FAILED 처리 각 트랜잭션 구간 |
+| | LoanLimitInquiryTest | dedupKeyOf, FAILED 시 슬롯 해제 |
+| | LoanLimitInquiryRepositoryTest | dedup_key unique, 동시 선점, transit / failIfAccepted CAS (H2) |
 | | LoanLimitEventHandlerTest | AFTER_COMMIT 팬아웃 제출, executor 포화 시 보상 처리 |
 | | LoanLimitSenderServiceTest | 비동기 팬아웃 및 fallback(CB_OPEN / RATE_LIMIT / BULKHEAD / THREAD_POOL_EXHAUSTED) 상태 처리 |
 | | LoanLimitResultServiceTest, LoanLimitCounterServiceTest | 콜백 수신, 중복·처리불가 skip, 카운트 원자적 증가, 감사 로그 INSERT |
