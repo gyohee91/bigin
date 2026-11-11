@@ -43,7 +43,9 @@ import java.util.stream.Collectors;
  * 커넥션 점유시간이 같이 늘어나고, 그만큼 더 많은 동시 커넥션이 필요해지는 피드백 루프가 생겨
  * Hikari 풀이 고갈되는 근본 원인이었다.</p>
  *
- * <p>이 클래스는 DB 트랜잭션이 필요한 두 구간(선저장/결과반영)만 짧게 분리해서 제공한다.
+ * <p>이 클래스는 DB 트랜잭션이 필요한 구간(최초 접수 / 선저장 / 결과반영 / 실패 처리)만 짧게 분리해서 제공한다.
+ * 최초 접수는 Redis 락 경로의 {@link #createLoanLimitInquiry}와 DB 선점 경로의 {@link #completeInquiry}
+ * 두 가지다.
  * 파트너 팬아웃 대기(join)는 {@link LoanLimitSenderService#inquiry}에서 트랜잭션 없이 수행되므로
  * 그 구간 동안은 Hikari 커넥션을 전혀 점유하지 않는다.</p>
  *
@@ -218,7 +220,11 @@ public class LoanLimitInquiryPersistenceService {
     }
 
     /**
-     * 0단계: 한도조회 이력(Inquiry) 최초 INSERT 트랜잭션 (짧게, commit).
+     * 0단계(Redis 락 경로): 한도조회 이력(Inquiry) 최초 INSERT 트랜잭션 (짧게, commit).
+     *
+     * <p>{@code dedupKey} 를 함께 저장하므로, 락을 우회해 들어온 동시 요청은 이 INSERT 에서
+     * unique 위반({@code DataIntegrityViolationException})으로 걸러진다. 변환은 호출자가 한다.
+     * Redis 장애 시의 접수는 {@link #completeInquiry}를 사용한다.</p>
      *
      * <p>사용자 요청을 받아 {@link LoanLimitInquiry} 로우 하나만 생성해 즉시 커밋한다.
      * 파트너별 Result/ProductResult 선저장은 여기서 하지 않는다 - 그건 {@link #preSave}가
@@ -268,6 +274,15 @@ public class LoanLimitInquiryPersistenceService {
         return LoanLimitInquiryResponse.from(inquiry);
     }
 
+    /**
+     * 0단계(DB 선점 경로): 선점해 둔 ACCEPTED 건을 PENDING 으로 완료하고 팬아웃 이벤트를 발행한다.
+     *
+     * <p>{@link LoanLimitInquiryClaimService#claim}으로 만든 최소 행에 대해,
+     * ① {@code transit(ACCEPTED→PENDING)} CAS 로 상태를 확정하고 ② 요청 정보를 채운 뒤
+     * ③ {@link LoanLimitInquiryCreatedEvent}를 발행한다. 이후 흐름은 {@link #createLoanLimitInquiry}와 동일하다.</p>
+     *
+     * @throws InvalidRequestException CAS 가 0건일 때 - 이미 다른 주체(장애 복구 배치 등)가 FAILED 로 돌린 경우
+     */
     @Transactional
     public LoanLimitInquiryResponse completeInquiry(
             String inquiryNo,
@@ -275,7 +290,7 @@ public class LoanLimitInquiryPersistenceService {
             List<PartnerCode> activePartnerCodes,
             LoanLimitAdaptorRequest adaptorRequest
     ) {
-        // 스윕퍼가 먼저 FAILED로 돌렸으면 0건 → 중단
+        // 다른 주체(장애 복구 배치 등)가 먼저 FAILED 로 돌렸다면 0건 → 중단 (이미 슬롯이 해제된 건을 되살리지 않음)
         if (loanLimitInquiryRepository.transit(inquiryNo, InquiryStatus.ACCEPTED, InquiryStatus.PENDING) == 0) {
             throw new InvalidRequestException("요청 처리 시간이 초과되었습니다. 다시 시도해 주세요.");
         }

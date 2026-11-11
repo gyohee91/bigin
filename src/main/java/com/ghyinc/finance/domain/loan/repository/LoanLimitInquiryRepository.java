@@ -27,10 +27,17 @@ public interface LoanLimitInquiryRepository extends JpaRepository<LoanLimitInqui
 
     Optional<LoanLimitInquiry> findByInquiryNo(@Param("inquiryNo") String inquiryNo);
 
+    /**
+     * 당일 조회 슬롯 사용 여부. FAILED 로 슬롯이 해제된 건은 {@code dedup_key} 가 null 이라 포함되지 않는다.
+     * 빠른 사전 확인용이며, 정합성은 {@code uk_inquiry_dedup_key} unique 제약이 보장한다.
+     */
     boolean existsByDedupKey(String dedupKey);
 
     /**
-     * 완료: transit(inquiryNo, ACCEPTED, PENDING)
+     * 상태 CAS 전이. 현재 상태가 {@code statusFrom} 일 때만 {@code statusTo} 로 바꾼다.
+     * 예) 선점 완료: {@code transit(inquiryNo, ACCEPTED, PENDING)}
+     *
+     * @return 갱신 건수. 0 이면 이미 다른 주체가 상태를 바꾼 것이므로 호출자는 중단해야 한다.
      */
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
@@ -44,6 +51,12 @@ public interface LoanLimitInquiryRepository extends JpaRepository<LoanLimitInqui
             @Param("statusTo") InquiryStatus statusTo
     );
 
+    /**
+     * 선점 반납. ACCEPTED 인 건만 FAILED 로 바꾸고 {@code dedup_key} 를 비워 당일 재조회를 허용한다.
+     * 벌크 UPDATE 는 엔티티의 {@code updateInquiryStatus} 를 거치지 않으므로 dedup_key 해제를 쿼리에서 직접 한다.
+     *
+     * @return 갱신 건수 (이미 PENDING 이상으로 진행된 건은 0)
+     */
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
            UPDATE LoanLimitInquiry t

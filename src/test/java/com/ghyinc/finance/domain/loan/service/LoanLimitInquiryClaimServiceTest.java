@@ -40,7 +40,7 @@ class LoanLimitInquiryClaimServiceTest {
     @Test
     @DisplayName("claim - Redis 에 의존하지 않는 채번(generateGuid)으로 inquiryNo 를 만들고 ACCEPTED 행을 즉시 flush 하여 반환")
     void claim_savesAcceptedInquiryAndReturnsInquiryNo() {
-        given(generator.generateGuid("LL")).willReturn("LL20260101abcdef");
+        given(generator.generate("LL")).willReturn("LL20260101abcdef");
 
         String inquiryNo = claimService.claim(1L, LoanType.PERSONAL_CREDIT, DEDUP_KEY);
 
@@ -59,7 +59,7 @@ class LoanLimitInquiryClaimServiceTest {
     @Test
     @DisplayName("claim - 접수 시점에는 개인정보(이름·CI 등)를 저장하지 않는다")
     void claim_doesNotStorePersonalInformation() {
-        given(generator.generateGuid("LL")).willReturn("LL20260101abcdef");
+        given(generator.generate("LL")).willReturn("LL20260101abcdef");
 
         claimService.claim(1L, LoanType.PERSONAL_CREDIT, DEDUP_KEY);
 
@@ -76,7 +76,7 @@ class LoanLimitInquiryClaimServiceTest {
     @DisplayName("claim - dedup_key unique 위반은 변환 없이 호출자에게 전파 (호출자가 중복 여부를 판정)")
     void claim_propagatesDataIntegrityViolation() {
         DataIntegrityViolationException violation = new DataIntegrityViolationException("uk_inquiry_dedup_key");
-        given(generator.generateGuid("LL")).willReturn("LL20260101abcdef");
+        given(generator.generate("LL")).willReturn("LL20260101abcdef");
         given(loanLimitInquiryRepository.saveAndFlush(any(LoanLimitInquiry.class))).willThrow(violation);
 
         assertThatThrownBy(() -> claimService.claim(1L, LoanType.PERSONAL_CREDIT, DEDUP_KEY))
