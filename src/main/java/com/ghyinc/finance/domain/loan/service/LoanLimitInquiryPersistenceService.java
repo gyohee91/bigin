@@ -234,7 +234,8 @@ public class LoanLimitInquiryPersistenceService {
     public LoanLimitInquiryResponse createLoanLimitInquiry(
             LoanLimitRequest request,
             List<PartnerCode> activePartnerCodes,
-            LoanLimitAdaptorRequest adaptorRequest
+            LoanLimitAdaptorRequest adaptorRequest,
+            String dedupKey
     ) {
         // LoanLimitInquiry INSERT: 조회 식별번호(inquiryNo) 채번 후 저장
         LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
@@ -249,6 +250,7 @@ public class LoanLimitInquiryPersistenceService {
                 .carNo(request.carNo())
                 .agreePersonalCreditInfo(request.agreePersonalCreditInfo())
                 .agreePersonalCreditTime(request.agreePersonalCreditTime())
+                .dedupKey(dedupKey)
                 .build();
 
         loanLimitInquiryRepository.save(inquiry);
@@ -263,6 +265,32 @@ public class LoanLimitInquiryPersistenceService {
                         .build()
         );
 
+        return LoanLimitInquiryResponse.from(inquiry);
+    }
+
+    @Transactional
+    public LoanLimitInquiryResponse completeInquiry(
+            String inquiryNo,
+            LoanLimitRequest request,
+            List<PartnerCode> activePartnerCodes,
+            LoanLimitAdaptorRequest adaptorRequest
+    ) {
+        // 스윕퍼가 먼저 FAILED로 돌렸으면 0건 → 중단
+        if (loanLimitInquiryRepository.transit(inquiryNo, InquiryStatus.ACCEPTED, InquiryStatus.PENDING) == 0) {
+            throw new InvalidRequestException("요청 처리 시간이 초과되었습니다. 다시 시도해 주세요.");
+        }
+        LoanLimitInquiry inquiry = loanLimitInquiryRepository.findByInquiryNo(inquiryNo).orElseThrow();
+        inquiry.applyRequest(request);
+
+        // 트랜잭션 커밋 후 비동기 전송을 위해 Spring 이벤트를 발행한다.
+        // AFTER_COMMIT 이후 처리를 보장하기 위해 직접 호출 대신 이벤트를 사용한다
+        applicationEventPublisher.publishEvent(
+                LoanLimitInquiryCreatedEvent.builder()
+                        .id(inquiry.getId())
+                        .activePartnerCodes(activePartnerCodes)
+                        .adaptorRequest(adaptorRequest)
+                        .build()
+        );
         return LoanLimitInquiryResponse.from(inquiry);
     }
 }

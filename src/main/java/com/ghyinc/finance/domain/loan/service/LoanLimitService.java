@@ -1,14 +1,11 @@
 package com.ghyinc.finance.domain.loan.service;
 
-import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
 import com.ghyinc.finance.domain.loan.dto.*;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
-import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
-import com.ghyinc.finance.domain.loan.enums.PartnerCode;
-import com.ghyinc.finance.domain.loan.factory.LoanLimitStrategyFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepository;
 import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
+import com.ghyinc.finance.global.exception.LockUnavailableException;
 import com.ghyinc.finance.global.lock.RedisLockExecutor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,9 +15,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.EnumSet;
-import java.util.List;
-import java.util.stream.Collectors;
+import java.time.LocalDate;
 
 /**
  * 한도조회 요청 서비스
@@ -58,9 +53,8 @@ import java.util.stream.Collectors;
 public class LoanLimitService {
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
     private final LoanLimitProductResultRepository loanLimitProductResultRepository;
-    private final LoanLimitStrategyFactory strategyFactory;
     private final RedisLockExecutor lockExecutor;
-    private final LoanLimitInquiryPersistenceService persistenceService;
+    private final LoanLimitInquiryCreator inquiryCreator;
 
     /**
      * 비교대출 한도조회 요청을 처리한다.
@@ -89,57 +83,26 @@ public class LoanLimitService {
      * @throws InvalidRequestException 진행 중인 조회 존재, 조회 가능 금융사 없음
      */
     public LoanLimitInquiryResponse requestCompareLoan(LoanLimitRequest request) {
+        String dedupKey = LoanLimitInquiry.dedupKeyOf(request.userId(), request.loanType(), LocalDate.now());
+        if (loanLimitInquiryRepository.existsByDedupKey(dedupKey)) {
+            throw new InvalidRequestException("오늘은 이미 한도조회를 진행했습니다.");
+        }
+
         // Redis 분산 락으로 중복 요청 방어
         String lockKey = "loan:request:lock:" + request.userId() + ":" + request.loanType();
-        return lockExecutor.execute(lockKey, 0, 15,
-                () -> {
-                    // 락 획득 후 중복 체크
-                    // 진행 중인 조회가 있으면 중복 요청 방지 (당일 동일 유형 재조회 제한)
-                    boolean hasInProgress = loanLimitInquiryRepository.existsByUserIdAndLoanTypeAndStatusIn(
-                            request.userId(),
-                            request.loanType(),
-                            EnumSet.of(InquiryStatus.PENDING, InquiryStatus.IN_PROGRESS)
-                    );
-                    if(hasInProgress) {
-                        throw new InvalidRequestException("진행 중인 한도조회가 있습니다.");
-                    }
-
-                    LoanLimitStrategy strategy = strategyFactory.getStrategy(request.loanType());
-                    // 유효성 검증 (각 상품 type 별)
-                    strategy.validate(request);
-
-                    // External 데이터 조회 - Strategy가 알아서 처리
-                    ExternalDataContext context = strategy.requiresExternalData()
-                            ? strategy.fetchExternalData(request)
-                            : ExternalDataContext.empty();
-
-                    // Strategy: 대출 유형상 가능한 금융사(코드 레벨 고정)
-                    // DB      : 현재 활성화된 은행 (운영 팀이 배포 없이 제어)
-                    List<PartnerCode> activePartnerCodes = strategy.getSupportedBanks();
-                    if(activePartnerCodes.isEmpty())
-                        throw new InvalidRequestException("현재 조회 가능한 금융사가 없습니다");
-
-                    // 외부 데이터 실패 시 진행 가능한 금융사만 필터링
-                    List<PartnerCode> availablePartnerCodes = strategy.filterAvailablePartners(activePartnerCodes, context);
-                    if(availablePartnerCodes.isEmpty()) {
-                        throw new InvalidRequestException(
-                                "현재 조회 가능한 금융사가 없습니다. " +
-                                        context.errors().values().stream()
-                                                .map(ExternalDataError::message)
-                                                .collect(Collectors.joining(", "))
-                        );
-                    }
-
-                    // 어댑터 요청 DTO 변환 (Strategy)
-                    // 대출 유형별 전략으로 금융사 전송용 요청 DTO 생성
-                    LoanLimitAdaptorRequest adaptorRequest = strategy.toAdaptorRequest(request, context);
-
-                    // 실제 INSERT + 이벤트 발행까지 락 안에서 끝낸다
-                    return persistenceService.createLoanLimitInquiry(request, activePartnerCodes, adaptorRequest);
-                },
-                () -> {
-                    throw new InvalidRequestException("요청이 처리 중입니다. 잠시 후 다시 시도해 주세요.");
-                });
+        try {
+            // 1차: Redis 락
+            return lockExecutor.execute(lockKey, 0, 15,
+                    () -> inquiryCreator.processWithRedisLock(request, dedupKey),
+                    () -> {
+                        throw new InvalidRequestException("요청이 처리 중입니다. 잠시 후 다시 시도해 주세요.");
+                    });
+        } catch (LockUnavailableException e) {
+            // Redis 장애 시 DB 원자적 선점으로 전환
+            log.warn("[한도조회] 락 불가(Redis 장애), DB 선점으로 전환 userId={}", request.userId());
+            // 2차: DB 선점
+            return inquiryCreator.processWithDbClaim(request, dedupKey);
+        }
     }
 
     @Transactional(readOnly = true)

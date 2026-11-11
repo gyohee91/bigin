@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.entity;
 
+import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.JobType;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
@@ -8,12 +9,15 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.Comment;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
 @Entity
 @Table(
+        uniqueConstraints = @UniqueConstraint(name = "uk_inquiry_dedup_key", columnNames = "dedup_key"),
         indexes = {
                 @Index(
                         name = "idx_inquiry_user_id_loan_type_status",
@@ -86,8 +90,14 @@ public class LoanLimitInquiry extends BaseTimeEntity {
     @Builder.Default
     private List<LoanLimitProductResult> productResults = new ArrayList<>();
 
+    @Comment("중복 방지 키. 활성 건에만 값이 있음")
+    private String dedupKey;    // userId:loanType:yyyyMMdd. 활성 건에만 값이 있다.
+
     public void updateInquiryStatus(InquiryStatus status) {
         this.status = status;
+        if (status == InquiryStatus.FAILED) {
+            this.dedupKey = null;   // 슬롯 해제: 당일 재시도 허용
+        }
     }
 
     public void addResult(LoanLimitResult result) {
@@ -120,5 +130,20 @@ public class LoanLimitInquiry extends BaseTimeEntity {
 
     public boolean isAllResultReceived() {
         return totalProductCount > 0 && successProductCount >= totalProductCount;
+    }
+
+    public void applyRequest(LoanLimitRequest request) {
+        this.name = request.name();
+        this.ci = request.ci();
+        this.jobType = request.jobType();
+        this.jobName = request.jobName();
+        this.joinDate = request.joinDate();
+        this.carNo = request.carNo();
+        this.agreePersonalCreditInfo = request.agreePersonalCreditInfo();
+        this.agreePersonalCreditTime = request.agreePersonalCreditTime();
+    }
+
+    public static String dedupKeyOf(Long userId, LoanType loanType, LocalDate date) {
+        return userId + ":" + loanType + ":" + date.format(DateTimeFormatter.BASIC_ISO_DATE);
     }
 }
