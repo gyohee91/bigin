@@ -107,7 +107,7 @@ com.ghyinc.finance
 │   │   ├── strategy                           # 대출유형별 전략 (Personal / Auto / Mortgage / Business)
 │   │   ├── entity                             # LoanLimitInquiry(Aggregate Root) / LoanLimitResult / LoanLimitProductResult / Partner / Product / LoanApply ...
 │   │   ├── repository                         # Spring Data JPA
-│   │   ├── dto                                # 요청/응답 DTO, PreparedFanout(선저장 결과), PartnerDispatchPlan(전송 계획), ExternalDataContext
+│   │   ├── dto                                # 요청/응답 DTO, PreparedFanout(선저장 결과), ExternalDataContext
 │   │   └── enums                              # InquiryStatus / PartnerInquiryStatus / PartnerCode / LoanType ...
 │   ├── notification
 │   │   ├── controller
@@ -128,12 +128,6 @@ com.ghyinc.finance
 │   │   ├── service
 │   │   │   └── AuditLogWriter.java                 # 호출자 트랜잭션에서 audit_log 직접 INSERT (Kafka 미경유)
 │   │   └── entity / repository
-│   ├── kcbcredit                              # KCB 신용변동 파일 수신 · Spring Batch 처리
-│   │   ├── scheduler
-│   │   │   └── KcbFileIngestScheduler.java         # 매일 03:00, ShedLock + 파일명 이력 기반 멱등성 가드
-│   │   ├── file                                # KcbFilePoller / KcbFileProperties (신규 파일 탐색)
-│   │   ├── batch                               # Job/Step 설정, Reader 레이아웃(고정폭), Processor, Writer, JobListener
-│   │   └── dto / entity / enums / repository
 │   ├── auth                                   # JWT 로그인 · 토큰 재발급 (controller / service / security / dto)
 │   ├── user                                   # 회원 (Member, MemberRole)
 │   └── external                               # 외부 기관 API
@@ -194,32 +188,25 @@ FE → POST /api/loan/request-compare-loan
   └── Bucket4j + Redis, 클라이언트(IP)당 초당 20건 초과 시 429 (인스턴스 수와 무관)
          │
          ▼
-  LoanLimitService.requestCompareLoan()               ※ 하루 1회 제한: dedup_key = userId:loanType:yyyyMMdd (unique)
+  LoanLimitService.requestCompareLoan()
   ├── dedup_key 사전 조회 — 이미 있으면 락·외부 조회 비용 없이 즉시 거절
-  │
-  ├── [1차 · 평상시] Redis 분산 락 (userId + loanType, 대기 0초) — 동시 중복 요청 차단
-  │   └── LoanLimitInquiryCreator.processWithRedisLock()
-  │         ├── DispatchPlanner.plan()                   ※ 2차 경로와 공유
-  │         │     ├── Strategy 선택 (대출유형별) → validate()
-  │         │     ├── 외부데이터 조회 (Nice DNR, KB시세 등 — 필요한 유형만)
-  │         │     ├── 조회 가능 금융사 선정
-  │         │     │     ├── strategy.getSupportedBanks()       : 대출유형별 지원 금융사 (코드 레벨)
-  │         │     │     └── strategy.filterAvailablePartners() : 외부데이터 실패 시 해당 금융사 동적 제외
-  │         │     └── strategy.toAdaptorRequest() — 금융사 전송용 공통 요청 DTO 생성
-  │         └── PersistenceService.createLoanLimitInquiry()  ◀ [Tx 0] 짧은 트랜잭션
-  │               ├── LoanLimitInquiry INSERT (inquiryNo 채번, PENDING, dedup_key 저장)
-  │               │     └── 락을 우회한 동시 요청은 여기서 unique 위반 → "오늘은 이미 한도조회를 진행했습니다"
-  │               ├── LoanLimitInquiryCreatedEvent 발행 (Spring 이벤트)
-  │               └── COMMIT 후 inquiryNo 포함 즉시 응답
-  │
-  └── [2차 · Redis 장애 시] 락 획득 단계에서 RedisException → LockUnavailableException 일 때만 전환
-      (락을 못 잡은 "처리 중" 상태와는 구분 — 그 경우는 즉시 거절)
-      └── LoanLimitInquiryCreator.processWithDbClaim()  ※ 외부 조회 전에 unique 로 먼저 선점
-            ├── ClaimService.claim()                   ◀ [Tx REQUIRES_NEW] ACCEPTED 행 INSERT 후 즉시 COMMIT
-            │     └── 중복이면 unique 위반 → 외부 조회 없이 거절 (inquiryNo는 Redis 없는 UUID 채번)
-            ├── DispatchPlanner.plan()                 (위와 동일, 트랜잭션 밖)
-            ├── PersistenceService.completeInquiry()   ◀ [Tx 0] ACCEPTED→PENDING (CAS) + 요청정보 반영 + 이벤트 발행
-            └── 2~3단계 실패 시 ClaimService.abort()    ◀ ACCEPTED→FAILED + dedup_key 해제 → 당일 재조회 허용
+  ├── Redis 분산 락 (userId + loanType, 대기 0초) — 동시 중복 요청 차단, 못 잡으면 "처리 중" 거절
+  └── LoanLimitInquiryCreator.processWithRedisLock()
+        ├── DispatchPlanner.plan()
+        │     ├── Strategy 선택 (대출유형별) → validate()
+        │     ├── 외부데이터 조회 (Nice DNR, KB시세 등 — 필요한 유형만)
+        │     ├── 조회 가능 금융사 선정
+        │     │     ├── strategy.getSupportedBanks()       : 대출유형별 지원 금융사 (코드 레벨)
+        │     │     └── strategy.filterAvailablePartners() : 외부데이터 실패 시 해당 금융사 동적 제외
+        │     └── strategy.toAdaptorRequest() — 금융사 전송용 공통 요청 DTO 생성
+        └── PersistenceService.createLoanLimitInquiry()  ◀ [Tx 0] 짧은 트랜잭션
+              ├── LoanLimitInquiry INSERT (inquiryNo 채번, PENDING, dedup_key 저장)
+              │     └── 락을 우회한 동시 요청은 여기서 unique 위반 → "오늘은 이미 한도조회를 진행했습니다"
+              ├── LoanLimitInquiryCreatedEvent 발행 (Spring 이벤트)
+              └── COMMIT 후 inquiryNo 포함 즉시 응답
+
+      ※ Redis 장애로 락 획득이 불가하면 DB 선점(processWithDbClaim)으로 전환 —
+        ACCEPTED 행을 먼저 INSERT해 dedup_key unique로 선점, 실패 시 FAILED + 키 해제
          │
          ▼ @TransactionalEventListener(AFTER_COMMIT)
   LoanLimitEventHandler.handleInquiryCreated()
@@ -254,6 +241,7 @@ FE → POST /api/loan/request-compare-loan
 
       ※ ①②③ 어디서든 예외 발생 시 markFailed()로 Inquiry를 FAILED 처리 (best-effort)
       ※ FAILED가 되면 dedup_key가 null로 해제되어 당일 재조회 가능 (SUCCESS / PARTIAL_SUCCESS는 유지 → 하루 1회)
+      ※ 프로세스 장애로 ACCEPTED/PENDING 등에 멈춘 건을 FAILED로 되돌리는 복구 배치는 미구현 (설계만 존재)
       ※ ①③은 별도 빈(PersistenceService)으로 분리 — 같은 클래스 내부 호출은 AOP 프록시를 우회해 @Transactional이 무효화됨
          │
          ▼ @TransactionalEventListener(AFTER_COMMIT)
@@ -330,8 +318,6 @@ loan-limit-completed   loan → notification 도메인 간 이벤트 전달
 notification.send      notification 도메인 내부 비동기 발송 처리
                         Notification INSERT 후 실제 발송 분리
 
-※ 감사 로그(전송/콜백)는 Kafka 토픽을 사용하지 않습니다. 소비자가 audit_log 적재 하나뿐이라
-   같은 트랜잭션에서 audit_log에 직접 INSERT 합니다 (아래 "감사 로그와 SLA 지표" 참고).
 ```
 
 Outbox를 거치는 토픽은 `aggregateType`으로 분기하여 발행합니다.
@@ -402,20 +388,20 @@ REST   → RestApiClient
 
 용도가 다른 작업이 한 풀에서 서로를 밀어내지 않도록 스레드풀을 5개로 분리했습니다.
 
-| Executor | core / max / queue | 거절 시 동작 | 역할 |
-|---|---|---|---|
-| `loanLimitExecutor` | 15 / 40 / 60 | `AbortPolicy` → 호출부에서 FAILED 보상 | 한도조회 팬아웃 오케스트레이션 (조회 1건이 팬아웃 완료까지 스레드 1개 점유) |
-| `partnerApiExecutor` | 300 / 400 / 50 | `AbortPolicy` → `THREAD_POOL_EXHAUSTED` fallback | 금융사별 병렬 API 호출 (I/O 대기 전용) |
-| `compensationExecutor` | 2 / 5 / 200 | 제출 실패 시 로그만 남기고 스킵 (best-effort) | `loanLimitExecutor` 포화 시 Inquiry FAILED 전환 전용 |
-| `outboxPublishExecutor` | 20 / 20 / 200 | 즉시발행 스킵 → PENDING으로 남아 배치가 처리 | Outbox 즉시 Kafka 발행 |
-| `outboxRetryExecutor` | 10 / 10 / 100 | `AbortPolicy` | Outbox 배치 재시도 병렬 발행 |
+| Executor | 거절 시 동작 | 역할 |
+|---|---|---|
+| `loanLimitExecutor` | `AbortPolicy` → 호출부에서 FAILED 보상 | 한도조회 팬아웃 오케스트레이션 (조회 1건이 팬아웃 완료까지 스레드 1개 점유) |
+| `partnerApiExecutor` | `AbortPolicy` → `THREAD_POOL_EXHAUSTED` fallback | 금융사별 병렬 API 호출 (I/O 대기 전용) |
+| `compensationExecutor` | 제출 실패 시 로그만 남기고 스킵 (best-effort) | `loanLimitExecutor` 포화 시 Inquiry FAILED 전환 전용 |
+| `outboxPublishExecutor` | 즉시발행 스킵 → PENDING으로 남아 배치가 처리 | Outbox 즉시 Kafka 발행 |
+| `outboxRetryExecutor` | `AbortPolicy` | Outbox 배치 재시도 병렬 발행 |
 
 **사이징 근거**
 
-- `partnerApiExecutor`는 Little's Law로 산정했습니다. 초당 20건 × 금융사 49곳 팬아웃 × 평균 응답 0.3초 ≈ 294 → `core=300`, `max=400`(HTTP 커넥션 풀 `maxTotal`과 동일). 큐는 짧은 버스트만 흡수하도록 작게(50) 두었습니다.
-- `loanLimitExecutor`는 팬아웃 대기 동안 스레드를 점유하는 구조라 `max`가 곧 동시에 진행 가능한 한도조회 수입니다. DB 커넥션 풀(`maximum-pool-size=150`)은 이 값에 콜백·Outbox 배치 등 다른 트랜잭션 경로 여유분을 더해서 잡았습니다.
+- `partnerApiExecutor`는 Little's Law(동시 처리량 ≈ 초당 요청 수 × 팬아웃 금융사 수 × 평균 응답시간)로 규모를 잡았고, 상한은 금융사 HTTP 커넥션 풀 크기와 맞췄습니다. 큐는 짧은 버스트만 흡수하도록 작게 두었습니다.
+- `loanLimitExecutor`는 팬아웃 대기 동안 스레드를 점유하는 구조라 최대 스레드 수가 곧 동시에 진행 가능한 한도조회 수입니다. DB 커넥션 풀은 이 값에 콜백·Outbox 배치 등 다른 트랜잭션 경로의 여유분을 더해서 잡았습니다.
 - `compensationExecutor`는 의도적으로 작게 두었습니다. `loanLimitExecutor`가 포화된 뒤에는 유입되는 모든 요청이 FAILED 보상 경로(새 트랜잭션, 새 DB 커넥션)를 동시에 타기 때문에, 이 경로를 요청 스레드에서 그대로 실행하면 executor 포화가 곧바로 DB 커넥션 풀 고갈로 번집니다. 전용 소형 풀로 위임해 **보상용으로 동시에 열리는 커넥션 수의 상한을 하드 캡**으로 걸었습니다.
-- `outboxRetryExecutor`는 `core = max`로 맞췄습니다. `ThreadPoolExecutor`는 bounded queue가 가득 차기 전에는 `core`를 넘겨 스레드를 늘리지 않으므로, `core`가 작으면 `max`가 있어도 실제 동시성이 `core`로 고정됩니다.
+- `outboxRetryExecutor`는 core와 max를 같게 맞췄습니다. `ThreadPoolExecutor`는 bounded queue가 가득 차기 전에는 core를 넘겨 스레드를 늘리지 않으므로, core가 작으면 max가 있어도 실제 동시성이 core로 고정됩니다.
 - `outboxPublishExecutor`를 파트너 API용 풀과 분리한 이유는 Kafka 장애 시 발행 스레드가 블로킹되더라도 금융사 호출 경로에 영향을 주지 않도록 하기 위해서입니다. 포화되면 발행을 건너뛰고 Outbox가 `PENDING`으로 남아 배치 재시도가 처리하므로 데이터는 유실되지 않습니다.
 
 풀이 포화되면 큐잉으로 지연을 숨기지 않고 `AbortPolicy`로 즉시 실패시킵니다. 포화 상태를 호출부에 빠르게 알려 장애를 조기에 드러내는 쪽을 택했습니다. 초기값은 계산으로 잡되, 실제 부하 테스트로 처리량이 꺾이는 지점을 확인해 조정합니다.
@@ -424,9 +410,9 @@ REST   → RestApiClient
 @Bean(name = "partnerApiExecutor")
 public Executor partnerApiExecutor() {
     ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-    executor.setCorePoolSize(300);   // Little's Law: 20 req/s × 49 팬아웃 × 0.3s ≈ 294
-    executor.setMaxPoolSize(400);    // partnerConnectionManager maxTotal과 동일하게
-    executor.setQueueCapacity(50);   // 짧은 버스트만 흡수
+    executor.setCorePoolSize(...);   // Little's Law 기반 산정
+    executor.setMaxPoolSize(...);    // 금융사 HTTP 커넥션 풀(maxTotal)과 정합
+    executor.setQueueCapacity(...);  // 짧은 버스트만 흡수
     executor.setTaskDecorator(new MdcTaskDecorator());
     executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
     executor.initialize();
@@ -442,9 +428,9 @@ public Executor partnerApiExecutor() {
 
 | 지점 | 문제 | 방어 방식 |
 |---|---|---|
-| 한도조회 요청 (동일 사용자 동시 요청) | 같은 `userId + loanType`으로 조회가 중복 생성됨 | Redis 분산 락(Redisson, 대기 0초) + 진행 중(PENDING / IN_PROGRESS) 조회 존재 여부 확인 |
+| 한도조회 요청 (동일 사용자 동시 요청) | 같은 `userId + loanType`으로 조회가 중복 생성됨 | Redis 분산 락(Redisson, 대기 0초) + `dedup_key` unique 제약(하루 1회) — Redis 장애 시 DB 선점으로 전환 |
 | 팬아웃 대기 구간 | 금융사 응답을 기다리는 동안 DB 커넥션을 붙잡아 커넥션 풀 고갈 | 트랜잭션을 선저장 / 결과반영 두 구간으로 분리, 팬아웃 대기는 무트랜잭션 — [핵심 아키텍처](#architecture) |
-| Executor 포화 | 포화 후 유입되는 요청이 모두 보상 트랜잭션(새 커넥션)을 요구 | 전용 `compensationExecutor`(최대 5)로 동시 보상 수 제한 |
+| Executor 포화 | 포화 후 유입되는 요청이 모두 보상 트랜잭션(새 커넥션)을 요구 | 전용 `compensationExecutor`로 동시 보상 수 제한 |
 | 콜백 수신 (다수 금융사 동시 응답) | `LoanLimitInquiry` count Lost Update, 행 락 대기 중 커넥션 점유 | 원자적 UPDATE를 `REQUIRES_NEW`로 분리해 즉시 커밋 — [콜백 동시성 제어](#callback-concurrency) |
 | 상품 정보 캐싱 | 캐시 미스 시 다수 스레드의 중복 조회(Cache Stampede) | Redis 분산 락(Redisson) + 더블 체크 — [캐싱 전략](#caching-strategy) |
 | 인바운드 트래픽 | 멀티 인스턴스 환경에서 로컬 Rate Limiter로는 전체 TPS 제한 불가 | Redis 공유 카운터 기반 Bucket4j — [인바운드 트래픽 방어](#inbound-rate-limiting) |
