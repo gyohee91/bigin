@@ -162,7 +162,7 @@ com.ghyinc.finance
     │   ├── backoff                                 # JitteredExponentialBackOff
     │   └── dlq                                     # Kafka DLQ 처리
     │       ├── entity / repository                     # DlqEvent, DlqStatus
-    │       ├── DlqEventConsumer.java                   # DLT 토픽 수신 + Poison Pill 자동 분류
+    │       ├── DlqEventConsumer.java                   # [레거시·현재 미사용] .DLT 토픽 수신 + Poison Pill 분류
     │       ├── DlqRetryScheduler.java                  # 지수 백오프 자동 재시도
     │       └── PoisonPillClassifier.java               # Poison Pill 판별
     └── metrics                                # Micrometer 지표
@@ -1185,9 +1185,11 @@ try-catch로 감싸 어떤 상황에서도 예외를 밖으로 던지지 않도�
 대신합니다. 아직 `@RetryableTopic`으로 전환하지 않은 Consumer가 있다면 기존 DB 폴링 방식이 계속 그 Consumer를
 커버합니다.
 
-### DLT 수신 대상
+### DLT 처리 대상
 
-`DlqEventConsumer`는 `loan-limit-completed.DLT`, `notification.send.DLT` 두 토픽을 구독하며(그룹 `notification-dlq-group`), 예외 종류로 Poison Pill(→ `DEAD`, 영구 보관)과 일시 장애(→ `PENDING`, `nextRetryAt`을 지정해 자동 재시도)를 분류해 `DlqEvent`로 저장합니다. 재시도는 `DlqRetryScheduler`가 30초 주기(ShedLock)로 처리합니다. `audit.*` 토픽의 DLT는 이 컨슈머의 대상이 아닙니다.
+`loan-limit-completed`, `notification.send`의 최종 실패 메시지는 `@RetryableTopic`의 `-dlt` 토픽에서
+각 Consumer의 `@DltHandler`가 `DlqEvent(DEAD)`로 기록합니다. DEAD 건의 재처리는 자동화되어 있지 않고
+운영자가 `dlq_event`를 확인해 수동으로 처리합니다.
 
 ### Poison Pill 판별 기준
 
