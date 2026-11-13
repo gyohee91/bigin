@@ -5,6 +5,9 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import io.github.bucket4j.Bucket;
 import io.github.bucket4j.BucketConfiguration;
 import io.github.bucket4j.redis.redisson.cas.RedissonBasedProxyManager;
+import io.github.resilience4j.bulkhead.Bulkhead;
+import io.github.resilience4j.bulkhead.BulkheadFullException;
+import io.github.resilience4j.bulkhead.BulkheadRegistry;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -29,6 +32,7 @@ import java.util.function.Supplier;
 public class InboundRateLimiterFilter extends OncePerRequestFilter {
     private final RedissonBasedProxyManager<String> bucket4jProxyManager;
     private final CircuitBreakerRegistry circuitBreakerRegistry;
+    private final BulkheadRegistry bulkheadRegistry;
     private final MeterRegistry meterRegistry;
 
     // 로컬 폴백용 버킷. IP 키가 무한히 늘지 않도록 만료를 둔다
@@ -83,10 +87,19 @@ public class InboundRateLimiterFilter extends OncePerRequestFilter {
 
     private boolean tryConsume(String clientKey) {
         CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker("inboundRateLimiterRedis");
+        Bulkhead bulkhead = bulkheadRegistry.bulkhead("inboundRateLimiterRedis");
+
         try {
+            // 바깥 Bulkhead(동시 대기수 제한) → 안쪽 CircuitBreaker(실패 집계) → Redis 호출
             // Redis 호출만 감싼다. 토큰 부족(false)은 예외가 아니므로 실패로 집계되지 않는다
-            return circuitBreaker.executeSupplier(() ->
-                    bucket4jProxyManager.builder().build(clientKey, CONFIG_SUPPLIER).tryConsume(1));
+            return Bulkhead.decorateSupplier(bulkhead,
+                    CircuitBreaker.decorateSupplier(circuitBreaker, () ->
+                            bucket4jProxyManager.builder().build(clientKey, CONFIG_SUPPLIER).tryConsume(1))
+            ).get();
+        } catch (BulkheadFullException e) {
+            // Bulkhead Full
+            meterRegistry.counter("inbound.ratelimiter.fallback", "reason", "bulkhead_full").increment();
+            return localBucket(clientKey).tryConsume(1);
         } catch (CallNotPermittedException e) {
             // Circuit Breaker OPEN: Redis를 부르지 않고 바로 폴백 (타임아웃 대기 없음)
             meterRegistry.counter("inbound.ratelimiter.fallback", "reason", "circuit_open").increment();

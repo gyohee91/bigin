@@ -432,6 +432,9 @@ resilience4j:
         max-concurrent-calls: 20   # 동시 진행 허용 건수 (Bulkhead.max-concurrent-calls = max-per-route)
         max-wait-duration: 0       # 대기 없이 즉시 실패 (초과 시 즉시 BulkheadFullException)
     instances:
+      inboundRateLimiterRedis:
+        max-concurrent-calls: 20
+        max-wait-duration: 0
       KAKAO_BANK:
         base-config: default
       TOSS_BANK:

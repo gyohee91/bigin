@@ -4,6 +4,9 @@ import io.github.bucket4j.BucketConfiguration;
 import io.github.bucket4j.distributed.BucketProxy;
 import io.github.bucket4j.distributed.proxy.RemoteBucketBuilder;
 import io.github.bucket4j.redis.redisson.cas.RedissonBasedProxyManager;
+import io.github.resilience4j.bulkhead.Bulkhead;
+import io.github.resilience4j.bulkhead.BulkheadConfig;
+import io.github.resilience4j.bulkhead.BulkheadRegistry;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -18,6 +21,11 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
 import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,12 +50,14 @@ class InboundRateLimiterFilterTest {
     private static final String TARGET_URI = "/api/loan/request-compare-loan";
     private static final String CB_NAME = "inboundRateLimiterRedis";
     private static final int LOCAL_CAPACITY = 20;   // 필터의 초당 한도와 동일
+    private static final int BULKHEAD_MAX = 2;      // 테스트용 동시 Redis 호출 상한
 
     private RedissonBasedProxyManager<String> proxyManager;
     private RemoteBucketBuilder<String> bucketBuilder;
     private BucketProxy bucket;   // 모든 키에 대한 기본 버킷 (Redis 쪽 버킷 역할)
     private SimpleMeterRegistry meterRegistry;
     private CircuitBreakerRegistry circuitBreakerRegistry;
+    private BulkheadRegistry bulkheadRegistry;
     private InboundRateLimiterFilter filter;
 
     @SuppressWarnings("unchecked")
@@ -70,7 +80,12 @@ class InboundRateLimiterFilterTest {
                 .permittedNumberOfCallsInHalfOpenState(2)
                 .recordExceptions(RuntimeException.class)
                 .build());
-        filter = new InboundRateLimiterFilter(proxyManager, circuitBreakerRegistry, meterRegistry);
+        // 꽉 차면 기다리지 않고 즉시 거절 (운영: max-wait-duration 0)
+        bulkheadRegistry = BulkheadRegistry.of(BulkheadConfig.custom()
+                .maxConcurrentCalls(BULKHEAD_MAX)
+                .maxWaitDuration(Duration.ZERO)
+                .build());
+        filter = new InboundRateLimiterFilter(proxyManager, circuitBreakerRegistry, bulkheadRegistry, meterRegistry);
     }
 
     // ─── helpers ──────────────────────────────────────────────────────────────
@@ -113,6 +128,17 @@ class InboundRateLimiterFilterTest {
 
     private double fallbackCount(String reason) {
         return meterRegistry.counter("inbound.ratelimiter.fallback", "reason", reason).count();
+    }
+
+    private Bulkhead bulkhead() {
+        return bulkheadRegistry.bulkhead(CB_NAME);
+    }
+
+    /** 다른 요청이 Redis 응답을 기다리는 상황을 흉내 내 Bulkhead 허용량을 모두 점유한다. */
+    private void occupyBulkhead() {
+        for (int i = 0; i < BULKHEAD_MAX; i++) {
+            assertThat(bulkhead().tryAcquirePermission()).isTrue();
+        }
     }
 
     private CircuitBreaker circuitBreaker() {
@@ -318,5 +344,114 @@ class InboundRateLimiterFilterTest {
 
         assertThat(circuitBreaker().getState()).isEqualTo(CircuitBreaker.State.CLOSED);
         verify(bucketBuilder, org.mockito.Mockito.atLeastOnce()).build(anyString(), anyConfig());
+    }
+
+    // ─── Bulkhead (Redis 를 기다리는 스레드 수 상한) ──────────────────────────
+
+    @Test
+    @DisplayName("Bulkhead 가 가득 차면 Redis 를 호출하지 않고 즉시 로컬 폴백으로 처리")
+    void bulkheadFull_skipsRedisAndUsesLocalFallback() throws Exception {
+        occupyBulkhead();
+        clearInvocations(proxyManager);
+
+        Result result = call(request("10.0.0.1"));
+
+        assertThat(result.passed()).isTrue();
+        verify(proxyManager, never()).builder();
+        assertThat(fallbackCount("bulkhead_full")).isEqualTo(1.0);
+        assertThat(fallbackCount("redis_error")).isZero();
+        assertThat(fallbackCount("circuit_open")).isZero();
+    }
+
+    @Test
+    @DisplayName("Bulkhead 포화는 Redis 장애가 아니므로 서킷 실패로 집계되지 않는다 (서킷 바깥에서 거절)")
+    void bulkheadFull_isNotCountedAsCircuitFailure() throws Exception {
+        occupyBulkhead();
+
+        for (int i = 0; i < 10; i++) {
+            call(request("10.0.0." + i));
+        }
+
+        assertThat(circuitBreaker().getState()).isEqualTo(CircuitBreaker.State.CLOSED);
+        assertThat(circuitBreaker().getMetrics().getNumberOfFailedCalls()).isZero();
+        assertThat(circuitBreaker().getMetrics().getNumberOfBufferedCalls()).isZero();
+    }
+
+    @Test
+    @DisplayName("Bulkhead 포화 중에도 로컬 한도는 적용된다")
+    void bulkheadFull_localLimitStillEnforced() throws Exception {
+        occupyBulkhead();
+
+        int rejected = 0;
+        for (int i = 0; i < 40; i++) {
+            if (!call(request("10.0.0.1")).passed()) {
+                rejected++;
+            }
+        }
+
+        assertThat(rejected).isGreaterThanOrEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("정상 호출 후 Bulkhead 허용량이 반환된다 (누수 없음)")
+    void bulkhead_permitReleasedAfterSuccess() throws Exception {
+        redisReturns(true);
+
+        for (int i = 0; i < 10; i++) {
+            call(request("10.0.0.1"));
+        }
+
+        assertThat(bulkhead().getMetrics().getAvailableConcurrentCalls()).isEqualTo(BULKHEAD_MAX);
+    }
+
+    @Test
+    @DisplayName("Redis 예외로 실패한 호출도 Bulkhead 허용량을 반환한다 (누수 없음)")
+    void bulkhead_permitReleasedAfterFailure() throws Exception {
+        redisFails();
+
+        for (int i = 0; i < 3; i++) {   // 서킷이 OPEN 되기 전까지의 호출
+            call(request("10.0.0." + i));
+        }
+
+        assertThat(bulkhead().getMetrics().getAvailableConcurrentCalls()).isEqualTo(BULKHEAD_MAX);
+    }
+
+    @Test
+    @DisplayName("Redis 응답을 기다리는 요청이 상한만큼 있어도, 추가 요청은 기다리지 않고 즉시 처리된다")
+    void concurrentSlowRedis_extraRequestsAreNotBlocked() throws Exception {
+        CountDownLatch entered = new CountDownLatch(BULKHEAD_MAX);
+        CountDownLatch release = new CountDownLatch(1);
+        // Redis 응답이 오지 않는 상황: 호출한 스레드는 release 될 때까지 블로킹
+        given(bucket.tryConsume(1)).willAnswer(invocation -> {
+            entered.countDown();
+            release.await(10, TimeUnit.SECONDS);
+            return true;
+        });
+
+        ExecutorService pool = Executors.newFixedThreadPool(BULKHEAD_MAX);
+        try {
+            // Bulkhead 허용량만큼의 요청이 Redis 응답을 기다리며 스레드를 점유
+            Future<Result> first = pool.submit(() -> call(request("10.1.0.1")));
+            Future<Result> second = pool.submit(() -> call(request("10.1.0.2")));
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+            // 추가 요청은 Redis 를 기다리지 않고 바로 로컬 폴백으로 끝나야 한다
+            long startNanos = System.nanoTime();
+            Result extra = call(request("10.1.0.3"));
+            long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+
+            assertThat(extra.passed()).isTrue();
+            assertThat(elapsedMillis).isLessThan(1_000);   // release(최대 10초)를 기다렸다면 크게 초과
+            assertThat(fallbackCount("bulkhead_full")).isEqualTo(1.0);
+            assertThat(bulkhead().getMetrics().getAvailableConcurrentCalls()).isZero();
+
+            release.countDown();
+            assertThat(first.get(5, TimeUnit.SECONDS).passed()).isTrue();
+            assertThat(second.get(5, TimeUnit.SECONDS).passed()).isTrue();
+            assertThat(bulkhead().getMetrics().getAvailableConcurrentCalls()).isEqualTo(BULKHEAD_MAX);
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
     }
 }
