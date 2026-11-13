@@ -168,6 +168,16 @@ resilience4j:
           - com.ghyinc.finance.global.exception.ExternalApiClientException
 
     instances:
+      inboundRateLimiterRedis:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s    # 회복 확인 주기. 측정 근거 없는 임시값
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - java.lang.RuntimeException      # Bucket4j가 Redisson 예외를 감쌀 수 있어 상위 타입으로 지정
       KAKAO_BANK:
         base-config: loan-default
       TOSS_BANK:
