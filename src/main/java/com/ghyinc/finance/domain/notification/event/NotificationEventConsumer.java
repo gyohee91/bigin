@@ -15,7 +15,7 @@ import org.springframework.kafka.annotation.DltHandler;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.annotation.RetryableTopic;
 import org.springframework.kafka.retrytopic.DltStrategy;
-import org.springframework.kafka.retrytopic.TopicSuffixingStrategy;
+import org.springframework.kafka.retrytopic.SameIntervalTopicReuseStrategy;
 import org.springframework.kafka.support.KafkaHeaders;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.retry.annotation.Backoff;
@@ -38,11 +38,10 @@ public class NotificationEventConsumer {
 
     @RetryableTopic(
             attempts = "4",     // 최초 1회 + 재시도 3회
-            backoff = @Backoff(delayExpression = "1000", multiplierExpression = "2.0", maxDelayExpression = "10000", random = true),
+            backoff = @Backoff(delay = 5000),   // 고정 지연
+            sameIntervalTopicReuseStrategy = SameIntervalTopicReuseStrategy.SINGLE_TOPIC,
             listenerContainerFactory = "retryableTopicListenerContainerFactory",
-            autoCreateTopics = "true",
-            numPartitions = "6",     // 재시도 토픽 병렬 처리
-            topicSuffixingStrategy = TopicSuffixingStrategy.SUFFIX_WITH_INDEX_VALUE,
+            autoCreateTopics = "${app.kafka.auto-create-topics:false}",
             dltStrategy = DltStrategy.FAIL_ON_ERROR,
             exclude = { KafkaMessageDeserializationException.class, IllegalArgumentException.class }
     )

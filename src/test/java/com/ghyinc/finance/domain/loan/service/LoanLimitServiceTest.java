@@ -1,18 +1,25 @@
 package com.ghyinc.finance.domain.loan.service;
 
-import com.ghyinc.finance.domain.loan.adaptor.dto.LoanLimitAdaptorRequest;
-import com.ghyinc.finance.domain.loan.dto.*;
+import com.ghyinc.finance.domain.loan.dto.LoanLimitInquiryResponse;
+import com.ghyinc.finance.domain.loan.dto.LoanLimitPollingResponse;
+import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
+import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
-import com.ghyinc.finance.domain.loan.enums.*;
-import com.ghyinc.finance.domain.loan.factory.LoanLimitStrategyFactory;
+import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
+import com.ghyinc.finance.domain.loan.enums.JobType;
+import com.ghyinc.finance.domain.loan.enums.LoanLimitResultCode;
+import com.ghyinc.finance.domain.loan.enums.LoanType;
+import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepository;
-import com.ghyinc.finance.domain.loan.strategy.LoanLimitStrategy;
+import com.ghyinc.finance.global.exception.LockUnavailableException;
 import com.ghyinc.finance.global.lock.RedisLockExecutor;
 import org.apache.kafka.common.errors.InvalidRequestException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -21,29 +28,35 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import java.util.EnumSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.BDDMockito.willAnswer;
-import static org.mockito.Mockito.mock;
+import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
 
+/**
+ * LoanLimitService 는 이제 "사전 중복 검사 → Redis 락 시도 → (Redis 장애 시) DB 선점 전환"
+ * 오케스트레이션만 담당한다. 검증/외부조회/금융사 선정은 {@link LoanLimitDispatchPlannerTest},
+ * INSERT·선점 로직은 {@link LoanLimitInquiryCreatorTest} 에서 검증한다.
+ */
 @ExtendWith(MockitoExtension.class)
 class LoanLimitServiceTest {
 
+    private static final String DEDUP_KEY_PATTERN = "1:PERSONAL_CREDIT:\\d{8}";
+    private static final String LOCK_KEY = "loan:request:lock:1:PERSONAL_CREDIT";
+
     @InjectMocks
     private LoanLimitService loanLimitService;
-
-    @Mock
-    private LoanLimitStrategyFactory strategyFactory;
 
     @Mock
     private LoanLimitInquiryRepository loanLimitInquiryRepository;
@@ -54,16 +67,22 @@ class LoanLimitServiceTest {
     @Mock
     private RedisLockExecutor lockExecutor;
 
-    // Inquiry INSERT + 이벤트 발행은 트랜잭션 분리 이후 이 협력자에게 전부 위임되었다
-    // (LoanLimitInquiryPersistenceService#createLoanLimitInquiry 참고).
-    // 그래서 이 테스트에서는 repository.save()/ApplicationEventPublisher를 직접 검증하지 않고
-    // persistenceService에 올바른 인자로 위임했는지만 검증한다.
     @Mock
-    private LoanLimitInquiryPersistenceService persistenceService;
+    private LoanLimitInquiryCreator inquiryCreator;
 
-    // requestCompareLoan()의 락 블록은 action 람다가 persistenceService.createLoanLimitInquiry(...)의
-    // 반환값을 그대로 return하므로(정상 흐름에서 값이 있는 return문이 있어 Runnable과는 타입이 안 맞음)
-    // Supplier<T> 오버로드를 탄다. RedisLockExecutor#execute(String, long, long, Supplier, Supplier) 참고.
+    private LoanLimitRequest buildRequest() {
+        return LoanLimitRequest.builder()
+                .userId(1L)
+                .name("윤교희")
+                .rrno("9102131234556")
+                .ci("wEi9oYSuekQGxT9MV4rKHG4CO+Zrp+onhLIIuembI8jx/0PLF5Ne3oMBxvUFlN4UmsgjeNErZfmpCVUFH")
+                .jobType(JobType.EMPLOYEE)
+                .jobName("오케이")
+                .loanType(LoanType.PERSONAL_CREDIT)
+                .build();
+    }
+
+    // 락 획득 성공 - action 람다를 그대로 실행한다
     @SuppressWarnings("unchecked")
     private void stubLockAcquired() {
         willAnswer(invocation -> {
@@ -72,228 +91,148 @@ class LoanLimitServiceTest {
         }).given(lockExecutor).execute(anyString(), anyLong(), anyLong(), any(Supplier.class), any(Supplier.class));
     }
 
+    // 락 획득 실패(다른 요청이 보유 중) - onLockUnavailable 람다를 실행한다
     @SuppressWarnings("unchecked")
-    private void stubLockUnavailable() {
+    private void stubLockBusy() {
         willAnswer(invocation -> {
             Supplier<Object> onLockUnavailable = invocation.getArgument(4);
             return onLockUnavailable.get();
         }).given(lockExecutor).execute(anyString(), anyLong(), anyLong(), any(Supplier.class), any(Supplier.class));
     }
 
+    // Redis 장애 - RedisLockExecutor 가 LockUnavailableException 을 던진다
+    @SuppressWarnings("unchecked")
+    private void stubRedisDown() {
+        willThrow(new LockUnavailableException("Redis 장애", new RuntimeException("connection refused")))
+                .given(lockExecutor)
+                .execute(anyString(), anyLong(), anyLong(), any(Supplier.class), any(Supplier.class));
+    }
+
+    // ─── requestCompareLoan ───────────────────────────────────────────────────
+
     @Test
-    @DisplayName("한도조회 요청 정상처리 - 202 Accepted 즉시 응답")
-    void requestCompareLoan_success() {
-        // 락 획득 성공 - action 그대로 실행
+    @DisplayName("한도조회 요청 - 락 획득 시 Redis 락 흐름(processWithRedisLock)에 위임하고 응답을 그대로 반환")
+    @SuppressWarnings("unchecked")
+    void requestCompareLoan_lockAcquired_delegatesToRedisLockFlow() {
         this.stubLockAcquired();
+        LoanLimitRequest request = buildRequest();
+        LoanLimitInquiryResponse expected = LoanLimitInquiryResponse.builder()
+                .inquiryNo("LL20260416ANWOW").success(true).build();
+        given(inquiryCreator.processWithRedisLock(eq(request), anyString())).willReturn(expected);
 
-        // given
-        LoanLimitRequest request = LoanLimitRequest.builder()
-                .userId(1L)
-                .name("윤교희")
-                .rrno("9102131234556")
-                .ci("wEi9oYSuekQGxT9MV4rKHG4CO+Zrp+onhLIIuembI8jx/0PLF5Ne3oMBxvUFlN4UmsgjeNErZfmpCVUFH")
-                .jobType(JobType.EMPLOYEE)
-                .jobName("오케이")
-                .loanType(LoanType.PERSONAL_CREDIT)
-                .build();
-
-        LoanLimitStrategy strategy = mock(LoanLimitStrategy.class);
-        given(strategyFactory.getStrategy(LoanType.PERSONAL_CREDIT)).willReturn(strategy);
-        given(strategy.requiresExternalData()).willReturn(false);
-        given(strategy.getSupportedBanks()).willReturn(List.of(PartnerCode.KAKAO_BANK, PartnerCode.TOSS_BANK));
-        given(strategy.filterAvailablePartners(any(), any())).willReturn(List.of(PartnerCode.KAKAO_BANK, PartnerCode.TOSS_BANK));
-        LoanLimitAdaptorRequest adaptorRequest = mock(LoanLimitAdaptorRequest.class);
-        given(strategy.toAdaptorRequest(any(), any())).willReturn(adaptorRequest);
-
-        // Inquiry INSERT + 이벤트 발행은 persistenceService.createLoanLimitInquiry로 위임된다
-        LoanLimitInquiryResponse expectedResponse = LoanLimitInquiryResponse.builder()
-                .inquiryNo("LL20260416ANWOW")
-                .success(true)
-                .build();
-        given(persistenceService.createLoanLimitInquiry(
-                eq(request), eq(List.of(PartnerCode.KAKAO_BANK, PartnerCode.TOSS_BANK)), eq(adaptorRequest)))
-                .willReturn(expectedResponse);
-
-        // when
         LoanLimitInquiryResponse response = loanLimitService.requestCompareLoan(request);
 
-        // then - persistenceService가 반환한 응답을 그대로 반환하는지 검증
-        assertThat(response).isEqualTo(expectedResponse);
-
-        // then - 정확한 인자(요청, 선정된 금융사, 어댑터 요청)로 위임했는지 검증
-        then(persistenceService).should().createLoanLimitInquiry(
-                eq(request), eq(List.of(PartnerCode.KAKAO_BANK, PartnerCode.TOSS_BANK)), eq(adaptorRequest));
+        assertThat(response).isEqualTo(expected);
+        // 락 키·대기 0초·lease 15초
+        then(lockExecutor).should().execute(eq(LOCK_KEY), eq(0L), eq(15L), any(Supplier.class), any(Supplier.class));
+        then(inquiryCreator).should(never()).processWithDbClaim(any(), any());
     }
 
     @Test
-    @DisplayName("활성화된 금융사가 없으면 InvalidRequestException 발생")
-    void requestCompareLoan_noActivePartner_throwException() {
-        // 락 획득 성공 - action 그대로 실행 (검증 대상 로직이 락 안으로 들어갔으므로 필요)
+    @DisplayName("한도조회 요청 - 사전 검사와 생성 흐름에 동일한 dedupKey(userId:loanType:yyyyMMdd)를 전달")
+    void requestCompareLoan_usesSameDedupKeyForPrecheckAndCreation() {
         this.stubLockAcquired();
+        LoanLimitRequest request = buildRequest();
 
-        // given
-        LoanLimitRequest request = LoanLimitRequest.builder()
-                .userId(1L)
-                .name("윤교희")
-                .rrno("9102131234556")
-                .ci("wEi9oYSuekQGxT9MV4rKHG4CO+Zrp+onhLIIuembI8jx/0PLF5Ne3oMBxvUFlN4UmsgjeNErZfmpCVUFH")
-                .jobType(JobType.EMPLOYEE)
-                .jobName("오케이")
-                .loanType(LoanType.PERSONAL_CREDIT)
-                .build();
-        LoanLimitStrategy strategy = mock(LoanLimitStrategy.class);
-        given(strategyFactory.getStrategy(LoanType.PERSONAL_CREDIT)).willReturn(strategy);
-        given(strategy.requiresExternalData()).willReturn(false);
-        given(strategy.getSupportedBanks()).willReturn(List.of());
-        //given(strategy.filterAvailablePartners(any(), any())).willReturn(List.of());
+        loanLimitService.requestCompareLoan(request);
 
-        // when & then
+        ArgumentCaptor<String> precheckKey = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> creationKey = ArgumentCaptor.forClass(String.class);
+        then(loanLimitInquiryRepository).should().existsByDedupKey(precheckKey.capture());
+        then(inquiryCreator).should().processWithRedisLock(eq(request), creationKey.capture());
+
+        assertThat(precheckKey.getValue()).matches(DEDUP_KEY_PATTERN);
+        assertThat(creationKey.getValue()).isEqualTo(precheckKey.getValue());
+    }
+
+    @Test
+    @DisplayName("한도조회 요청 - 오늘 이미 접수/진행/완료된 건이 있으면 락·생성 흐름 없이 즉시 거절")
+    void requestCompareLoan_dedupKeyAlreadyExists_rejectsWithoutLock() {
+        given(loanLimitInquiryRepository.existsByDedupKey(anyString())).willReturn(true);
+
+        assertThatThrownBy(() -> loanLimitService.requestCompareLoan(buildRequest()))
+                .isInstanceOf(InvalidRequestException.class)
+                .hasMessage("오늘은 이미 한도조회를 진행했습니다.");
+
+        then(lockExecutor).shouldHaveNoInteractions();
+        then(inquiryCreator).shouldHaveNoInteractions();
+    }
+
+    @Test
+    @DisplayName("동시 요청 - 분산 락 획득 실패(다른 요청이 처리 중)면 즉시 예외, 생성 흐름·DB 선점 전환 없음")
+    void requestCompareLoan_lockBusy_throwsAndDoesNotFallBack() {
+        this.stubLockBusy();
+
+        assertThatThrownBy(() -> loanLimitService.requestCompareLoan(buildRequest()))
+                .isInstanceOf(InvalidRequestException.class)
+                .hasMessage("요청이 처리 중입니다. 잠시 후 다시 시도해 주세요.");
+
+        then(inquiryCreator).shouldHaveNoInteractions();
+    }
+
+    @Test
+    @DisplayName("Redis 장애(LockUnavailableException) - DB 선점 흐름(processWithDbClaim)으로 전환")
+    void requestCompareLoan_redisDown_fallsBackToDbClaim() {
+        this.stubRedisDown();
+        LoanLimitRequest request = buildRequest();
+        LoanLimitInquiryResponse expected = LoanLimitInquiryResponse.builder()
+                .inquiryNo("LL20260416DBCLAIM").success(true).build();
+        given(inquiryCreator.processWithDbClaim(eq(request), anyString())).willReturn(expected);
+
+        LoanLimitInquiryResponse response = loanLimitService.requestCompareLoan(request);
+
+        assertThat(response).isEqualTo(expected);
+        then(inquiryCreator).should(never()).processWithRedisLock(any(), any());
+    }
+
+    @Test
+    @DisplayName("Redis 장애 전환 시에도 사전 검사와 DB 선점에 동일한 dedupKey 전달")
+    void requestCompareLoan_redisDown_usesSameDedupKey() {
+        this.stubRedisDown();
+        LoanLimitRequest request = buildRequest();
+
+        loanLimitService.requestCompareLoan(request);
+
+        ArgumentCaptor<String> precheckKey = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> claimKey = ArgumentCaptor.forClass(String.class);
+        then(loanLimitInquiryRepository).should().existsByDedupKey(precheckKey.capture());
+        then(inquiryCreator).should().processWithDbClaim(eq(request), claimKey.capture());
+
+        assertThat(claimKey.getValue()).isEqualTo(precheckKey.getValue()).matches(DEDUP_KEY_PATTERN);
+    }
+
+    @Test
+    @DisplayName("Redis 장애 전환 후 DB 선점에서 중복이면 예외를 그대로 전파")
+    void requestCompareLoan_redisDown_dbClaimDuplicate_propagates() {
+        this.stubRedisDown();
+        LoanLimitRequest request = buildRequest();
+        given(inquiryCreator.processWithDbClaim(eq(request), anyString()))
+                .willThrow(new InvalidRequestException("오늘은 이미 한도조회를 진행했습니다."));
+
+        assertThatThrownBy(() -> loanLimitService.requestCompareLoan(request))
+                .isInstanceOf(InvalidRequestException.class)
+                .hasMessage("오늘은 이미 한도조회를 진행했습니다.");
+    }
+
+    @Test
+    @DisplayName("Redis 락 흐름 안에서 발생한 비즈니스 예외는 DB 선점으로 전환하지 않고 그대로 전파")
+    void requestCompareLoan_redisFlowBusinessError_doesNotFallBack() {
+        this.stubLockAcquired();
+        LoanLimitRequest request = buildRequest();
+        given(inquiryCreator.processWithRedisLock(eq(request), anyString()))
+                .willThrow(new InvalidRequestException("현재 조회 가능한 금융사가 없습니다"));
+
         assertThatThrownBy(() -> loanLimitService.requestCompareLoan(request))
                 .isInstanceOf(InvalidRequestException.class)
                 .hasMessage("현재 조회 가능한 금융사가 없습니다");
 
-        // Inquiry INSERT, 이벤트 발행 모두 없어야함
-        then(persistenceService).should(never()).createLoanLimitInquiry(any(), any(), any());
-    }
-
-    @Test
-    @DisplayName("진행 중인 한도조회 요청이 있으면 중복 요청 방지")
-    void requestCompareLoan_inProgressExists_throwsException() {
-        // given
-        LoanLimitRequest request = LoanLimitRequest.builder()
-                .userId(1L)
-                .name("윤교희")
-                .rrno("9102131234556")
-                .ci("wEi9oYSuekQGxT9MV4rKHG4CO+Zrp+onhLIIuembI8jx/0PLF5Ne3oMBxvUFlN4UmsgjeNErZfmpCVUFH")
-                .jobType(JobType.EMPLOYEE)
-                .jobName("오케이")
-                .loanType(LoanType.PERSONAL_CREDIT)
-                .build();
-
-        this.stubLockAcquired();
-        given(loanLimitInquiryRepository.existsByUserIdAndLoanTypeAndStatusIn(1L, LoanType.PERSONAL_CREDIT, EnumSet.of(InquiryStatus.PENDING, InquiryStatus.IN_PROGRESS)))
-                .willReturn(true);
-
-        // when & then
-        assertThatThrownBy(() -> loanLimitService.requestCompareLoan(request))
-                .isInstanceOf(InvalidRequestException.class)
-                .hasMessage("진행 중인 한도조회가 있습니다.");
-
-        then(persistenceService).should(never()).createLoanLimitInquiry(any(), any(), any());
-    }
-
-    @Test
-    @DisplayName("오토담보 - Nice DNR 조회 성공 시 정상 처리")
-    void requestCompareLoan_auto_niceDnrSuccess() {
-        this.stubLockAcquired();
-
-        // given
-        LoanLimitRequest request = LoanLimitRequest.builder()
-                .userId(1L)
-                .name("윤교희")
-                .rrno("9102131234556")
-                .ci("wEi9oYSuekQGxT9MV4rKHG4CO+Zrp+onhLIIuembI8jx/0PLF5Ne3oMBxvUFlN4UmsgjeNErZfmpCVUFH")
-                .jobType(JobType.EMPLOYEE)
-                .jobName("오케이")
-                .loanType(LoanType.AUTO)
-                .build();
-        LoanLimitStrategy strategy = mock(LoanLimitStrategy.class);
-        given(strategyFactory.getStrategy(LoanType.AUTO)).willReturn(strategy);
-        given(strategy.requiresExternalData()).willReturn(true);
-        given(strategy.fetchExternalData(any())).willReturn(ExternalDataContext.empty());
-        given(strategy.getSupportedBanks()).willReturn(List.of(PartnerCode.LINE_BANK));
-        given(strategy.filterAvailablePartners(any(), any())).willReturn(List.of(PartnerCode.LINE_BANK));
-        LoanLimitAdaptorRequest adaptorRequest = mock(LoanLimitAdaptorRequest.class);
-        given(strategy.toAdaptorRequest(any(), any())).willReturn(adaptorRequest);
-
-        LoanLimitInquiryResponse expectedResponse = LoanLimitInquiryResponse.builder()
-                .inquiryNo("LL20260416ANWOW")
-                .success(true)
-                .build();
-        given(persistenceService.createLoanLimitInquiry(
-                eq(request), eq(List.of(PartnerCode.LINE_BANK)), eq(adaptorRequest)))
-                .willReturn(expectedResponse);
-
-        // when
-        LoanLimitInquiryResponse response = loanLimitService.requestCompareLoan(request);
-
-        // then
-        assertThat(response.success()).isEqualTo(true);
-        then(strategy).should().fetchExternalData(any());
-
-        // persistenceService에 정확한 인자로 위임했는지 검증
-        then(persistenceService).should().createLoanLimitInquiry(
-                eq(request), eq(List.of(PartnerCode.LINE_BANK)), eq(adaptorRequest));
-    }
-
-    @Test
-    @DisplayName("오토담보 - Nice DNR 조회 실패 시 진행 가능 금융사 없으면 예외")
-    void requestCompareLoan_auto_niceDnrFailed_throwException() {
-        // 락 획득 성공 - action 그대로 실행 (검증 대상 로직이 락 안으로 들어갔으므로 필요)
-        this.stubLockAcquired();
-
-        // given
-        LoanLimitRequest request = LoanLimitRequest.builder()
-                .userId(1L)
-                .name("윤교희")
-                .rrno("9102131234556")
-                .ci("wEi9oYSuekQGxT9MV4rKHG4CO+Zrp+onhLIIuembI8jx/0PLF5Ne3oMBxvUFlN4UmsgjeNErZfmpCVUFH")
-                .jobType(JobType.EMPLOYEE)
-                .jobName("오케이")
-                .loanType(LoanType.AUTO)
-                .build();
-        LoanLimitStrategy strategy = mock(LoanLimitStrategy.class);
-        given(strategyFactory.getStrategy(LoanType.AUTO)).willReturn(strategy);
-        given(strategy.requiresExternalData()).willReturn(true);
-
-        ExternalDataContext externalDataContext = ExternalDataContext.builder()
-                .errors(Map.of("NICE_DNR",
-                        ExternalDataError.builder()
-                                .code("NICE_DNR_ERROR")
-                                .message("NICE DNR 조회 오류")
-                                .build())
-                )
-                .build();
-        given(strategy.fetchExternalData(any())).willReturn(externalDataContext);
-        given(strategy.getSupportedBanks()).willReturn(List.of(PartnerCode.LINE_BANK));
-        given(strategy.filterAvailablePartners(any(), any())).willReturn(List.of());
-
-        // when & then
-        assertThatThrownBy(() -> loanLimitService.requestCompareLoan(request))
-                .isInstanceOf(InvalidRequestException.class);
-        then(persistenceService).should(never()).createLoanLimitInquiry(any(), any(), any());
-    }
-
-    @Test
-    @DisplayName("동시 요청 - 분산 락 확득 실패 시 즉시 예외")
-    void requestCompareLoan_lockFailed_throwsException() {
-        this.stubLockUnavailable();
-
-        // given
-        LoanLimitRequest request = LoanLimitRequest.builder()
-                .userId(1L)
-                .name("윤교희")
-                .rrno("9102131234556")
-                .ci("wEi9oYSuekQGxT9MV4rKHG4CO+Zrp+onhLIIuembI8jx/0PLF5Ne3oMBxvUFlN4UmsgjeNErZfmpCVUFH")
-                .jobType(JobType.EMPLOYEE)
-                .jobName("오케이")
-                .loanType(LoanType.PERSONAL_CREDIT)
-                .build();
-
-        // when & then
-        assertThatThrownBy(() -> loanLimitService.requestCompareLoan(request))
-                .isInstanceOf(InvalidRequestException.class)
-                .hasMessage("요청이 처리 중입니다. 잠시 후 다시 시도해 주세요.");
-
-        then(loanLimitInquiryRepository).should(never())
-                .existsByUserIdAndLoanTypeAndStatusIn(any(), any(), any());
-        then(persistenceService).should(never()).createLoanLimitInquiry(any(), any(), any());
+        then(inquiryCreator).should(never()).processWithDbClaim(any(), any());
     }
 
     // 락 대기 중 인터럽트 발생 시 fallback(onLockUnavailable) 실행 + 인터럽트 플래그 복원 로직은
-    // DistributedLockExecutor 자체의 책임이 되어 DistributedLockExecutorTest로 옮겼다.
-    // (예전엔 인터럽트와 락-실패를 다른 메시지로 구분했지만, executor 도입 후 둘 다
-    // 같은 onLockUnavailable("요청이 처리 중입니다...")로 합쳐졌다)
+    // RedisLockExecutor 자체의 책임이므로 RedisLockExecutorTest 에서 검증한다.
+
+    // ─── getInquiryResult (폴링) ──────────────────────────────────────────────
 
     @Test
     @DisplayName("폴링 - 진행 중 (콜백 일부 수신) -> 현재까지 수신된 productResults 반환")

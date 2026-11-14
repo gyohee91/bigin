@@ -29,12 +29,15 @@ import com.ghyinc.finance.global.event.PartnerTransmissionBatchAuditEvent;
 import com.ghyinc.finance.domain.audit.service.AuditLogWriter;
 import com.ghyinc.finance.global.metrics.PartnerSlaMetrics;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,11 +46,14 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 
 @ExtendWith(MockitoExtension.class)
 class LoanLimitInquiryPersistenceServiceTest {
+
+    private static final String DEDUP_KEY = "1:PERSONAL_CREDIT:20260101";
 
     private LoanLimitInquiryPersistenceService persistenceService;
 
@@ -90,6 +96,7 @@ class LoanLimitInquiryPersistenceServiceTest {
                 .jobType(JobType.EMPLOYEE)
                 .jobName("테스트회사")
                 .loanType(LoanType.PERSONAL_CREDIT)
+                .dedupKey(DEDUP_KEY)
                 .build();
     }
 
@@ -151,7 +158,7 @@ class LoanLimitInquiryPersistenceServiceTest {
         LoanLimitRequest request = buildLoanLimitRequest();
 
         LoanLimitInquiryResponse response = persistenceService.createLoanLimitInquiry(
-                request, List.of(PartnerCode.LINE_BANK), buildAdaptorRequest());
+                request, List.of(PartnerCode.LINE_BANK), buildAdaptorRequest(), DEDUP_KEY);
 
         ArgumentCaptor<LoanLimitInquiry> inquiryCaptor = ArgumentCaptor.forClass(LoanLimitInquiry.class);
         then(loanLimitInquiryRepository).should().save(inquiryCaptor.capture());
@@ -177,7 +184,7 @@ class LoanLimitInquiryPersistenceServiceTest {
         LoanLimitAdaptorRequest adaptorRequest = buildAdaptorRequest();
 
         persistenceService.createLoanLimitInquiry(
-                request, List.of(PartnerCode.KAKAO_BANK, PartnerCode.TOSS_BANK), adaptorRequest);
+                request, List.of(PartnerCode.KAKAO_BANK, PartnerCode.TOSS_BANK), adaptorRequest, DEDUP_KEY);
 
         ArgumentCaptor<LoanLimitInquiryCreatedEvent> eventCaptor =
                 ArgumentCaptor.forClass(LoanLimitInquiryCreatedEvent.class);
@@ -188,6 +195,122 @@ class LoanLimitInquiryPersistenceServiceTest {
         assertThat(event.activePartnerCodes())
                 .containsExactly(PartnerCode.KAKAO_BANK, PartnerCode.TOSS_BANK);
         assertThat(event.adaptorRequest()).isEqualTo(adaptorRequest);
+    }
+
+    @Test
+    @DisplayName("createLoanLimitInquiry - 전달받은 dedupKey 를 저장하고 PENDING 으로 시작 (Redis 락 경로의 하루 1회 방어선)")
+    void createLoanLimitInquiry_savesDedupKeyAndStartsPending() {
+        given(generator.generate("LL")).willReturn("LL20260101abcd1234");
+
+        persistenceService.createLoanLimitInquiry(
+                buildLoanLimitRequest(), List.of(PartnerCode.LINE_BANK), buildAdaptorRequest(), DEDUP_KEY);
+
+        ArgumentCaptor<LoanLimitInquiry> captor = ArgumentCaptor.forClass(LoanLimitInquiry.class);
+        then(loanLimitInquiryRepository).should().save(captor.capture());
+        assertThat(captor.getValue().getDedupKey()).isEqualTo(DEDUP_KEY);
+        assertThat(captor.getValue().getStatus()).isEqualTo(InquiryStatus.PENDING);
+    }
+
+    // ─── completeInquiry (Redis 장애 시 DB 선점 경로의 완료 단계) ──────────────
+
+    private LoanLimitInquiry buildAcceptedInquiry() {
+        return LoanLimitInquiry.builder()
+                .id(10L)
+                .inquiryNo("LL_ACCEPTED")
+                .userId(1L)
+                .loanType(LoanType.PERSONAL_CREDIT)
+                .status(InquiryStatus.ACCEPTED)
+                .dedupKey(DEDUP_KEY)
+                .build();
+    }
+
+    @Test
+    @DisplayName("completeInquiry - ACCEPTED→PENDING 선점 성공 시 요청 정보를 채우고 CreatedEvent 를 발행, 응답에는 선점 때 채번한 inquiryNo")
+    void completeInquiry_success_appliesRequestAndPublishesCreatedEvent() {
+        LoanLimitInquiry accepted = buildAcceptedInquiry();
+        given(loanLimitInquiryRepository.transit("LL_ACCEPTED", InquiryStatus.ACCEPTED, InquiryStatus.PENDING))
+                .willReturn(1);
+        given(loanLimitInquiryRepository.findByInquiryNo("LL_ACCEPTED")).willReturn(Optional.of(accepted));
+        LoanLimitRequest request = LoanLimitRequest.builder()
+                .userId(1L)
+                .name("윤교희")
+                .rrno("9102131234556")
+                .ci("ci-value")
+                .jobType(JobType.EMPLOYEE)
+                .jobName("오케이")
+                .joinDate("202604")
+                .carNo("12가1234")
+                .loanType(LoanType.PERSONAL_CREDIT)
+                .agreePersonalCreditInfo(true)
+                .agreePersonalCreditTime(LocalDateTime.of(2026, 1, 1, 9, 30))
+                .build();
+        LoanLimitAdaptorRequest adaptorRequest = buildAdaptorRequest();
+
+        LoanLimitInquiryResponse response = persistenceService.completeInquiry(
+                "LL_ACCEPTED", request, List.of(PartnerCode.KAKAO_BANK), adaptorRequest);
+
+        assertThat(response.inquiryNo()).isEqualTo("LL_ACCEPTED");
+        assertThat(response.success()).isTrue();
+        // 접수(ACCEPTED) 시점에 비어 있던 요청 정보가 채워졌다
+        assertThat(accepted.getName()).isEqualTo("윤교희");
+        assertThat(accepted.getCi()).isEqualTo("ci-value");
+        assertThat(accepted.getJoinDate()).isEqualTo("202604");
+        assertThat(accepted.getCarNo()).isEqualTo("12가1234");
+        assertThat(accepted.isAgreePersonalCreditInfo()).isTrue();
+
+        ArgumentCaptor<LoanLimitInquiryCreatedEvent> eventCaptor =
+                ArgumentCaptor.forClass(LoanLimitInquiryCreatedEvent.class);
+        then(applicationEventPublisher).should().publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().id()).isEqualTo(10L);
+        assertThat(eventCaptor.getValue().activePartnerCodes()).containsExactly(PartnerCode.KAKAO_BANK);
+        assertThat(eventCaptor.getValue().adaptorRequest()).isEqualTo(adaptorRequest);
+    }
+
+    @Test
+    @DisplayName("completeInquiry - 상태 선점(transit)이 먼저, 조회가 그 다음. 새 행을 INSERT 하거나 새로 채번하지 않는다")
+    void completeInquiry_claimsStatusFirst_andNeverInsertsOrGeneratesNumber() {
+        given(loanLimitInquiryRepository.transit("LL_ACCEPTED", InquiryStatus.ACCEPTED, InquiryStatus.PENDING))
+                .willReturn(1);
+        given(loanLimitInquiryRepository.findByInquiryNo("LL_ACCEPTED"))
+                .willReturn(Optional.of(buildAcceptedInquiry()));
+
+        persistenceService.completeInquiry(
+                "LL_ACCEPTED", buildLoanLimitRequest(), List.of(PartnerCode.KAKAO_BANK), buildAdaptorRequest());
+
+        InOrder inOrder = inOrder(loanLimitInquiryRepository);
+        inOrder.verify(loanLimitInquiryRepository).transit("LL_ACCEPTED", InquiryStatus.ACCEPTED, InquiryStatus.PENDING);
+        inOrder.verify(loanLimitInquiryRepository).findByInquiryNo("LL_ACCEPTED");
+        then(loanLimitInquiryRepository).should(never()).save(any());
+        then(generator).shouldHaveNoInteractions();
+    }
+
+    @Test
+    @DisplayName("completeInquiry - 정리 배치가 먼저 FAILED 처리해 선점이 0건이면 예외, 조회·이벤트 발행 없음")
+    void completeInquiry_alreadyFailedByCleanup_throwsTimeoutException() {
+        given(loanLimitInquiryRepository.transit("LL_ACCEPTED", InquiryStatus.ACCEPTED, InquiryStatus.PENDING))
+                .willReturn(0);
+
+        assertThatThrownBy(() -> persistenceService.completeInquiry(
+                "LL_ACCEPTED", buildLoanLimitRequest(), List.of(PartnerCode.KAKAO_BANK), buildAdaptorRequest()))
+                .isInstanceOf(InvalidRequestException.class)
+                .hasMessage("요청 처리 시간이 초과되었습니다. 다시 시도해 주세요.");
+
+        then(loanLimitInquiryRepository).should(never()).findByInquiryNo(any());
+        then(applicationEventPublisher).shouldHaveNoInteractions();
+    }
+
+    @Test
+    @DisplayName("completeInquiry - 선점은 됐는데 행을 찾을 수 없으면 예외, 이벤트 발행 없음")
+    void completeInquiry_inquiryMissingAfterTransit_throws() {
+        given(loanLimitInquiryRepository.transit("LL_ACCEPTED", InquiryStatus.ACCEPTED, InquiryStatus.PENDING))
+                .willReturn(1);
+        given(loanLimitInquiryRepository.findByInquiryNo("LL_ACCEPTED")).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> persistenceService.completeInquiry(
+                "LL_ACCEPTED", buildLoanLimitRequest(), List.of(PartnerCode.KAKAO_BANK), buildAdaptorRequest()))
+                .isInstanceOf(NoSuchElementException.class);
+
+        then(applicationEventPublisher).shouldHaveNoInteractions();
     }
 
     // ─── preSave ──────────────────────────────────────────────────────────────
@@ -565,5 +688,83 @@ class LoanLimitInquiryPersistenceServiceTest {
         persistenceService.markFailed(99L);
 
         then(applicationEventPublisher).should(never()).publishEvent(any(Object.class));
+    }
+
+    // ─── dedupKey 슬롯 해제 (FAILED 로 전이될 때만) ────────────────────────────
+
+    @Test
+    @DisplayName("markFailed - FAILED 전이 시 dedupKey 를 비워 당일 재조회를 허용")
+    void markFailed_releasesDedupKey() {
+        LoanLimitInquiry inquiry = buildInquiry();
+        assertThat(inquiry.getDedupKey()).isEqualTo(DEDUP_KEY);
+        given(loanLimitInquiryRepository.findById(1L)).willReturn(Optional.of(inquiry));
+
+        persistenceService.markFailed(1L);
+
+        assertThat(inquiry.getStatus()).isEqualTo(InquiryStatus.FAILED);
+        assertThat(inquiry.getDedupKey()).isNull();
+    }
+
+    @Test
+    @DisplayName("applyResults - 전 제휴사 전송 실패(FAILED)면 dedupKey 를 비워 재조회를 허용")
+    void applyResults_allFailed_releasesDedupKey() {
+        LoanLimitInquiry inquiry = buildInquiryWithResult(PartnerCode.LINE_BANK, "LR_001", "P001");
+        given(loanLimitInquiryRepository.findById(1L)).willReturn(Optional.of(inquiry));
+
+        persistenceService.applyResults(1L,
+                List.of(LoanLimitAdaptorResponse.fail(PartnerCode.LINE_BANK, "5xx 오류", 100L)));
+
+        assertThat(inquiry.getStatus()).isEqualTo(InquiryStatus.FAILED);
+        assertThat(inquiry.getDedupKey()).isNull();
+    }
+
+    @Test
+    @DisplayName("applyResults - 전체 성공(SUCCESS)이면 dedupKey 유지 (하루 1회 제한)")
+    void applyResults_allSuccess_keepsDedupKey() {
+        LoanLimitInquiry inquiry = buildInquiryWithResult(PartnerCode.LINE_BANK, "LR_001", "P001");
+        given(loanLimitInquiryRepository.findById(1L)).willReturn(Optional.of(inquiry));
+
+        persistenceService.applyResults(1L,
+                List.of(LoanLimitAdaptorResponse.success(PartnerCode.LINE_BANK, 100L)));
+
+        assertThat(inquiry.getStatus()).isEqualTo(InquiryStatus.SUCCESS);
+        assertThat(inquiry.getDedupKey()).isEqualTo(DEDUP_KEY);
+    }
+
+    @Test
+    @DisplayName("applyResults - 일부 성공(PARTIAL_SUCCESS)이어도 dedupKey 유지")
+    void applyResults_partialSuccess_keepsDedupKey() {
+        LoanLimitInquiry inquiry = buildInquiry();
+        inquiry.addResult(LoanLimitResult.builder().partnerCode(PartnerCode.KAKAO_BANK).build());
+        inquiry.addResult(LoanLimitResult.builder().partnerCode(PartnerCode.TOSS_BANK).build());
+        inquiry.addProductResult(LoanLimitProductResult.builder()
+                .loReqtNo("LR_K001").partnerCode(PartnerCode.KAKAO_BANK).productCode("TA")
+                .status(PartnerInquiryStatus.PENDING).build());
+        inquiry.addProductResult(LoanLimitProductResult.builder()
+                .loReqtNo("LR_T001").partnerCode(PartnerCode.TOSS_BANK).productCode("FNQ005")
+                .status(PartnerInquiryStatus.PENDING).build());
+        given(loanLimitInquiryRepository.findById(1L)).willReturn(Optional.of(inquiry));
+
+        persistenceService.applyResults(1L, List.of(
+                LoanLimitAdaptorResponse.success(PartnerCode.KAKAO_BANK, 100L),
+                LoanLimitAdaptorResponse.fail(PartnerCode.TOSS_BANK, "타임아웃", 5000L)
+        ));
+
+        assertThat(inquiry.getStatus()).isEqualTo(InquiryStatus.PARTIAL_SUCCESS);
+        assertThat(inquiry.getDedupKey()).isEqualTo(DEDUP_KEY);
+    }
+
+    @Test
+    @DisplayName("preSave - IN_PROGRESS 전이로는 dedupKey 가 풀리지 않는다")
+    void preSave_keepsDedupKey() {
+        LoanLimitInquiry inquiry = buildInquiry();
+        given(loanLimitInquiryRepository.findById(1L)).willReturn(Optional.of(inquiry));
+        given(productService.getActiveProducts(PartnerCode.LINE_BANK, LoanType.PERSONAL_CREDIT))
+                .willReturn(List.of());
+
+        persistenceService.preSave(1L, List.of(PartnerCode.LINE_BANK), buildAdaptorRequest());
+
+        assertThat(inquiry.getStatus()).isEqualTo(InquiryStatus.IN_PROGRESS);
+        assertThat(inquiry.getDedupKey()).isEqualTo(DEDUP_KEY);
     }
 }

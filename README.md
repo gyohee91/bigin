@@ -45,8 +45,6 @@
 실무에서 직접 경험한 **제휴 금융사 한도조회 시스템의 핵심 도메인**을 새로운 기술 스택과 아키텍처로 재설계하여 구현했습니다.
 
 - 실무와 동일한 비즈니스 로직 (콜백 기반 비동기 한도조회, 상품별 채번, 디자인 패턴 등)
-- Java 17 + Spring Boot 3.5로 업그레이드하여 최신 기능 적용
-- Layered Architecture → Domain-driven Package Structure로 전환
 - 또한, 개인 프로젝트에서 설계·검증한 개선 방식 중 실무 환경에 적용 가능하다고 판단된 항목을 실제 운영 시스템에도 반영
 
 <br>
@@ -63,7 +61,7 @@
 | 비동기       | Spring @Async / CompletableFuture, 용도별 전용 ThreadPoolTaskExecutor 5종 |
 | 장애격리      | Resilience4j Circuit Breaker / Retry / Rate Limiter / Bulkhead (금융사별 독립 인스턴스) |
 | HTTP Client | Spring RestClient + Apache HttpClient5 (`PoolingHttpClientConnectionManager`) |
-| 메시지큐 | Apache Kafka (Outbox Pattern, DLQ, `@RetryableTopic` 지수 백오프 재시도) |
+| 메시지큐 | Apache Kafka (Outbox Pattern, DLQ, `@RetryableTopic` 고정 지연 재시도 · 단일 재시도 토픽) |
 | 캐싱 | Redis Cache (Redisson 분산 락 기반), Caffeine (로컬 캐시) |
 | 분산처리 | Redis (Redisson 분산 락, INCR 채번), Bucket4j (분산 Rate Limiting) |
 | 스케줄링 | Spring @Scheduled + ShedLock (JDBC) |
@@ -88,8 +86,11 @@ com.ghyinc.finance
 │   │   ├── controller
 │   │   │   └── LoanController.java               # 한도조회 / 콜백 수신 / 폴링 / 결과요약 / 대출신청 API
 │   │   ├── service
-│   │   │   ├── LoanLimitService.java                     # 요청 수신 · 중복요청 방어(Redis 락) · Strategy 실행 · 결과 폴링
-│   │   │   ├── LoanLimitInquiryPersistenceService.java   # DB 트랜잭션 전용 협력자 (최초 INSERT / 선저장 / 결과반영 / FAILED 처리)
+│   │   │   ├── LoanLimitService.java                     # 요청 수신 · 당일 중복 방어 오케스트레이션(dedup_key 사전 조회 → Redis 락 → 장애 시 DB 선점) · 결과 폴링
+│   │   │   ├── LoanLimitInquiryCreator.java              # Inquiry 생성 전략 2종: processWithRedisLock(1차) / processWithDbClaim(2차, Redis 장애)
+│   │   │   ├── LoanLimitDispatchPlanner.java             # 검증 · 외부 데이터 조회 · 금융사 선정 → PartnerDispatchPlan (DB 미사용, 두 경로 공유)
+│   │   │   ├── LoanLimitInquiryClaimService.java         # DB 선점 전용 (REQUIRES_NEW): claim(ACCEPTED INSERT) / abort(FAILED + 슬롯 반납)
+│   │   │   ├── LoanLimitInquiryPersistenceService.java   # DB 트랜잭션 전용 협력자 (최초 INSERT·완료 / 선저장 / 결과반영 / FAILED 처리)
 │   │   │   ├── LoanLimitEventHandler.java                # AFTER_COMMIT 이벤트 리스너 → 팬아웃 제출, 포화 시 보상 처리
 │   │   │   ├── LoanLimitSenderService.java               # 금융사 병렬 팬아웃 (무트랜잭션 구간)
 │   │   │   ├── LoanLimitResultService.java               # 금융사 콜백 수신 처리
@@ -127,12 +128,6 @@ com.ghyinc.finance
 │   │   ├── service
 │   │   │   └── AuditLogWriter.java                 # 호출자 트랜잭션에서 audit_log 직접 INSERT (Kafka 미경유)
 │   │   └── entity / repository
-│   ├── kcbcredit                              # KCB 신용변동 파일 수신 · Spring Batch 처리
-│   │   ├── scheduler
-│   │   │   └── KcbFileIngestScheduler.java         # 매일 03:00, ShedLock + 파일명 이력 기반 멱등성 가드
-│   │   ├── file                                # KcbFilePoller / KcbFileProperties (신규 파일 탐색)
-│   │   ├── batch                               # Job/Step 설정, Reader 레이아웃(고정폭), Processor, Writer, JobListener
-│   │   └── dto / entity / enums / repository
 │   ├── auth                                   # JWT 로그인 · 토큰 재발급 (controller / service / security / dto)
 │   ├── user                                   # 회원 (Member, MemberRole)
 │   └── external                               # 외부 기관 API
@@ -167,7 +162,7 @@ com.ghyinc.finance
     │   ├── backoff                                 # JitteredExponentialBackOff
     │   └── dlq                                     # Kafka DLQ 처리
     │       ├── entity / repository                     # DlqEvent, DlqStatus
-    │       ├── DlqEventConsumer.java                   # DLT 토픽 수신 + Poison Pill 자동 분류
+    │       ├── DlqEventConsumer.java                   # [레거시·현재 미사용] .DLT 토픽 수신 + Poison Pill 분류
     │       ├── DlqRetryScheduler.java                  # 지수 백오프 자동 재시도
     │       └── PoisonPillClassifier.java               # Poison Pill 판별
     └── metrics                                # Micrometer 지표
@@ -194,18 +189,24 @@ FE → POST /api/loan/request-compare-loan
          │
          ▼
   LoanLimitService.requestCompareLoan()
-  ├── Redis 분산 락 (userId + loanType, 대기 0초) — 동시 중복 요청 차단
-  ├── 진행 중 조회(PENDING / IN_PROGRESS) 존재 여부 확인 → 있으면 거절
-  ├── Strategy 선택 (대출유형별) → validate()
-  ├── 외부데이터 조회 (Nice DNR, KB시세 등 — 필요한 유형만)
-  ├── 조회 가능 금융사 선정
-  │     ├── strategy.getSupportedBanks()       : 대출유형별 지원 금융사 (코드 레벨)
-  │     └── strategy.filterAvailablePartners() : 외부데이터 실패 시 해당 금융사 동적 제외
-  ├── strategy.toAdaptorRequest() — 금융사 전송용 공통 요청 DTO 생성
-  └── PersistenceService.createLoanLimitInquiry()      ◀ [Tx 0] 짧은 트랜잭션
-        ├── LoanLimitInquiry INSERT (inquiryNo 채번, PENDING)
-        ├── LoanLimitInquiryCreatedEvent 발행 (Spring 이벤트)
-        └── COMMIT 후 inquiryNo 포함 즉시 응답
+  ├── dedup_key 사전 조회 — 이미 있으면 락·외부 조회 비용 없이 즉시 거절
+  ├── Redis 분산 락 (userId + loanType, 대기 0초) — 동시 중복 요청 차단, 못 잡으면 "처리 중" 거절
+  └── LoanLimitInquiryCreator.processWithRedisLock()
+        ├── DispatchPlanner.plan()
+        │     ├── Strategy 선택 (대출유형별) → validate()
+        │     ├── 외부데이터 조회 (Nice DNR, KB시세 등 — 필요한 유형만)
+        │     ├── 조회 가능 금융사 선정
+        │     │     ├── strategy.getSupportedBanks()       : 대출유형별 지원 금융사 (코드 레벨)
+        │     │     └── strategy.filterAvailablePartners() : 외부데이터 실패 시 해당 금융사 동적 제외
+        │     └── strategy.toAdaptorRequest() — 금융사 전송용 공통 요청 DTO 생성
+        └── PersistenceService.createLoanLimitInquiry()  ◀ [Tx 0] 짧은 트랜잭션
+              ├── LoanLimitInquiry INSERT (inquiryNo 채번, PENDING, dedup_key 저장)
+              │     └── 락을 우회한 동시 요청은 여기서 unique 위반 → "오늘은 이미 한도조회를 진행했습니다"
+              ├── LoanLimitInquiryCreatedEvent 발행 (Spring 이벤트)
+              └── COMMIT 후 inquiryNo 포함 즉시 응답
+
+      ※ Redis 장애로 락 획득이 불가하면 DB 선점(processWithDbClaim)으로 전환 —
+        ACCEPTED 행을 먼저 INSERT해 dedup_key unique로 선점, 실패 시 FAILED + 키 해제
          │
          ▼ @TransactionalEventListener(AFTER_COMMIT)
   LoanLimitEventHandler.handleInquiryCreated()
@@ -239,6 +240,8 @@ FE → POST /api/loan/request-compare-loan
         └── FAILED가 아니면 완료 이벤트 Outbox INSERT (LOAN_LIMIT_COMPLETED) — 같은 트랜잭션, 원자적
 
       ※ ①②③ 어디서든 예외 발생 시 markFailed()로 Inquiry를 FAILED 처리 (best-effort)
+      ※ FAILED가 되면 dedup_key가 null로 해제되어 당일 재조회 가능 (SUCCESS / PARTIAL_SUCCESS는 유지 → 하루 1회)
+      ※ 프로세스 장애로 ACCEPTED/PENDING 등에 멈춘 건을 FAILED로 되돌리는 복구 배치는 미구현 (설계만 존재)
       ※ ①③은 별도 빈(PersistenceService)으로 분리 — 같은 클래스 내부 호출은 AOP 프록시를 우회해 @Transactional이 무효화됨
          │
          ▼ @TransactionalEventListener(AFTER_COMMIT)
@@ -254,7 +257,7 @@ FE → POST /api/loan/request-compare-loan
   └── applyRetryResult(): PUBLISHED / FAILED 반영 (REQUIRES_NEW, id로 재조회)
          │
          ▼ Kafka (loan-limit-completed)
-  LoanLimitCompletedEventConsumer (notification 도메인)   [@RetryableTopic: 지수 백오프 재시도 + DLT]
+  LoanLimitCompletedEventConsumer (notification 도메인)   [@RetryableTopic: 고정 지연 재시도(단일 토픽) + DLT]
   └── NotificationService → Notification INSERT + notification.send 이벤트 발행
          │
          ▼ Kafka (notification.send)
@@ -315,8 +318,6 @@ loan-limit-completed   loan → notification 도메인 간 이벤트 전달
 notification.send      notification 도메인 내부 비동기 발송 처리
                         Notification INSERT 후 실제 발송 분리
 
-※ 감사 로그(전송/콜백)는 Kafka 토픽을 사용하지 않습니다. 소비자가 audit_log 적재 하나뿐이라
-   같은 트랜잭션에서 audit_log에 직접 INSERT 합니다 (아래 "감사 로그와 SLA 지표" 참고).
 ```
 
 Outbox를 거치는 토픽은 `aggregateType`으로 분기하여 발행합니다.
@@ -365,7 +366,8 @@ LoanLimitResultAdaptorFactory  partnerCode → 콜백 수신 Adaptor
 
 ```
 LoanLimitSenderService        → 트랜잭션 없이 팬아웃 오케스트레이션
-LoanLimitInquiryPersistenceService → 최초 INSERT / preSave / applyResults / markFailed 각각 짧은 트랜잭션
+LoanLimitInquiryClaimService → claim / abort (REQUIRES_NEW, Redis 장애 시 DB 선점)
+LoanLimitInquiryPersistenceService → 최초 INSERT(createLoanLimitInquiry) · 완료(completeInquiry) / preSave / applyResults / markFailed 각각 짧은 트랜잭션
 LoanLimitCounterService       → 콜백 카운트 증가만 REQUIRES_NEW
 OutboxEventService            → 즉시발행(REQUIRES_NEW) / 배치 결과 반영(REQUIRES_NEW)
 ```
@@ -386,20 +388,20 @@ REST   → RestApiClient
 
 용도가 다른 작업이 한 풀에서 서로를 밀어내지 않도록 스레드풀을 5개로 분리했습니다.
 
-| Executor | core / max / queue | 거절 시 동작 | 역할 |
-|---|---|---|---|
-| `loanLimitExecutor` | 15 / 40 / 60 | `AbortPolicy` → 호출부에서 FAILED 보상 | 한도조회 팬아웃 오케스트레이션 (조회 1건이 팬아웃 완료까지 스레드 1개 점유) |
-| `partnerApiExecutor` | 300 / 400 / 50 | `AbortPolicy` → `THREAD_POOL_EXHAUSTED` fallback | 금융사별 병렬 API 호출 (I/O 대기 전용) |
-| `compensationExecutor` | 2 / 5 / 200 | 제출 실패 시 로그만 남기고 스킵 (best-effort) | `loanLimitExecutor` 포화 시 Inquiry FAILED 전환 전용 |
-| `outboxPublishExecutor` | 20 / 20 / 200 | 즉시발행 스킵 → PENDING으로 남아 배치가 처리 | Outbox 즉시 Kafka 발행 |
-| `outboxRetryExecutor` | 10 / 10 / 100 | `AbortPolicy` | Outbox 배치 재시도 병렬 발행 |
+| Executor | 거절 시 동작 | 역할 |
+|---|---|---|
+| `loanLimitExecutor` | `AbortPolicy` → 호출부에서 FAILED 보상 | 한도조회 팬아웃 오케스트레이션 (조회 1건이 팬아웃 완료까지 스레드 1개 점유) |
+| `partnerApiExecutor` | `AbortPolicy` → `THREAD_POOL_EXHAUSTED` fallback | 금융사별 병렬 API 호출 (I/O 대기 전용) |
+| `compensationExecutor` | 제출 실패 시 로그만 남기고 스킵 (best-effort) | `loanLimitExecutor` 포화 시 Inquiry FAILED 전환 전용 |
+| `outboxPublishExecutor` | 즉시발행 스킵 → PENDING으로 남아 배치가 처리 | Outbox 즉시 Kafka 발행 |
+| `outboxRetryExecutor` | `AbortPolicy` | Outbox 배치 재시도 병렬 발행 |
 
 **사이징 근거**
 
-- `partnerApiExecutor`는 Little's Law로 산정했습니다. 초당 20건 × 금융사 49곳 팬아웃 × 평균 응답 0.3초 ≈ 294 → `core=300`, `max=400`(HTTP 커넥션 풀 `maxTotal`과 동일). 큐는 짧은 버스트만 흡수하도록 작게(50) 두었습니다.
-- `loanLimitExecutor`는 팬아웃 대기 동안 스레드를 점유하는 구조라 `max`가 곧 동시에 진행 가능한 한도조회 수입니다. DB 커넥션 풀(`maximum-pool-size=150`)은 이 값에 콜백·Outbox 배치 등 다른 트랜잭션 경로 여유분을 더해서 잡았습니다.
+- `partnerApiExecutor`는 Little's Law(동시 처리량 ≈ 초당 요청 수 × 팬아웃 금융사 수 × 평균 응답시간)로 규모를 잡았고, 상한은 금융사 HTTP 커넥션 풀 크기와 맞췄습니다. 큐는 짧은 버스트만 흡수하도록 작게 두었습니다.
+- `loanLimitExecutor`는 팬아웃 대기 동안 스레드를 점유하는 구조라 최대 스레드 수가 곧 동시에 진행 가능한 한도조회 수입니다. DB 커넥션 풀은 이 값에 콜백·Outbox 배치 등 다른 트랜잭션 경로의 여유분을 더해서 잡았습니다.
 - `compensationExecutor`는 의도적으로 작게 두었습니다. `loanLimitExecutor`가 포화된 뒤에는 유입되는 모든 요청이 FAILED 보상 경로(새 트랜잭션, 새 DB 커넥션)를 동시에 타기 때문에, 이 경로를 요청 스레드에서 그대로 실행하면 executor 포화가 곧바로 DB 커넥션 풀 고갈로 번집니다. 전용 소형 풀로 위임해 **보상용으로 동시에 열리는 커넥션 수의 상한을 하드 캡**으로 걸었습니다.
-- `outboxRetryExecutor`는 `core = max`로 맞췄습니다. `ThreadPoolExecutor`는 bounded queue가 가득 차기 전에는 `core`를 넘겨 스레드를 늘리지 않으므로, `core`가 작으면 `max`가 있어도 실제 동시성이 `core`로 고정됩니다.
+- `outboxRetryExecutor`는 core와 max를 같게 맞췄습니다. `ThreadPoolExecutor`는 bounded queue가 가득 차기 전에는 core를 넘겨 스레드를 늘리지 않으므로, core가 작으면 max가 있어도 실제 동시성이 core로 고정됩니다.
 - `outboxPublishExecutor`를 파트너 API용 풀과 분리한 이유는 Kafka 장애 시 발행 스레드가 블로킹되더라도 금융사 호출 경로에 영향을 주지 않도록 하기 위해서입니다. 포화되면 발행을 건너뛰고 Outbox가 `PENDING`으로 남아 배치 재시도가 처리하므로 데이터는 유실되지 않습니다.
 
 풀이 포화되면 큐잉으로 지연을 숨기지 않고 `AbortPolicy`로 즉시 실패시킵니다. 포화 상태를 호출부에 빠르게 알려 장애를 조기에 드러내는 쪽을 택했습니다. 초기값은 계산으로 잡되, 실제 부하 테스트로 처리량이 꺾이는 지점을 확인해 조정합니다.
@@ -408,9 +410,9 @@ REST   → RestApiClient
 @Bean(name = "partnerApiExecutor")
 public Executor partnerApiExecutor() {
     ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-    executor.setCorePoolSize(300);   // Little's Law: 20 req/s × 49 팬아웃 × 0.3s ≈ 294
-    executor.setMaxPoolSize(400);    // partnerConnectionManager maxTotal과 동일하게
-    executor.setQueueCapacity(50);   // 짧은 버스트만 흡수
+    executor.setCorePoolSize(...);   // Little's Law 기반 산정
+    executor.setMaxPoolSize(...);    // 금융사 HTTP 커넥션 풀(maxTotal)과 정합
+    executor.setQueueCapacity(...);  // 짧은 버스트만 흡수
     executor.setTaskDecorator(new MdcTaskDecorator());
     executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
     executor.initialize();
@@ -426,9 +428,9 @@ public Executor partnerApiExecutor() {
 
 | 지점 | 문제 | 방어 방식 |
 |---|---|---|
-| 한도조회 요청 (동일 사용자 동시 요청) | 같은 `userId + loanType`으로 조회가 중복 생성됨 | Redis 분산 락(Redisson, 대기 0초) + 진행 중(PENDING / IN_PROGRESS) 조회 존재 여부 확인 |
+| 한도조회 요청 (동일 사용자 동시 요청) | 같은 `userId + loanType`으로 조회가 중복 생성됨 | Redis 분산 락(Redisson, 대기 0초) + `dedup_key` unique 제약(하루 1회) — Redis 장애 시 DB 선점으로 전환 |
 | 팬아웃 대기 구간 | 금융사 응답을 기다리는 동안 DB 커넥션을 붙잡아 커넥션 풀 고갈 | 트랜잭션을 선저장 / 결과반영 두 구간으로 분리, 팬아웃 대기는 무트랜잭션 — [핵심 아키텍처](#architecture) |
-| Executor 포화 | 포화 후 유입되는 요청이 모두 보상 트랜잭션(새 커넥션)을 요구 | 전용 `compensationExecutor`(최대 5)로 동시 보상 수 제한 |
+| Executor 포화 | 포화 후 유입되는 요청이 모두 보상 트랜잭션(새 커넥션)을 요구 | 전용 `compensationExecutor`로 동시 보상 수 제한 |
 | 콜백 수신 (다수 금융사 동시 응답) | `LoanLimitInquiry` count Lost Update, 행 락 대기 중 커넥션 점유 | 원자적 UPDATE를 `REQUIRES_NEW`로 분리해 즉시 커밋 — [콜백 동시성 제어](#callback-concurrency) |
 | 상품 정보 캐싱 | 캐시 미스 시 다수 스레드의 중복 조회(Cache Stampede) | Redis 분산 락(Redisson) + 더블 체크 — [캐싱 전략](#caching-strategy) |
 | 인바운드 트래픽 | 멀티 인스턴스 환경에서 로컬 Rate Limiter로는 전체 TPS 제한 불가 | Redis 공유 카운터 기반 Bucket4j — [인바운드 트래픽 방어](#inbound-rate-limiting) |
@@ -1078,13 +1080,9 @@ notification.send (원본 토픽)
       │     → 재시도 없이 즉시 -dlt 토픽으로 이동
       │
       └── 그 외 예외
-            → notification.send-retry-0 (약 1초 뒤, ±jitter)
-                  │ 실패
-                  ▼
-            notification.send-retry-1 (약 2초 뒤, ±jitter)
-                  │ 실패
-                  ▼
-            notification.send-retry-2 (약 4초 뒤, ±jitter)
+            → notification.send-retry (5초 뒤 재시도 1회차)
+                  │ 실패 → 같은 -retry 토픽으로 재발행 (5초 뒤 2회차)
+                  │ 실패 → 같은 -retry 토픽으로 재발행 (5초 뒤 3회차)
                   │ 실패 (최대 attempts 소진)
                   ▼
             notification.send-dlt
@@ -1094,15 +1092,52 @@ notification.send (원본 토픽)
 ```
 
 원본 토픽 `notification.send`는 이 과정 내내 멈추지 않습니다 — 실패한 메시지는 즉시 재시도 토픽으로 넘어가고,
-원본 파티션은 바로 다음 메시지를 계속 처리합니다. 각 `-retry-N` 토픽은 독립된 파티션(`numPartitions`)을
-가지므로, 특정 재시도 단계에 적체가 생겨도 그 단계만 컨슈머를 늘려 대응할 수 있습니다.
+원본 파티션은 바로 다음 메시지를 계속 처리합니다.
+
+#### As-Is → To-Be: 블로킹 재시도에서 단일 재시도 토픽 기반 논블로킹 재시도로
+
+**As-Is** — `@RetryableTopic` 없이 `@KafkaListener`만 사용하고, 재시도·DLT 이동은 `DefaultErrorHandler`(`errorHandler`)가 처리했습니다.
+
+```java
+// @RetryableTopic 없음
+@KafkaListener(topics = "loan-limit-completed", groupId = "loan-limit-completed-group")
+public void consume(String payload, ConsumerRecord<String, String> record)
+```
+
+- 재시도: `JitteredExponentialBackOff`(1초 → 2초 → 4초 상한, ±30% jitter, 최대 3회)로 **같은 파티션에서 제자리 재시도(seek)**
+- 한계: 재시도 중에는 해당 파티션의 **뒤 메시지도 함께 멈춤**(블로킹). 소진 후 `.DLT`로 이동하고 `DlqEventConsumer` → `DlqEvent` 테이블 → `DlqRetryScheduler`(30초 주기)가 원본 토픽에 재발행
+
+**To-Be** — `@RetryableTopic`으로 전환해 재시도를 원본이 아닌 **별도 재시도 토픽 1개(`-retry`)**에서 수행합니다.
+
+```java
+@RetryableTopic(attempts = "4", backoff = @Backoff(delay = 5000),
+                sameIntervalTopicReuseStrategy = SameIntervalTopicReuseStrategy.SINGLE_TOPIC, ...)
+@KafkaListener(topics = "loan-limit-completed", groupId = "loan-limit-completed-group")
+```
+
+- 얻은 것 ① 논블로킹: 실패 메시지는 즉시 `-retry` 토픽으로 넘어가 원본 파티션이 막히지 않음
+- 얻은 것 ② 관리 토픽 고정: 원본 토픽당 `-retry`, `-dlt` 2개. 재시도 횟수(attempts)를 바꿔도 토픽 수가 늘지 않음
+- 얻은 것 ③ 재시도 일정이 Kafka(토픽)에 있으므로 DB 폴링 스케줄러(`DlqRetryScheduler`)에 의존하지 않음
+
+**왜 재시도 토픽을 1개로 고정했는가** — 지수 백오프를 유지한 채 `@RetryableTopic`을 쓰면 논블로킹 재시도는 지연 값마다
+별도 토픽이 필요해서 `-retry-0/1/2`처럼 단계별 토픽이 생깁니다. 운영 환경에서는 앱의 토픽 생성 권한이 제한되는 경우가
+많고(브로커 `auto.create.topics.enable=false`, 토픽은 사전 승인·IaC로 관리), 원본 토픽 수에 비례해 관리 대상 토픽이
+늘어납니다. 그래서 **재시도 지연을 고정값(5초)으로 맞춰 재시도 토픽을 1개로 줄였습니다.** 같은 지연으로 들어온 메시지는
+도착 순서대로 만료되므로 한 토픽에서 순서대로 지연을 기다려도 뒤 메시지가 막히지 않고, 그래서 토픽을 공유할 수 있습니다
+(`SameIntervalTopicReuseStrategy.SINGLE_TOPIC`).
+
+**트레이드오프**
+- 포기한 것: 지수 백오프와 jitter. 제휴사처럼 오래 지속되는 장애에서는 5초 간격 3회 시도한 뒤 DLT로 이동합니다.
+- 대안: 재시도 토픽 없이 기존 `DefaultErrorHandler`로 같은 파티션에서 블로킹 재시도(지수 백오프 유지, 대신 재시도 중 파티션 정지).
 
 ```java
 @RetryableTopic(
-        attempts = "4",
-        backoff = @Backoff(delayExpression = "1000", multiplierExpression = "2.0",
-                            maxDelayExpression = "10000", random = true),   // ±jitter로 동시 재시도 몰림 방지
+        attempts = "4",                                   // 최초 1회 + 재시도 3회
+        backoff = @Backoff(delay = 5000),                 // 고정 지연 → 재시도 토픽 1개 공유
+        sameIntervalTopicReuseStrategy = SameIntervalTopicReuseStrategy.SINGLE_TOPIC,
         listenerContainerFactory = "retryableTopicListenerContainerFactory",
+        autoCreateTopics = "${app.kafka.auto-create-topics:false}",   // 운영은 false (사전 생성), local만 true
+        dltStrategy = DltStrategy.FAIL_ON_ERROR,
         exclude = { KafkaMessageDeserializationException.class, IllegalArgumentException.class }
 )
 @KafkaListener(topics = "notification.send", groupId = "notification-send-group")
@@ -1118,6 +1153,18 @@ public void handleDlt(...) { ... }  // 재시도 소진 - DlqEvent(DEAD) 기록,
 > `errorHandler`(지수 백오프+jitter, `.DLT` 라우팅) + `kafkaListenerContainerFactory` 조합은
 > 아직 `@RetryableTopic`으로 전환하지 않은 나머지 Consumer에 계속 쓰입니다.
 
+#### 운영 토픽 사전 생성
+
+`auto-create-topics=false`(기본값)에서는 앱이 토픽을 만들지 않으므로 다음 토픽을 미리 만들어야 합니다.
+
+| 원본 토픽 | 재시도 토픽 | DLT |
+|---|---|---|
+| `notification.send` | `notification.send-retry` | `notification.send-dlt` |
+| `loan-limit-completed` | `loan-limit-completed-retry` | `loan-limit-completed-dlt` |
+
+재시도 토픽과 DLT는 원본과 같은 파티션 번호로 발행되므로 **파티션 수가 원본 이상**이어야 합니다.
+`@RetryableTopic`의 DLT 이름(`-dlt`)은 `DefaultErrorHandler` 경로의 `.DLT`와 다른 토픽입니다.
+
 `@DltHandler`는 재시도 토픽 체인을 전부 소진한 뒤 도달하는 마지막 지점이라, 여기서 다시 예외가 나면
 (`dltStrategy = DltStrategy.FAIL_ON_ERROR`) 같은 메시지를 무한 재처리하게 됩니다. 그래서 내부 로직 전체를
 try-catch로 감싸 어떤 상황에서도 예외를 밖으로 던지지 않도록 구현했습니다.
@@ -1132,15 +1179,17 @@ try-catch로 감싸 어떤 상황에서도 예외를 밖으로 던지지 않도�
 묶여 있어 장애 발생 시 재처리량 자체가 병목이 될 수 있습니다.
 
 `@RetryableTopic`은 재시도를 원본 토픽이 아닌 별도 토픽에서 수행하므로 원본 파티션이 막히지 않고, 재시도
-단계별로 독립적인 파티션/컨슈머를 가져 수평 확장이 가능합니다. 이에 따라 `DlqEventConsumer`,
+전용 토픽/컨슈머를 가져 원본과 독립적으로 처리됩니다. 이에 따라 `DlqEventConsumer`,
 `DlqRetryScheduler`, `dlqErrorHandler`/`dlqKafkaListenerContainerFactory`는 `notification.send`/
 `loan-limit-completed` 두 토픽에 대해서는 더 이상 쓰이지 않고, `@DltHandler`가 그 역할(최종 실패 기록)을
 대신합니다. 아직 `@RetryableTopic`으로 전환하지 않은 Consumer가 있다면 기존 DB 폴링 방식이 계속 그 Consumer를
 커버합니다.
 
-### DLT 수신 대상
+### DLT 처리 대상
 
-`DlqEventConsumer`는 `loan-limit-completed.DLT`, `notification.send.DLT` 두 토픽을 구독하며(그룹 `notification-dlq-group`), 예외 종류로 Poison Pill(→ `DEAD`, 영구 보관)과 일시 장애(→ `PENDING`, `nextRetryAt`을 지정해 자동 재시도)를 분류해 `DlqEvent`로 저장합니다. 재시도는 `DlqRetryScheduler`가 30초 주기(ShedLock)로 처리합니다. `audit.*` 토픽의 DLT는 이 컨슈머의 대상이 아닙니다.
+`loan-limit-completed`, `notification.send`의 최종 실패 메시지는 `@RetryableTopic`의 `-dlt` 토픽에서
+각 Consumer의 `@DltHandler`가 `DlqEvent(DEAD)`로 기록합니다. DEAD 건의 재처리는 자동화되어 있지 않고
+운영자가 `dlq_event`를 확인해 수동으로 처리합니다.
 
 ### Poison Pill 판별 기준
 
@@ -1389,10 +1438,9 @@ CaffeineCacheManager → "cryptoService" 캐시, TTL 1시간, 최대 100개
 
 ```
 1) DB 비관적 락(PESSIMISTIC_WRITE) → 락 보유 시간이 트랜잭션 전체 길이만큼이라, 동일 Inquiry에 다수 금융사 콜백이 몰리면 순차 대기
-2) Redis 분산 락            → leaseTime 고정 시 GC pause 중 락 만료로 상호배제가 깨질 수 있음 (fencing token 부재)
-3) 원자적 UPDATE 단독       → 락은 UPDATE 문장이 아니라 "그 UPDATE가 속한 트랜잭션이 커밋될 때까지" 유지됨
+2) 원자적 UPDATE 단독       → 락은 UPDATE 문장이 아니라 "그 UPDATE가 속한 트랜잭션이 커밋될 때까지" 유지됨
                               → 호출부와 같은 트랜잭션이면 이후 flush / Outbox INSERT / commit까지 row lock을 붙든 채 대기 (커넥션도 함께 점유)
-4) 원자적 UPDATE + REQUIRES_NEW 분리 (현재)
+3) 원자적 UPDATE + REQUIRES_NEW 분리 (현재)
 ```
 
 ### 현재 구조
@@ -1508,8 +1556,13 @@ CB 상태 전환·Retry·Rate Limiter 이벤트는 각각 `CircuitBreakerEventLi
 
 | 영역 | 테스트 클래스 | 검증 항목 |
 |---|---|---|
-| 한도조회 (loan) | LoanLimitServiceTest | 한도조회 요청 비즈니스 로직 (중복 요청 방어, Strategy 연동) |
-| | LoanLimitInquiryPersistenceServiceTest | 최초 INSERT / 선저장 / 결과반영 / FAILED 처리 각 트랜잭션 구간 |
+| 한도조회 (loan) | LoanLimitServiceTest | 중복 방어 오케스트레이션 (dedup_key 사전 조회 → Redis 락 → 장애 시 DB 선점 전환) |
+| | LoanLimitInquiryCreatorTest | Redis 락 경로 / DB 선점 경로 (unique 위반 변환, 실패 시 abort) |
+| | LoanLimitDispatchPlannerTest | 검증 · 외부 데이터 · 금융사 선정 |
+| | LoanLimitInquiryClaimServiceTest | claim / abort, REQUIRES_NEW |
+| | LoanLimitInquiryPersistenceServiceTest | 최초 INSERT·완료 / 선저장 / 결과반영 / FAILED 처리 각 트랜잭션 구간 |
+| | LoanLimitInquiryTest | dedupKeyOf, FAILED 시 슬롯 해제 |
+| | LoanLimitInquiryRepositoryTest | dedup_key unique, 동시 선점, transit / failIfAccepted CAS (H2) |
 | | LoanLimitEventHandlerTest | AFTER_COMMIT 팬아웃 제출, executor 포화 시 보상 처리 |
 | | LoanLimitSenderServiceTest | 비동기 팬아웃 및 fallback(CB_OPEN / RATE_LIMIT / BULKHEAD / THREAD_POOL_EXHAUSTED) 상태 처리 |
 | | LoanLimitResultServiceTest, LoanLimitCounterServiceTest | 콜백 수신, 중복·처리불가 skip, 카운트 원자적 증가, 감사 로그 INSERT |

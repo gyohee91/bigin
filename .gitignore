@@ -37,3 +37,7 @@ out/
 .vscode/
 
 kafka.md
+.gitignore
+*docker*
+dashboards.yml
+datasource.yml
