@@ -185,7 +185,7 @@ FE → POST /api/loan/request-compare-loan
          │
          ▼
   InboundRateLimiterFilter                          [HTTP 요청 스레드]
-  └── Bucket4j + Redis, 클라이언트(IP)당 초당 20건 초과 시 429 (인스턴스 수와 무관)
+  └── Bucket4j + Redis, 클라이언트(IP)당 일정 기준 초과 시 429 (인스턴스 수와 무관)
          │
          ▼
   LoanLimitService.requestCompareLoan()
@@ -733,7 +733,7 @@ public RedissonBasedProxyManager<String> bucket4jProxyManager(RedissonClient red
 `Retry-After` 헤더로 즉시 응답합니다.
 
 ```
-클라이언트(IP)당 초당 20건
+클라이언트(IP)당 초당 설정한 값
   → 초과 시 대기 없이 즉시 429 (컨트롤러/서비스 레이어 진입 자체를 차단)
   → 버킷 상태는 Redis에 저장 - 인스턴스 수와 무관하게 동일한 한도 적용
 ```
