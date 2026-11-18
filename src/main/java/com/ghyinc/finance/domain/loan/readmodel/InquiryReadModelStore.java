@@ -30,8 +30,34 @@ public class InquiryReadModelStore {
 
     private volatile long downUntil = 0L;
 
+    /**
+     * 쓰기(seed/delta 공용). KEYS: meta, rank, items, stg
+     * ARGV: mode(S|D), ttlSec, nowMs, total(-1=유지), status(''=유지), [member, score, stage, json]*
+     *
+     *  - 단계(stage)가 낮아지는 쓰기는 무시 → 순서 역전/재구성(rebuild)과 delta 경합에도 안전(단조 병합)
+     *  - delta(D)는 meta가 없으면 아무것도 만들지 않는다(부분 스냅샷 금지) → -1 반환
+     *  - ver: 신규 생성 시 epoch ms(재구성 후 버전 충돌 방지), 이후 변경이 있을 때만 +1
+     *  - success는 stg의 stage==2 개수로 매번 재계산(멱등)
+     */
     private static final String WRITE_LUA =
                         """
+                        -- [WRITE] 읽기모델 반영 (seed / delta)
+                        -- KEYS[1] poll:{no}:meta  HASH  ver, total, success, status, term, syncedAt
+                        -- KEYS[2] poll:{no}:rank  ZSET  member=loReqtNo, score=금액(null 은 -1)
+                        -- KEYS[3] poll:{no}:items HASH  loReqtNo -> 항목 DTO JSON
+                        -- KEYS[4] poll:{no}:stg   HASH  loReqtNo -> stage (0=PENDING, 1=SEND_*, 2=SUCCESS)
+                        --
+                        -- ARGV[1] mode    'S'=seed(DB 스냅샷 적재), 'D'=delta(이벤트 반영, meta 없으면 -1 반환)
+                        -- ARGV[2] ttl     초
+                        -- ARGV[3] now     epoch ms (최초 생성 시 ver 의 기준, seed 시 syncedAt)
+                        -- ARGV[4] total   전체 상품 수 (음수면 total 갱신 안 함)
+                        -- ARGV[5] status  조회 상태 ('' 이면 갱신 안 함)
+                        -- ARGV[6..]       항목 반복 (4개씩): member, score, stage, json
+                        --
+                        -- 반환: 현재 ver (delta 인데 meta 가 없으면 -1)
+                        -- 주의: 큰 수는 string.format('%.0f') 로 출력할 것 (일부 Windows Redis 빌드는 %d 가 32bit)
+                        local mode   = ARGV[1]
+                        local ttl    = tonumber(ARGV[2])
                         local mode   = ARGV[1]
                         local ttl    = tonumber(ARGV[2])
                         local now    = tonumber(ARGV[3])
@@ -93,8 +119,28 @@ public class InquiryReadModelStore {
                         for i = 1, 4 do redis.call('EXPIRE', KEYS[i], ttl) end
                         return ver
                         """;
+
+    /**
+     * 읽기. KEYS: meta, rank, items
+     * ARGV: clientVer(''=없음), offset, limit, nowMs, reconcileMs
+     * 반환: {'MISS'} | {'STALE'} | {'SAME', ver} | {'OK', ver, total, success, status, card, json...}
+     */
     private static final String READ_LUA =
                         """
+                        -- [READ] 폴링 조회
+                        -- KEYS[1] meta, KEYS[2] rank, KEYS[3] items  (WRITE_LUA 의 KEYS[1..3] 과 동일)
+                        --
+                        -- ARGV[1] clientVer  클라이언트가 가진 ver ('' 이면 최초 조회)
+                        -- ARGV[2] offset     ZREVRANGE 시작 위치
+                        -- ARGV[3] limit      페이지 크기
+                        -- ARGV[4] now        epoch ms
+                        -- ARGV[5] reconcile  ms. 진행 중(term!=1)인데 now-syncedAt 이 이보다 크면 STALE
+                        --
+                        -- 반환(List):
+                        --   {'MISS'}                          meta 없음
+                        --   {'STALE'}                         진행 중이고 오래 동기화되지 않음 -> DB 재구성 필요
+                        --   {'SAME', ver}                     clientVer 와 동일 -> 본문 생략
+                        --   {'OK', ver, total, success, status, card, json...}   (Java 의 R_* 상수와 같은 순서)
                         local m = redis.call('HMGET', KEYS[1], 'ver', 'total', 'success', 'status', 'term', 'syncedAt')
                         if not m[1] then return {'MISS'} end
             
@@ -121,6 +167,24 @@ public class InquiryReadModelStore {
     private final long ttlSec;
     private final long reconcileMs;
     private final long downBackoffMs;
+
+    // ── WRITE_LUA 인자 규약 ─────────────────────────────────────────
+    // ARGV[1..5] 헤더: mode, ttl, now, total,status
+    // ARGV[6..]  항목: (member, score, stage, json) x N
+    private static final String MODE_SEED = "S";
+    private static final String MODE_DELTA = "D";
+    private static final int WRITE_HEADER_SIZE = 5;
+    private static final int WRITE_TIME_SIZE = 4;
+    private static final long NULL_AMOUNT_SCORE = -1L;  // 금액 null -> 맨 뒤
+
+    // ── READ_LUA 응답 규약 : {code, ver, total, success, status, card, json...} ──
+    private static final int R_CODE = 0;
+    private static final int R_VER = 1;
+    private static final int R_TOTAL = 2;
+    private static final int R_SUCCESS = 3;
+    private static final int R_STATUS = 4;
+    private static final int R_CARD = 5;
+    private static final int R_ITEM_FROM = 6;   // 이 인덱스부터 항목 JSON
 
     private final RedisScript<Long> writeScript = new DefaultRedisScript<>(WRITE_LUA, Long.class);
     private final RedisScript<List> readScript = new DefaultRedisScript<>(READ_LUA, List.class);
@@ -183,17 +247,19 @@ public class InquiryReadModelStore {
 
     public boolean upsert(String inquiryNo, boolean seed, int total, String status, List<LoanLimitProductResultDto> items) {
         try {
-            List<Object> args = new ArrayList<>(5 + items.size() * 4);
-            args.add(seed ? "S" : "D");
-            args.add(String.valueOf(ttlSec));
-            args.add(String.valueOf(System.currentTimeMillis()));
-            args.add(String.valueOf(total));
-            args.add(status == null ? "" : status);
-            for(LoanLimitProductResultDto d : items) {
-                args.add(d.loReqtNo());
-                args.add(String.valueOf(d.amount() == null ? -1L : d.amount()));    // 금액 null -> -1(맨뒤)
-                args.add(String.valueOf(stage(d.status())));
-                args.add(objectMapper.writeValueAsString(d));
+            List<Object> args = new ArrayList<>(WRITE_HEADER_SIZE + items.size() * WRITE_TIME_SIZE);
+            args.add(seed ? MODE_SEED : MODE_DELTA);                // ARGV[1] mode
+            args.add(String.valueOf(ttlSec));                       // ARGV[2] ttl
+            args.add(String.valueOf(System.currentTimeMillis()));   // ARGV[3] now
+            args.add(String.valueOf(total));                        // ARGV[4] total
+            args.add(status == null ? "" : status);                 // ARGV[5] status
+
+            // 항목 (member, score, stage, json)
+            for(LoanLimitProductResultDto dto : items) {
+                args.add(dto.loReqtNo());
+                args.add(String.valueOf(dto.amount() == null ? NULL_AMOUNT_SCORE : dto.amount()));    // 금액 null -> -1(맨뒤)
+                args.add(String.valueOf(stage(dto.status())));
+                args.add(objectMapper.writeValueAsString(dto));
             }
 
             Long version;
@@ -226,17 +292,19 @@ public class InquiryReadModelStore {
         try {
             List<String> keyList = keys(inquiryNo);
 
+            // REDIS_LUA ARGV 순서: clientVer, offset, limit, now, reconcile
+            String clientVer    = clientVersion != null ? "" : String.valueOf(clientVersion);
+            String offset       = String.valueOf(page * size);
+            String limit        = String.valueOf(size);
+            String now          = String.valueOf(System.currentTimeMillis());
+            String reconcile    = String.valueOf(reconcileMs);
+
             List<?> redisList;
             Timer.Sample sample = Timer.start(meterRegistry);
             String outcome = "error";
             try {
                 redisList = redis.execute(readScript, keyList.subList(0, 3),
-                        clientVersion == null ? "" : String.valueOf(clientVersion),
-                        String.valueOf(page * size),
-                        String.valueOf(size),
-                        String.valueOf(System.currentTimeMillis()),
-                        String.valueOf(reconcileMs)
-                );
+                        clientVer, offset, limit, now, reconcile);
                 outcome = "ok";
             } finally {
                 this.stopTimer(sample, "read", outcome);
@@ -247,26 +315,26 @@ public class InquiryReadModelStore {
                 return ReadResult.of(Type.MISS);
             }
 
-            String code = String.valueOf(redisList.get(0));
+            String code = String.valueOf(redisList.get(R_CODE));
             switch (code) {
                 case "SAME" -> {
                     this.count("unchanged");
-                    return new ReadResult(Type.SAME, Long.parseLong(String.valueOf(redisList.get(1))),
+                    return new ReadResult(Type.SAME, Long.parseLong(String.valueOf(redisList.get(R_VER))),
                             0, 0, null, 0, List.of());
                 }
                 case "OK" -> {
                     this.count("hit");
-                    List<String> json = new ArrayList<>();
-                    for (int i = 6; i < redisList.size(); i++) {
+                    List<String> json = new ArrayList<>(Math.max(0, redisList.size() - R_ITEM_FROM));
+                    for (int i = R_ITEM_FROM; i < redisList.size(); i++) {
                         json.add(String.valueOf(redisList.get(i)));
                     }
                     return new ReadResult(
                             Type.OK,
-                            Long.parseLong(String.valueOf(redisList.get(1))),
-                            Integer.parseInt(String.valueOf(redisList.get(2))),
-                            Integer.parseInt(String.valueOf(redisList.get(3))),
-                            String.valueOf(redisList.get(4)),
-                            Long.parseLong(String.valueOf(redisList.get(5))),
+                            Long.parseLong(String.valueOf(redisList.get(R_VER))),
+                            Integer.parseInt(String.valueOf(redisList.get(R_TOTAL))),
+                            Integer.parseInt(String.valueOf(redisList.get(R_SUCCESS))),
+                            String.valueOf(redisList.get(R_STATUS)),
+                            Long.parseLong(String.valueOf(redisList.get(R_CARD))),
                             json
                     );
                 }
