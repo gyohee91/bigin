@@ -1,0 +1,40 @@
+# 운영에서 값이 달라지는 설정만 둔다. 나머지는 jar 안 application.yaml 기본값을 따른다.
+# 비밀값은 여기에 쓰지 않는다 → Secret(bigin-secret) 의 환경변수로 주입.
+
+# 로컬 기본값(ddl-auto: create, H2 콘솔, schema.sql 자동 실행)을 운영에 그대로 두면
+# 롤링 재시작마다 스키마가 재생성될 수 있다. 운영 DB 스키마는 사전 마이그레이션을 전제로 끈다.
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  sql:
+    init:
+      mode: never
+  h2:
+    console:
+      enabled: false
+  batch:
+    jdbc:
+      initialize-schema: never
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true       # /actuator/health/liveness, /readiness 제공
+
+# 인프라 접속 정보 — 환경에 맞게 채울 것
+#   spring.datasource.url         : <운영 DB JDBC URL>  (사용자/비밀번호는 Secret 환경변수)
+#   spring.data.redis.host        : <운영 Redis 호스트>
+#   spring.kafka.bootstrap-servers: <운영 Kafka 브로커>
+
+# 제휴사 호출 설정 — 인스턴스 간에 값이 어긋나면 안 되는 값
+# resilience4j:
+#   ratelimiter:
+#     instances:
+#       KAKAO_BANK:
+#         limit-for-period: <제휴사 계약 TPS ÷ 파드 수>   # 파드 수가 바뀌면 함께 갱신
+#   bulkhead:
+#     instances:
+#       inboundRateLimiterRedis:
+#         max-concurrent-calls: <부하 테스트로 결정>

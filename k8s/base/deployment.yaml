@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bigin
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5     # 롤백(rollout undo) 가능 횟수 = 이전 ConfigMap 보존 대상
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0       # 새 Pod가 Ready되기 전에는 기존 Pod를 내리지 않는다
+  selector:
+    matchLabels:
+      app: bigin
+  template:
+    metadata:
+      labels:
+        app: bigin
+    spec:
+      terminationGracePeriodSeconds: 60   # preStop(10s) + Spring graceful shutdown(30s) 보다 길게
+      containers:
+        - name: bigin
+          image: bigin:latest             # 배포 시 CI에서 이미지 태그로 치환
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: prod
+            - name: SPRING_CONFIG_ADDITIONAL_LOCATIONA
+              value: optional:file:/config/
+          envFrom:
+            - secretRef:
+                name: bigin-secret        # DB 비밀번호, JWT 시크릿, 웹훅 URL (ConfigMap에 넣지 않는다)
+          volumeMounts:
+            - name: app-config
+              mountPath: /config
+              readOnly: true
+          # /actuator/health 는 Redis·Kafka 등 외부 의존성까지 합산한다
+          # Redis 장애 시 폴백으로 서비스를 유지하는 설계이므로 readiness 는 전용 그룹만 본다
+          startupProbe:
+            httpGet: { path: /actuator/health/liveness, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /actuator/health/readiness, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /actuator/health/liveness, port: 8080 }
+            periodSeconds: 10
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 10"]   # 엔드포인트 제거가 전파될 시간 (이미지에 sh 필요)
+      volumes:
+        - name: app-config
+          configMap:
+            name: bigin-config        # kustomize가 해시 접미사가 붙은 이름으로 치환
