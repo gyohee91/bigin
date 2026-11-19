@@ -293,7 +293,7 @@ public class InquiryReadModelStore {
             List<String> keyList = keys(inquiryNo);
 
             // REDIS_LUA ARGV 순서: clientVer, offset, limit, now, reconcile
-            String clientVer    = clientVersion != null ? "" : String.valueOf(clientVersion);
+            String clientVer    = clientVersion == null ? "" : String.valueOf(clientVersion);
             String offset       = String.valueOf(page * size);
             String limit        = String.valueOf(size);
             String now          = String.valueOf(System.currentTimeMillis());
