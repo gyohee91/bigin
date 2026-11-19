@@ -11,6 +11,6 @@ import org.springframework.retry.annotation.EnableRetry;
  */
 @Configuration
 @EnableRetry
-@EnableConfigurationProperties()
+@EnableConfigurationProperties(ErrorMonitorProperties.class)
 public class ErrorMonitorConfig {
 }

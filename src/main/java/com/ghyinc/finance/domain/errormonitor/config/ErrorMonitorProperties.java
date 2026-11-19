@@ -26,4 +26,8 @@ public class ErrorMonitorProperties {
         private boolean enabled = false;
         private String webhookUrl;
     }
+
+    public long thresholdOf(String errorType) {
+        return thresholds.getOrDefault(errorType, defaultThreshold);
+    }
 }
