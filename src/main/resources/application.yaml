@@ -910,7 +910,7 @@ error-monitor:
 polling:
   read-model:
     enabled: false          # 실행 시 -Dpolling.read-model.enabled=true 로 켠다
-    ttl-seconds: 3600
+    ttl-seconds: 180
     reconcile-seconds: 15   # 종료 전 조회건은 이 간격마다 DB로 재조정
     down-backoff-ms: 3000   # Redis 오류 후 이 시간 동안 DB fallback
 

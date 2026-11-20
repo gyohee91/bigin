@@ -33,7 +33,7 @@ public class InquiryReadModelStore {
     /**
      * 쓰기(seed/delta 공용). KEYS: meta, rank, items, stg
      * ARGV: mode(S|D), ttlSec, nowMs, total(-1=유지), status(''=유지), [member, score, stage, json]*
-     *
+     * <p>
      *  - 단계(stage)가 낮아지는 쓰기는 무시 → 순서 역전/재구성(rebuild)과 delta 경합에도 안전(단조 병합)
      *  - delta(D)는 meta가 없으면 아무것도 만들지 않는다(부분 스냅샷 금지) → -1 반환
      *  - ver: 신규 생성 시 epoch ms(재구성 후 버전 충돌 방지), 이후 변경이 있을 때만 +1
@@ -194,7 +194,7 @@ public class InquiryReadModelStore {
             ObjectMapper objectMapper,
             MeterRegistry meterRegistry,
             @Value("${polling.read-model.enabled:false}") boolean enabled,
-            @Value("${polling.read-model.ttl-seconds:3600}") long ttlSec,
+            @Value("${polling.read-model.ttl-seconds:180}") long ttlSec,
             @Value("${polling.read-model.reconcile-seconds:15}") long reconcileMs,
             @Value("${polling.read-model.down-backoff-ms:3000}") long downBackoffMs) {
         this.redis = redis;
