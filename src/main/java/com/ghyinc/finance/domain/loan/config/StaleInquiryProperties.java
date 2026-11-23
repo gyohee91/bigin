@@ -1,4 +1,4 @@
-package com.ghyinc.finance.global.config;
+package com.ghyinc.finance.domain.loan.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;

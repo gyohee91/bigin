@@ -13,6 +13,7 @@ import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.factory.LoanLimitAdaptorFactory;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
+import com.ghyinc.finance.domain.loan.config.InquiryPollingProperties;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.global.exception.ExternalApiFailException;
 import com.ghyinc.finance.global.metrics.PartnerSlaMetrics;
@@ -76,10 +77,13 @@ class LoanLimitSenderServiceTest {
     @Mock
     private PartnerSlaMetrics partnerSlaMetrics;
 
+    @Mock
+    private InquiryPollingProperties properties;
+
     @BeforeEach
     void setUp() {
         LoanLimitInquiryPersistenceService persistenceService = new LoanLimitInquiryPersistenceService(
-                loanLimitInquiryRepository, productService, outboxEventWriter, auditLogWriter, partnerSlaMetrics, generator, applicationEventPublisher
+                loanLimitInquiryRepository, productService, outboxEventWriter, auditLogWriter, partnerSlaMetrics, generator, properties, applicationEventPublisher
         );
 
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

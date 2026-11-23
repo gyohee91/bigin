@@ -17,6 +17,7 @@ import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelEvent;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
+import com.ghyinc.finance.domain.loan.config.InquiryPollingProperties;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.global.event.LoanLimitInquiryCreatedEvent;
 import com.ghyinc.finance.global.outbox.service.OutboxEventWriter;
@@ -76,13 +77,16 @@ class LoanLimitInquiryPersistenceServiceTest {
     private LoReqtNoGenerator generator;
 
     @Mock
+    private InquiryPollingProperties properties;
+
+    @Mock
     private ApplicationEventPublisher applicationEventPublisher;
 
     @BeforeEach
     void setUp() {
         persistenceService = new LoanLimitInquiryPersistenceService(
                 loanLimitInquiryRepository, productService, outboxEventWriter, auditLogWriter,
-                partnerSlaMetrics, generator, applicationEventPublisher
+                partnerSlaMetrics, generator, properties, applicationEventPublisher
         );
     }
 

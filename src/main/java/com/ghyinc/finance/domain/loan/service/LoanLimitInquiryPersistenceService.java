@@ -16,6 +16,7 @@ import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelEvent;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.global.common.LoReqtNoGenerator;
+import com.ghyinc.finance.domain.loan.config.InquiryPollingProperties;
 import com.ghyinc.finance.global.event.LoanLimitCompletedEvent;
 import com.ghyinc.finance.global.event.LoanLimitInquiryCreatedEvent;
 import com.ghyinc.finance.global.event.PartnerTransmissionAuditEvent;
@@ -64,6 +65,7 @@ public class LoanLimitInquiryPersistenceService {
     private final AuditLogWriter auditLogWriter;
     private final PartnerSlaMetrics partnerSlaMetrics;
     private final LoReqtNoGenerator generator;
+    private final InquiryPollingProperties properties;
 
     private final ApplicationEventPublisher applicationEventPublisher;
 
@@ -272,7 +274,7 @@ public class LoanLimitInquiryPersistenceService {
                         .build()
         );
 
-        return LoanLimitInquiryResponse.from(inquiry);
+        return LoanLimitInquiryResponse.from(inquiry, properties);
     }
 
     /**
@@ -307,6 +309,6 @@ public class LoanLimitInquiryPersistenceService {
                         .adaptorRequest(adaptorRequest)
                         .build()
         );
-        return LoanLimitInquiryResponse.from(inquiry);
+        return LoanLimitInquiryResponse.from(inquiry, properties);
     }
 }

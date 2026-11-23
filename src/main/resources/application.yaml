@@ -929,3 +929,6 @@ app:
     batch-size: 100
     fixed-delay: PT10S
     max-run-duration: 30s   # 한 번 실행의 시간 예상
+  inquiry-polling:
+    client-wait-limit: 60s
+    polling-interval: 2s

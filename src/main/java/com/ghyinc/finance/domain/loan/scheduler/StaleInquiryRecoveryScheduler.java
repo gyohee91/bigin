@@ -4,7 +4,7 @@ import com.ghyinc.finance.domain.loan.dto.StaleInquiryView;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
 import com.ghyinc.finance.domain.loan.service.StaleInquiryFailService;
-import com.ghyinc.finance.global.config.StaleInquiryProperties;
+import com.ghyinc.finance.domain.loan.config.StaleInquiryProperties;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
