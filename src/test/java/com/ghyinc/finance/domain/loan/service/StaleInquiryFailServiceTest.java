@@ -13,6 +13,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.ghyinc.finance.domain.loan.config.StaleInquiryProperties;
+
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -213,6 +216,93 @@ class StaleInquiryFailServiceTest {
                 .isAnnotationPresent(Transactional.class)).isTrue();
         assertThat(StaleInquiryFailService.class
                 .getMethod("failAllIfStale", List.class, InquiryStatus.class, LocalDateTime.class)
+                .isAnnotationPresent(Transactional.class)).isTrue();
+    }
+
+    // ------------------------------------------------------------------ repairIfStale (read-repair, 단건)
+
+    private static final StaleInquiryProperties PROPS = new StaleInquiryProperties(
+            Duration.ofMinutes(2), Duration.ofMinutes(3), Duration.ofMinutes(5), 100, Duration.ofSeconds(30), Duration.ofSeconds(10));
+
+    private StaleInquiryFailService withProperties() {
+        return new StaleInquiryFailService(loanLimitInquiryRepository, applicationEventPublisher, PROPS);
+    }
+
+    @Test
+    @DisplayName("repairIfStale - 1건 갱신되면 true, FAILED delta 이벤트를 발행한다")
+    void repairIfStale_updated_returnsTrue_andPublishesFailedDelta() {
+        given(loanLimitInquiryRepository.failIfStaleByInquiryNo(
+                eq("LL_1"), any(LocalDateTime.class), any(LocalDateTime.class), any(LocalDateTime.class), any(LocalDateTime.class)))
+                .willReturn(1);
+
+        boolean result = withProperties().repairIfStale("LL_1");
+
+        assertThat(result).isTrue();
+        ArgumentCaptor<InquiryReadModelEvent> captor = ArgumentCaptor.forClass(InquiryReadModelEvent.class);
+        then(applicationEventPublisher).should().publishEvent(captor.capture());
+        InquiryReadModelEvent event = captor.getValue();
+        assertThat(event.inquiryNo()).isEqualTo("LL_1");
+        assertThat(event.inquiryStatus()).isEqualTo(InquiryStatus.FAILED.name());
+        assertThat(event.seed()).isFalse();
+        assertThat(event.total()).isEqualTo(-1);
+        assertThat(event.items()).isEmpty();
+        assertThat(event.deadlineAtEpochMs()).isZero();     // 기존 deadline 을 덮어쓰지 않는다
+    }
+
+    @Test
+    @DisplayName("repairIfStale - 0건이면(정상 진행 중이거나 이미 처리됨) false 이고 이벤트를 발행하지 않는다")
+    void repairIfStale_notUpdated_returnsFalse_andPublishesNothing() {
+        given(loanLimitInquiryRepository.failIfStaleByInquiryNo(
+                any(), any(LocalDateTime.class), any(LocalDateTime.class), any(LocalDateTime.class), any(LocalDateTime.class)))
+                .willReturn(0);
+
+        assertThat(withProperties().repairIfStale("LL_1")).isFalse();
+
+        then(applicationEventPublisher).shouldHaveNoInteractions();
+    }
+
+    @Test
+    @DisplayName("repairIfStale - 상태별 타임아웃(accepted 2m, pending 3m, in-progress 5m)을 같은 now 에서 빼서 전달하고 now 는 밀리초로 절삭한다")
+    void repairIfStale_passesPerStatusThresholdsFromSameNow() {
+        given(loanLimitInquiryRepository.failIfStaleByInquiryNo(
+                any(), any(LocalDateTime.class), any(LocalDateTime.class), any(LocalDateTime.class), any(LocalDateTime.class)))
+                .willReturn(0);
+
+        LocalDateTime start = LocalDateTime.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+        withProperties().repairIfStale("LL_1");
+        LocalDateTime end = LocalDateTime.now();
+
+        ArgumentCaptor<LocalDateTime> accepted = ArgumentCaptor.forClass(LocalDateTime.class);
+        ArgumentCaptor<LocalDateTime> pending = ArgumentCaptor.forClass(LocalDateTime.class);
+        ArgumentCaptor<LocalDateTime> inProgress = ArgumentCaptor.forClass(LocalDateTime.class);
+        ArgumentCaptor<LocalDateTime> now = ArgumentCaptor.forClass(LocalDateTime.class);
+        then(loanLimitInquiryRepository).should().failIfStaleByInquiryNo(
+                eq("LL_1"), accepted.capture(), pending.capture(), inProgress.capture(), now.capture());
+
+        assertThat(now.getValue()).isBetween(start, end);
+        assertThat(now.getValue().getNano() % 1_000_000).isZero();
+        assertThat(accepted.getValue()).isEqualTo(now.getValue().minusMinutes(2));
+        assertThat(pending.getValue()).isEqualTo(now.getValue().minusMinutes(3));
+        assertThat(inProgress.getValue()).isEqualTo(now.getValue().minusMinutes(5));
+    }
+
+    @Test
+    @DisplayName("repairIfStale - 저장소 예외는 전파하고 이벤트는 발행하지 않는다")
+    void repairIfStale_repositoryThrows_propagates() {
+        given(loanLimitInquiryRepository.failIfStaleByInquiryNo(
+                any(), any(LocalDateTime.class), any(LocalDateTime.class), any(LocalDateTime.class), any(LocalDateTime.class)))
+                .willThrow(new IllegalStateException("db down"));
+
+        assertThatThrownBy(() -> withProperties().repairIfStale("LL_1"))
+                .isInstanceOf(IllegalStateException.class);
+
+        then(applicationEventPublisher).shouldHaveNoInteractions();
+    }
+
+    @Test
+    @DisplayName("repairIfStale 도 @Transactional 이다")
+    void repairIfStale_isTransactional() throws NoSuchMethodException {
+        assertThat(StaleInquiryFailService.class.getMethod("repairIfStale", String.class)
                 .isAnnotationPresent(Transactional.class)).isTrue();
     }
 }

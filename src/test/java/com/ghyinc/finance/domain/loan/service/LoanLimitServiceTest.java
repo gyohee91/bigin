@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.service;
 
+import com.ghyinc.finance.domain.loan.config.InquiryPollingProperties;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitInquiryResponse;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitPollingResponse;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
@@ -16,11 +17,11 @@ import com.ghyinc.finance.domain.loan.repository.LoanLimitProductResultRepositor
 import com.ghyinc.finance.global.exception.LockUnavailableException;
 import com.ghyinc.finance.global.lock.RedisLockExecutor;
 import org.apache.kafka.common.errors.InvalidRequestException;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageImpl;
@@ -28,6 +29,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -55,7 +57,9 @@ class LoanLimitServiceTest {
     private static final String DEDUP_KEY_PATTERN = "1:PERSONAL_CREDIT:\\d{8}";
     private static final String LOCK_KEY = "loan:request:lock:1:PERSONAL_CREDIT";
 
-    @InjectMocks
+    private static final InquiryPollingProperties POLLING_PROPERTIES =
+            new InquiryPollingProperties(Duration.ofSeconds(60), Duration.ofSeconds(2));
+
     private LoanLimitService loanLimitService;
 
     @Mock
@@ -69,6 +73,13 @@ class LoanLimitServiceTest {
 
     @Mock
     private LoanLimitInquiryCreator inquiryCreator;
+
+    @BeforeEach
+    void setUp() {
+        loanLimitService = new LoanLimitService(
+                loanLimitInquiryRepository, loanLimitProductResultRepository,
+                lockExecutor, inquiryCreator, POLLING_PROPERTIES);
+    }
 
     private LoanLimitRequest buildRequest() {
         return LoanLimitRequest.builder()
@@ -309,6 +320,62 @@ class LoanLimitServiceTest {
         assertThat(response.allResultReceived()).isTrue();
         assertThat(response.productResults()).hasSize(2);
         assertThat(response.productResults().get(0).loReqtNo()).isEqualTo("LR20260410AAA");
+    }
+
+    @Test
+    @DisplayName("폴링(DB 경로) - 진행 중이고 createdAt 이 방금이면 expired=false, remainingMs>0, 폴링 간격 포함")
+    void getInquiryResult_inProgress_withinDeadline_notExpired() {
+        LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
+                .inquiryNo("LL1").userId(1L).loanType(LoanType.PERSONAL_CREDIT).build();
+        ReflectionTestUtils.setField(inquiry, "status", InquiryStatus.IN_PROGRESS);
+        ReflectionTestUtils.setField(inquiry, "createdAt", java.time.LocalDateTime.now());
+        given(loanLimitInquiryRepository.findByInquiryNo("LL1")).willReturn(Optional.of(inquiry));
+        Pageable pageable = PageRequest.of(0, 20);
+        given(loanLimitProductResultRepository.findProductResultsByInquiryId(any(), eq(pageable)))
+                .willReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        LoanLimitPollingResponse response = loanLimitService.getInquiryResult("LL1", pageable);
+
+        assertThat(response.expired()).isFalse();
+        assertThat(response.remainingMs()).isBetween(1L, 60_000L);
+        assertThat(response.pollIntervalMs()).isEqualTo(2_000L);
+        assertThat(response.deadlineAtEpochMs()).isPositive();
+    }
+
+    @Test
+    @DisplayName("폴링(DB 경로) - 진행 중인데 마감이 지났으면 expired=true, remainingMs=0")
+    void getInquiryResult_inProgress_pastDeadline_expired() {
+        LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
+                .inquiryNo("LL1").userId(1L).loanType(LoanType.PERSONAL_CREDIT).build();
+        ReflectionTestUtils.setField(inquiry, "status", InquiryStatus.IN_PROGRESS);
+        ReflectionTestUtils.setField(inquiry, "createdAt", java.time.LocalDateTime.now().minusMinutes(10));
+        given(loanLimitInquiryRepository.findByInquiryNo("LL1")).willReturn(Optional.of(inquiry));
+        Pageable pageable = PageRequest.of(0, 20);
+        given(loanLimitProductResultRepository.findProductResultsByInquiryId(any(), eq(pageable)))
+                .willReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        LoanLimitPollingResponse response = loanLimitService.getInquiryResult("LL1", pageable);
+
+        assertThat(response.expired()).isTrue();
+        assertThat(response.remainingMs()).isZero();
+    }
+
+    @Test
+    @DisplayName("폴링(DB 경로) - 종료 상태(FAILED)는 마감이 지나도 expired=false, remainingMs=0")
+    void getInquiryResult_terminal_pastDeadline_notExpired() {
+        LoanLimitInquiry inquiry = LoanLimitInquiry.builder()
+                .inquiryNo("LL1").userId(1L).loanType(LoanType.PERSONAL_CREDIT).build();
+        ReflectionTestUtils.setField(inquiry, "status", InquiryStatus.FAILED);
+        ReflectionTestUtils.setField(inquiry, "createdAt", java.time.LocalDateTime.now().minusMinutes(10));
+        given(loanLimitInquiryRepository.findByInquiryNo("LL1")).willReturn(Optional.of(inquiry));
+        Pageable pageable = PageRequest.of(0, 20);
+        given(loanLimitProductResultRepository.findProductResultsByInquiryId(any(), eq(pageable)))
+                .willReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        LoanLimitPollingResponse response = loanLimitService.getInquiryResult("LL1", pageable);
+
+        assertThat(response.expired()).isFalse();
+        assertThat(response.remainingMs()).isZero();
     }
 
     @Test

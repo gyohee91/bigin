@@ -20,6 +20,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Pageable;
 
+import java.time.Duration;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,11 +44,11 @@ class LoanLimitPollingServiceTest {
     @Mock
     StaleInquiryFailService staleInquiryFailService;
 
-    @Mock
-    InquiryPollingProperties pollingProperties;
+    // record 는 mock 대신 실제 값 사용: clientWaitLimit 60s, pollInterval 2s / 타임아웃 2m,2m,5m
+    InquiryPollingProperties pollingProperties = new InquiryPollingProperties(Duration.ofSeconds(60), Duration.ofSeconds(2));
 
-    @Mock
-    StaleInquiryProperties staleInquiryProperties;
+    StaleInquiryProperties staleInquiryProperties =
+            new StaleInquiryProperties(Duration.ofMinutes(2), Duration.ofMinutes(2), Duration.ofMinutes(5), 100, Duration.ofSeconds(30), Duration.ofSeconds(10));
 
     ObjectMapper objectMapper = new ObjectMapper();
 
@@ -62,6 +63,15 @@ class LoanLimitPollingServiceTest {
 
     private InquiryReadModelStore.ReadResult result(InquiryReadModelStore.Type type, long version, int total, int success, long card, List<String> json) {
         return new InquiryReadModelStore.ReadResult(type, version, total, success, "IN_PROGRESS", card, json);
+    }
+
+    private InquiryReadModelStore.ReadResult result(InquiryReadModelStore.Type type, String status, long deadlineAtMs) {
+        return new InquiryReadModelStore.ReadResult(type, 9L, 3, 1, status, 3, List.of(), deadlineAtMs);
+    }
+
+    /** createdAt 이 지금으로부터 elapsed 전인 건의 deadline(epoch ms) = createdAt + clientWaitLimit(60s) */
+    private long deadlineOfCreatedAgo(Duration elapsed) {
+        return System.currentTimeMillis() - elapsed.toMillis() + pollingProperties.clientWaitLimit().toMillis();
     }
 
     @Test
@@ -167,5 +177,215 @@ class LoanLimitPollingServiceTest {
         assertThat(response.totalPages()).isEqualTo(2);
         assertThat(response.hasNext()).isTrue();
         assertThat(response.successProductCount()).isEqualTo(1);
+    }
+
+    // ───────────────────────── 마감 판단(decorate) ─────────────────────────
+
+    @Test
+    @DisplayName("진행 중이고 마감 전이면 expired=false, remainingMs>0, 폴링 간격·마감 시각을 담는다")
+    void decorate_inProgress_beforeDeadline_notExpired() {
+        long deadline = deadlineOfCreatedAgo(Duration.ofSeconds(10));
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", null, 0, 20))
+                .thenReturn(this.result(InquiryReadModelStore.Type.OK, "IN_PROGRESS", deadline));
+
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult("LL1", 0, 20, null);
+
+        assertThat(response.expired()).isFalse();
+        assertThat(response.remainingMs()).isBetween(1L, 50_000L);
+        assertThat(response.deadlineAtEpochMs()).isEqualTo(deadline);
+        assertThat(response.pollIntervalMs()).isEqualTo(2_000L);
+        verifyNoInteractions(staleInquiryFailService);
+    }
+
+    @Test
+    @DisplayName("진행 중인데 마감이 지났으면 expired=true, remainingMs=0 (아직 stale 기준 전이라 repair 는 하지 않는다)")
+    void decorate_inProgress_pastDeadline_expired_withoutRepair() {
+        long deadline = deadlineOfCreatedAgo(Duration.ofSeconds(90));   // 60s 마감 지남, 2분 타임아웃 전
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", null, 0, 20))
+                .thenReturn(this.result(InquiryReadModelStore.Type.OK, "IN_PROGRESS", deadline));
+
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult("LL1", 0, 20, null);
+
+        assertThat(response.expired()).isTrue();
+        assertThat(response.remainingMs()).isZero();
+        verifyNoInteractions(staleInquiryFailService);
+    }
+
+    @Test
+    @DisplayName("종료 상태(SUCCESS)는 마감이 지나도 expired=false, remainingMs=0")
+    void decorate_terminal_pastDeadline_notExpired() {
+        long deadline = deadlineOfCreatedAgo(Duration.ofMinutes(10));
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", null, 0, 20))
+                .thenReturn(this.result(InquiryReadModelStore.Type.OK, "SUCCESS", deadline));
+
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult("LL1", 0, 20, null);
+
+        assertThat(response.expired()).isFalse();
+        assertThat(response.remainingMs()).isZero();
+        verifyNoInteractions(staleInquiryFailService);      // 종료 상태는 repair 대상이 아니다
+    }
+
+    @Test
+    @DisplayName("unchanged(SAME) 응답에도 expired/remainingMs 가 붙는다 - 변화가 없어도 FE 가 종료를 알 수 있다")
+    void decorate_same_pastDeadline_expiredOnUnchangedResponse() {
+        long deadline = deadlineOfCreatedAgo(Duration.ofSeconds(90));
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", 9L, 0, 20))
+                .thenReturn(this.result(InquiryReadModelStore.Type.SAME, "IN_PROGRESS", deadline));
+
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult("LL1", 0, 20, 9L);
+
+        assertThat(response.changed()).isFalse();
+        assertThat(response.expired()).isTrue();
+        assertThat(response.remainingMs()).isZero();
+    }
+
+    @Test
+    @DisplayName("deadline 을 모르면(0) 판단하지 않고 관련 필드를 비운다")
+    void decorate_unknownDeadline_leavesFieldsNull() {
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", null, 0, 20))
+                .thenReturn(this.result(InquiryReadModelStore.Type.OK, "IN_PROGRESS", 0L));
+
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult("LL1", 0, 20, null);
+
+        assertThat(response.expired()).isNull();
+        assertThat(response.remainingMs()).isNull();
+        assertThat(response.deadlineAtEpochMs()).isNull();
+        verifyNoInteractions(staleInquiryFailService);
+    }
+
+    @Test
+    @DisplayName("스냅샷 직접 응답 경로에도 마감 판단이 적용된다")
+    void decorate_appliedOnSnapShotFallbackPath() {
+        InquirySnapShot snapShot = new InquirySnapShot("LL1", 1, "IN_PROGRESS", List.of(),
+                deadlineOfCreatedAgo(Duration.ofSeconds(90)));
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", null, 0, 20))
+                .thenReturn(this.result(InquiryReadModelStore.Type.MISS, 0, 0, 0, 0, List.of()));
+        when(snapShotLoader.load("LL1")).thenReturn(snapShot);
+        when(store.seed(snapShot)).thenReturn(false);
+
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult("LL1", 0, 20, null);
+
+        assertThat(response.expired()).isTrue();
+        assertThat(response.remainingMs()).isZero();
+    }
+
+    // ───────────────────────── read-repair ─────────────────────────
+
+    @Test
+    @DisplayName("repair - stale 기준(2분)을 넘겼고 CAS 가 성공하면 다시 읽어 FAILED 응답을 돌려준다")
+    void repair_success_rereadsAndReturnsFailed() {
+        long deadline = deadlineOfCreatedAgo(Duration.ofMinutes(3));
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", null, 0, 20)).thenReturn(
+                this.result(InquiryReadModelStore.Type.OK, "IN_PROGRESS", deadline),
+                this.result(InquiryReadModelStore.Type.OK, "FAILED", deadline));
+        when(staleInquiryFailService.repairIfStale("LL1")).thenReturn(true);
+
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult("LL1", 0, 20, null);
+
+        assertThat(response.inquiryStatus()).isEqualTo("FAILED");
+        assertThat(response.expired()).isFalse();           // 종료 상태
+        assertThat(response.remainingMs()).isZero();
+        verify(staleInquiryFailService).repairIfStale("LL1");
+        verify(store).count("read_repair");
+        verify(store, times(2)).read("LL1", null, 0, 20);
+    }
+
+    @Test
+    @DisplayName("repair - CAS 가 0건(정상 진행 중이거나 다른 경로가 처리)이면 원래 결과를 그대로 쓰고 재조회하지 않는다")
+    void repair_notUpdated_keepsOriginalResult() {
+        long deadline = deadlineOfCreatedAgo(Duration.ofMinutes(3));
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", null, 0, 20))
+                .thenReturn(this.result(InquiryReadModelStore.Type.OK, "IN_PROGRESS", deadline));
+        when(staleInquiryFailService.repairIfStale("LL1")).thenReturn(false);
+
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult("LL1", 0, 20, null);
+
+        assertThat(response.inquiryStatus()).isEqualTo("IN_PROGRESS");
+        assertThat(response.expired()).isTrue();
+        verify(store, times(1)).read("LL1", null, 0, 20);
+        verify(store, never()).count("read_repair");
+    }
+
+    @Test
+    @DisplayName("repair - 예외가 나도 폴링 응답은 정상으로 나가고(배치가 backstop) 재조회하지 않는다")
+    void repair_throws_swallowedAndOriginalResultReturned() {
+        long deadline = deadlineOfCreatedAgo(Duration.ofMinutes(3));
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", null, 0, 20))
+                .thenReturn(this.result(InquiryReadModelStore.Type.OK, "IN_PROGRESS", deadline));
+        when(staleInquiryFailService.repairIfStale("LL1")).thenThrow(new IllegalStateException("db down"));
+
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult("LL1", 0, 20, null);
+
+        assertThat(response.inquiryStatus()).isEqualTo("IN_PROGRESS");
+        assertThat(response.expired()).isTrue();
+        verify(store, times(1)).read("LL1", null, 0, 20);
+    }
+
+    @Test
+    @DisplayName("repair - 성공 뒤 재조회가 MISS/DOWN 이면 원래 결과를 쓴다")
+    void repair_success_butRereadMiss_keepsOriginalResult() {
+        long deadline = deadlineOfCreatedAgo(Duration.ofMinutes(3));
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", null, 0, 20)).thenReturn(
+                this.result(InquiryReadModelStore.Type.OK, "IN_PROGRESS", deadline),
+                this.result(InquiryReadModelStore.Type.MISS, 0, 0, 0, 0, List.of()));
+        when(staleInquiryFailService.repairIfStale("LL1")).thenReturn(true);
+
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult("LL1", 0, 20, null);
+
+        assertThat(response.inquiryStatus()).isEqualTo("IN_PROGRESS");
+        assertThat(response.expired()).isTrue();
+    }
+
+    @Test
+    @DisplayName("repair - SAME 응답에서도 시도하고, 성공하면 새 버전 응답으로 바뀐다")
+    void repair_onSame_replacedByNewVersion() {
+        long deadline = deadlineOfCreatedAgo(Duration.ofMinutes(3));
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", 9L, 0, 20)).thenReturn(
+                this.result(InquiryReadModelStore.Type.SAME, "IN_PROGRESS", deadline),
+                this.result(InquiryReadModelStore.Type.OK, "FAILED", deadline));
+        when(staleInquiryFailService.repairIfStale("LL1")).thenReturn(true);
+
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult("LL1", 0, 20, 9L);
+
+        assertThat(response.changed()).isTrue();
+        assertThat(response.inquiryStatus()).isEqualTo("FAILED");
+    }
+
+    @Test
+    @DisplayName("repair - 생성 후 stale 최소 타임아웃(2분) 전이면 DB 를 건드리지 않는다")
+    void repair_beforeMinTimeout_skipsDb() {
+        long deadline = deadlineOfCreatedAgo(Duration.ofSeconds(100));   // 2분 미만
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", null, 0, 20))
+                .thenReturn(this.result(InquiryReadModelStore.Type.OK, "IN_PROGRESS", deadline));
+
+        loanLimitPollingService.getInquiryResult("LL1", 0, 20, null);
+
+        verifyNoInteractions(staleInquiryFailService);
+    }
+
+    @Test
+    @DisplayName("repair - 상태를 알 수 없으면(빈 문자열) 종료 상태로 보지 않고 stale 기준이 지났으면 시도한다")
+    void repair_unknownStatus_treatedAsNonTerminal() {
+        long deadline = deadlineOfCreatedAgo(Duration.ofMinutes(3));
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", null, 0, 20))
+                .thenReturn(this.result(InquiryReadModelStore.Type.OK, "", deadline));
+        when(staleInquiryFailService.repairIfStale("LL1")).thenReturn(false);
+
+        loanLimitPollingService.getInquiryResult("LL1", 0, 20, null);
+
+        verify(staleInquiryFailService).repairIfStale("LL1");
     }
 }
