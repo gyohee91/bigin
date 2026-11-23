@@ -228,7 +228,7 @@ class LoanLimitInquiryPersistenceServiceTest {
     @DisplayName("completeInquiry - ACCEPTED→PENDING 선점 성공 시 요청 정보를 채우고 CreatedEvent 를 발행, 응답에는 선점 때 채번한 inquiryNo")
     void completeInquiry_success_appliesRequestAndPublishesCreatedEvent() {
         LoanLimitInquiry accepted = buildAcceptedInquiry();
-        given(loanLimitInquiryRepository.transit("LL_ACCEPTED", InquiryStatus.ACCEPTED, InquiryStatus.PENDING))
+        given(loanLimitInquiryRepository.transit(eq("LL_ACCEPTED"), eq(InquiryStatus.ACCEPTED), eq(InquiryStatus.PENDING), any(LocalDateTime.class)))
                 .willReturn(1);
         given(loanLimitInquiryRepository.findByInquiryNo("LL_ACCEPTED")).willReturn(Optional.of(accepted));
         LoanLimitRequest request = LoanLimitRequest.builder()
@@ -269,7 +269,7 @@ class LoanLimitInquiryPersistenceServiceTest {
     @Test
     @DisplayName("completeInquiry - 상태 선점(transit)이 먼저, 조회가 그 다음. 새 행을 INSERT 하거나 새로 채번하지 않는다")
     void completeInquiry_claimsStatusFirst_andNeverInsertsOrGeneratesNumber() {
-        given(loanLimitInquiryRepository.transit("LL_ACCEPTED", InquiryStatus.ACCEPTED, InquiryStatus.PENDING))
+        given(loanLimitInquiryRepository.transit(eq("LL_ACCEPTED"), eq(InquiryStatus.ACCEPTED), eq(InquiryStatus.PENDING), any(LocalDateTime.class)))
                 .willReturn(1);
         given(loanLimitInquiryRepository.findByInquiryNo("LL_ACCEPTED"))
                 .willReturn(Optional.of(buildAcceptedInquiry()));
@@ -278,7 +278,8 @@ class LoanLimitInquiryPersistenceServiceTest {
                 "LL_ACCEPTED", buildLoanLimitRequest(), List.of(PartnerCode.KAKAO_BANK), buildAdaptorRequest());
 
         InOrder inOrder = inOrder(loanLimitInquiryRepository);
-        inOrder.verify(loanLimitInquiryRepository).transit("LL_ACCEPTED", InquiryStatus.ACCEPTED, InquiryStatus.PENDING);
+        inOrder.verify(loanLimitInquiryRepository).transit(
+                eq("LL_ACCEPTED"), eq(InquiryStatus.ACCEPTED), eq(InquiryStatus.PENDING), any(LocalDateTime.class));
         inOrder.verify(loanLimitInquiryRepository).findByInquiryNo("LL_ACCEPTED");
         then(loanLimitInquiryRepository).should(never()).save(any());
         then(generator).shouldHaveNoInteractions();
@@ -287,7 +288,7 @@ class LoanLimitInquiryPersistenceServiceTest {
     @Test
     @DisplayName("completeInquiry - 정리 배치가 먼저 FAILED 처리해 선점이 0건이면 예외, 조회·이벤트 발행 없음")
     void completeInquiry_alreadyFailedByCleanup_throwsTimeoutException() {
-        given(loanLimitInquiryRepository.transit("LL_ACCEPTED", InquiryStatus.ACCEPTED, InquiryStatus.PENDING))
+        given(loanLimitInquiryRepository.transit(eq("LL_ACCEPTED"), eq(InquiryStatus.ACCEPTED), eq(InquiryStatus.PENDING), any(LocalDateTime.class)))
                 .willReturn(0);
 
         assertThatThrownBy(() -> persistenceService.completeInquiry(
@@ -302,7 +303,7 @@ class LoanLimitInquiryPersistenceServiceTest {
     @Test
     @DisplayName("completeInquiry - 선점은 됐는데 행을 찾을 수 없으면 예외, 이벤트 발행 없음")
     void completeInquiry_inquiryMissingAfterTransit_throws() {
-        given(loanLimitInquiryRepository.transit("LL_ACCEPTED", InquiryStatus.ACCEPTED, InquiryStatus.PENDING))
+        given(loanLimitInquiryRepository.transit(eq("LL_ACCEPTED"), eq(InquiryStatus.ACCEPTED), eq(InquiryStatus.PENDING), any(LocalDateTime.class)))
                 .willReturn(1);
         given(loanLimitInquiryRepository.findByInquiryNo("LL_ACCEPTED")).willReturn(Optional.empty());
 

@@ -922,3 +922,9 @@ app:
     retry-interval-ms: 100
   kafka:
     auto-create-topics: true
+  inquiry-recovery:
+    accepted-timeout: 2m
+    pending-timeout: 2m
+    in-progress-timeout: 5m
+    batch-size: 100
+    fixed-delay: PT10S

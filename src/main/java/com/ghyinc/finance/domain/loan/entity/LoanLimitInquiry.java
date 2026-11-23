@@ -19,10 +19,8 @@ import java.util.List;
 @Table(
         uniqueConstraints = @UniqueConstraint(name = "uk_inquiry_dedup_key", columnNames = "dedup_key"),
         indexes = {
-                @Index(
-                        name = "idx_inquiry_user_id_loan_type_status",
-                        columnList = "user_id, loan_type, status"
-                )
+                @Index(name = "idx_inquiry_user_id_loan_type_status", columnList = "user_id, loan_type, status"),
+                @Index(name = "idx_inquiry_status_update_at", columnList = "status, updated_at")
         }
 )
 @Getter

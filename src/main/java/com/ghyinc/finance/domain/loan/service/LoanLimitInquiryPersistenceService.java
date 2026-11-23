@@ -29,6 +29,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -291,7 +292,7 @@ public class LoanLimitInquiryPersistenceService {
             LoanLimitAdaptorRequest adaptorRequest
     ) {
         // 다른 주체(장애 복구 배치 등)가 먼저 FAILED 로 돌렸다면 0건 → 중단 (이미 슬롯이 해제된 건을 되살리지 않음)
-        if (loanLimitInquiryRepository.transit(inquiryNo, InquiryStatus.ACCEPTED, InquiryStatus.PENDING) == 0) {
+        if (loanLimitInquiryRepository.transit(inquiryNo, InquiryStatus.ACCEPTED, InquiryStatus.PENDING, LocalDateTime.now()) == 0) {
             throw new InvalidRequestException("요청 처리 시간이 초과되었습니다. 다시 시도해 주세요.");
         }
         LoanLimitInquiry inquiry = loanLimitInquiryRepository.findByInquiryNo(inquiryNo).orElseThrow();

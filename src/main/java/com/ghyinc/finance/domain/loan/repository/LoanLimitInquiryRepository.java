@@ -1,15 +1,19 @@
 package com.ghyinc.finance.domain.loan.repository;
 
+import com.ghyinc.finance.domain.loan.dto.StaleInquiryView;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.LoanType;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -42,13 +46,14 @@ public interface LoanLimitInquiryRepository extends JpaRepository<LoanLimitInqui
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
            UPDATE LoanLimitInquiry t
-           SET t.status = :statusTo
+           SET t.status = :statusTo, t.updatedAt = :now
            WHERE t.inquiryNo = :inquiryNo AND t.status = :statusFrom
            """)
     int transit(
             @Param("inquiryNo") String inquiryNo,
             @Param("statusFrom") InquiryStatus statusFrom,
-            @Param("statusTo") InquiryStatus statusTo
+            @Param("statusTo") InquiryStatus statusTo,
+            @Param("now") LocalDateTime now
     );
 
     /**
@@ -60,8 +65,36 @@ public interface LoanLimitInquiryRepository extends JpaRepository<LoanLimitInqui
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
            UPDATE LoanLimitInquiry t
-           SET t.status = com.ghyinc.finance.domain.loan.enums.InquiryStatus.FAILED, t.dedupKey = null
+           SET t.status = com.ghyinc.finance.domain.loan.enums.InquiryStatus.FAILED,
+                t.dedupKey = null,
+                t.updatedAt = :now
            WHERE t.inquiryNo = :inquiryNo AND t.status = com.ghyinc.finance.domain.loan.enums.InquiryStatus.ACCEPTED
            """)
-    int failIfAccepted(@Param("inquiryNo") String inquiryNo);
+    int failIfAccepted(@Param("inquiryNo") String inquiryNo, @Param("now") LocalDateTime now);
+
+    @Query("""
+           SELECT t.id AS id, t.inquiryNo AS inquiryNo
+           FROM LoanLimitInquiry t
+           WHERE t.status = :status AND t.updatedAt < :before
+           ORDER BY t.updatedAt ASC
+           """)
+    List<StaleInquiryView> findStale(@Param("status") InquiryStatus status,
+                                     @Param("before") LocalDateTime before,
+                                     Pageable pageable);
+
+    /**
+     * 상태와 시각을 함께 CAS한다. 그 사이 상태가 바뀌었거나 갱신된 건은 건드리지 않는다.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = false)
+    @Query("""
+           UPDATE LoanLimitInquiry t
+           SET t.status = com.ghyinc.finance.domain.loan.enums.InquiryStatus.FAILED, 
+                t.dedupKey = null,
+                t.updatedAt = :now
+           WHERE t.id = :id AND t.status = :expected AND t.updatedAt < :before
+           """)
+    int failIfStale(@Param("id") Long id,
+                    @Param("expected") InquiryStatus expected,
+                    @Param("before") LocalDateTime before,
+                    @Param("now") LocalDateTime now);
 }

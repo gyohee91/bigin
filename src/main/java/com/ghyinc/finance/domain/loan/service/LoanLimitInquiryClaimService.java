@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+
 /**
  * Redis 장애 시 사용하는 DB 선점(claim) 전용 협력자.
  *
@@ -56,6 +58,6 @@ public class LoanLimitInquiryClaimService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void abort(String inquiryNo) {
-        loanLimitInquiryRepository.failIfAccepted(inquiryNo);
+        loanLimitInquiryRepository.failIfAccepted(inquiryNo, LocalDateTime.now());
     }
 }

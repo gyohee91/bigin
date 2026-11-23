@@ -16,6 +16,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -88,7 +90,7 @@ class LoanLimitInquiryClaimServiceTest {
     void abort_delegatesToFailIfAccepted() {
         claimService.abort("LL20260101abcdef");
 
-        then(loanLimitInquiryRepository).should().failIfAccepted("LL20260101abcdef");
+        then(loanLimitInquiryRepository).should().failIfAccepted("LL20260101abcdef", LocalDateTime.now());
         then(loanLimitInquiryRepository).should(never()).save(any());
     }
 
