@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.readmodel;
 
+import com.ghyinc.finance.domain.loan.config.InquiryPollingProperties;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
@@ -13,6 +14,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class InquiryReadModelEventTest {
+    private InquiryPollingProperties properties;
 
     @Test
     @DisplayName("seed는 전체 상품과 total, status를 담는다")
@@ -29,7 +31,7 @@ class InquiryReadModelEventTest {
         inquiry.initProductCount(2);
         inquiry.updateInquiryStatus(InquiryStatus.IN_PROGRESS);
 
-        InquiryReadModelEvent event = InquiryReadModelEvent.seed(inquiry);
+        InquiryReadModelEvent event = InquiryReadModelEvent.seed(inquiry, properties);
 
         assertThat(event.seed()).isTrue();
         assertThat(event.inquiryNo()).isEqualTo("LL1");

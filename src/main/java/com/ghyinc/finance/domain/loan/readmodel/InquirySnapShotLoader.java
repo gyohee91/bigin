@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.readmodel;
 
+import com.ghyinc.finance.domain.loan.config.InquiryPollingProperties;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
@@ -20,6 +21,7 @@ import java.util.List;
 public class InquirySnapShotLoader {
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
     private final LoanLimitProductResultRepository loanLimitProductResultRepository;
+    private final InquiryPollingProperties pollingProperties;
 
     @Transactional(readOnly = true)
     public InquirySnapShot load(String inquiryNo) {
@@ -30,6 +32,7 @@ public class InquirySnapShotLoader {
         List<LoanLimitProductResultDto> items =
                 loanLimitProductResultRepository.findProductResultsByInquiryId(inquiry.getId(), Pageable.unpaged()).getContent();
 
-        return new InquirySnapShot(inquiryNo, inquiry.getTotalProductCount(), inquiry.getStatus().name(), items);
+        return new InquirySnapShot(inquiryNo, inquiry.getTotalProductCount(), inquiry.getStatus().name(), items,
+                pollingProperties.deadlineAtEpochMs(inquiry.getCreatedAt()));
     }
 }

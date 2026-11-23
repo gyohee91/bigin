@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.readmodel;
 
+import com.ghyinc.finance.domain.loan.config.InquiryPollingProperties;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitProductResult;
@@ -22,15 +23,17 @@ public record InquiryReadModelEvent(
         boolean seed,
         int total,
         String inquiryStatus,
-        List<LoanLimitProductResultDto> items
+        List<LoanLimitProductResultDto> items,
+        long deadlineAtEpochMs
 ) {
-    public static InquiryReadModelEvent seed(LoanLimitInquiry inquiry) {
+    public static InquiryReadModelEvent seed(LoanLimitInquiry inquiry, InquiryPollingProperties properties) {
         return InquiryReadModelEvent.builder()
                 .inquiryNo(inquiry.getInquiryNo())
                 .seed(true)
                 .total(inquiry.getTotalProductCount())
                 .inquiryStatus(inquiry.getStatus().name())
                 .items(toDtos(inquiry.getProductResults()))
+                .deadlineAtEpochMs(properties.deadlineAtEpochMs(inquiry.getCreatedAt()))
                 .build();
     }
 

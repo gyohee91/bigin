@@ -123,7 +123,7 @@ public class LoanLimitInquiryPersistenceService {
                 .mapToInt(List::size)
                 .sum();
         loanLimitInquiry.initProductCount(totalProductCount);
-        applicationEventPublisher.publishEvent(InquiryReadModelEvent.seed(loanLimitInquiry));
+        applicationEventPublisher.publishEvent(InquiryReadModelEvent.seed(loanLimitInquiry, properties));
 
         return new PreparedFanout(loanLimitInquiry.getId(), requestProductMap);
     }

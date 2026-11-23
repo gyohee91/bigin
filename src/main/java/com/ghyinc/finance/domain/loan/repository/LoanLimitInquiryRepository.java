@@ -120,4 +120,21 @@ public interface LoanLimitInquiryRepository extends JpaRepository<LoanLimitInqui
            """)
     List<String> findInquiryNosFailedSince(@Param("ids") Collection<Long> ids,
                                            @Param("since") LocalDateTime since);
+
+    @Modifying(flushAutomatically = true, clearAutomatically = false)
+    @Query("""
+       UPDATE LoanLimitInquiry t
+       SET t.status = com.ghyinc.finance.domain.loan.enums.InquiryStatus.FAILED,
+           t.dedupKey = null,
+           t.updatedAt = :now
+       WHERE t.inquiryNo = :inquiryNo
+         AND ( (t.status = com.ghyinc.finance.domain.loan.enums.InquiryStatus.ACCEPTED    AND t.updatedAt < :acceptedBefore)
+            OR (t.status = com.ghyinc.finance.domain.loan.enums.InquiryStatus.PENDING     AND t.updatedAt < :pendingBefore)
+            OR (t.status = com.ghyinc.finance.domain.loan.enums.InquiryStatus.IN_PROGRESS AND t.updatedAt < :inProgressBefore) )
+       """)
+    int failIfStaleByInquiryNo(@Param("inquiryNo") String inquiryNo,
+                               @Param("acceptedBefore") LocalDateTime acceptedBefore,
+                               @Param("pendingBefore") LocalDateTime pendingBefore,
+                               @Param("inProgressBefore") LocalDateTime inProgressBefore,
+                               @Param("now") LocalDateTime now);
 }

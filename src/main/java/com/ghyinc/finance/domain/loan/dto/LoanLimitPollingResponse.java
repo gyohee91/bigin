@@ -2,6 +2,7 @@ package com.ghyinc.finance.domain.loan.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
+import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 import org.springframework.data.domain.Page;
@@ -9,7 +10,7 @@ import org.springframework.data.domain.Page;
 import java.util.List;
 
 @Schema(description = "금리 한도조회 (Polling)")
-@Builder
+@Builder(toBuilder = true)
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record LoanLimitPollingResponse(
         @Schema(description = "업무 식별번호")
@@ -46,7 +47,19 @@ public record LoanLimitPollingResponse(
         Boolean changed,
 
         @Schema(description = "조회 상태(IN_PROGRESS/SUCCESS/PARTIAL_SUCCESS/FAILED)")
-        String inquiryStatus
+        String inquiryStatus,
+
+        @Schema(description = "true면 FE 대기 시간 초과, 폴링 중단 + '지연 중' 안내(실패 아님)")
+        Boolean expired,
+
+        @Schema(description = "남은 대기 시간(ms). 종료 상태면 0")
+        Long remainingMs,
+
+        @Schema(description = "마감 시간 epoch ms")
+        Long deadlineAtEpochMs,
+
+        @Schema(description = "권장 폴링 간격(ms)")
+        Long pollIntervalMs
 ) {
     public static LoanLimitPollingResponse from(LoanLimitInquiry inquiry, Page<LoanLimitProductResultDto> productResults) {
         return LoanLimitPollingResponse.builder()
@@ -61,6 +74,7 @@ public record LoanLimitPollingResponse(
                 .totalPages(productResults.getTotalPages())
                 .totalElements(productResults.getTotalElements())
                 .hasNext(productResults.hasNext())
+                .inquiryStatus(inquiry.getStatus().name())
                 .build();
     }
 
@@ -69,6 +83,18 @@ public record LoanLimitPollingResponse(
                 .inquiryNo(inquiryNo)
                 .version(version)
                 .changed(false)
+                .build();
+    }
+
+    public LoanLimitPollingResponse withDeadline(InquiryStatus status, long deadlineAtMs, long pollIntervalMs) {
+        if (deadlineAtMs <= 0)  return this;        // 마감 정보를 모르면 판단하지 않는다
+        boolean terminal = status != null && status.isTerminal();
+        long remainingMs = terminal ? 0 : Math.max(0, deadlineAtMs - System.currentTimeMillis());
+        return this.toBuilder()
+                .expired(!terminal && remainingMs == 0)
+                .remainingMs(remainingMs)
+                .deadlineAtEpochMs(deadlineAtMs)
+                .pollIntervalMs(pollIntervalMs)
                 .build();
     }
 }

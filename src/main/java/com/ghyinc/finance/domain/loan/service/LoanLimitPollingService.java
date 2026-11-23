@@ -1,8 +1,11 @@
 package com.ghyinc.finance.domain.loan.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ghyinc.finance.domain.loan.config.InquiryPollingProperties;
+import com.ghyinc.finance.domain.loan.config.StaleInquiryProperties;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitPollingResponse;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
+import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelStore;
 import com.ghyinc.finance.domain.loan.readmodel.InquirySnapShot;
@@ -10,6 +13,7 @@ import com.ghyinc.finance.domain.loan.readmodel.InquirySnapShotLoader;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -21,6 +25,7 @@ import java.util.List;
  * FE 폴링 전용 진입점. 이 클래스는 @Transactional이 아니다(Redis 히트 시 DB 커넥션을 잡지 않기 위해)
  * DB가 필요한 구간(스냅샷 재구성, fallback)만 각각 짧은 읽기 트랜잭션 빈을 호출한다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class LoanLimitPollingService {
@@ -29,6 +34,10 @@ public class LoanLimitPollingService {
     private final InquirySnapShotLoader snapShotLoader;
     private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
+
+    private final StaleInquiryFailService staleInquiryFailService;
+    private final InquiryPollingProperties pollingProperties;
+    private final StaleInquiryProperties staleInquiryProperties;
 
     public LoanLimitPollingResponse getInquiryResult(String inquiryNo, int page, int size, Long version) {
         Pageable pageable = PageRequest.of(page, size);
@@ -62,16 +71,23 @@ public class LoanLimitPollingService {
                 if (readResult.type() == InquiryReadModelStore.Type.MISS || readResult.type() == InquiryReadModelStore.Type.DOWN) {
                     path = "fallback_seed";
                     store.count("fallback");
-                    return this.fromSnapShot(snapShot, page, size);
+                    return this.decorate(this.fromSnapShot(snapShot, page, size),
+                            snapShot.status(), snapShot.deadlineAtEpochMs());
                 }
+            }
+
+            if (readResult.type() == InquiryReadModelStore.Type.SAME || readResult.type() == InquiryReadModelStore.Type.OK) {
+                readResult = this.repairIfStale(inquiryNo, readResult, version, page, size);
             }
 
             if (readResult.type() == InquiryReadModelStore.Type.SAME) {
                 path = path.equals("rebuild") ? "rebuild" : "unchanged";
-                return LoanLimitPollingResponse.unchanged(inquiryNo, readResult.version());
+                return this.decorate(LoanLimitPollingResponse.unchanged(inquiryNo, readResult.version()),
+                        readResult.status(), readResult.deadlineAtMs());
             }
 
-            return this.toResponse(inquiryNo, readResult, page, size);
+            return this.decorate(this.toResponse(inquiryNo, readResult, page, size),
+                    readResult.status(), readResult.deadlineAtMs());
         } finally {
             sample.stop(this.timer("polling.service", path));
         }
@@ -128,6 +144,40 @@ public class LoanLimitPollingService {
                 .hasNext(page + 1 < totalPages)
                 .inquiryStatus(snapShot.status())
                 .build();
+    }
+
+    private LoanLimitPollingResponse decorate(LoanLimitPollingResponse response, String status, long deadlineAtMs) {
+        return response.withDeadline(parseStatus(status), deadlineAtMs, pollingProperties.pollInterval().toMillis());
+    }
+
+    private InquiryReadModelStore.ReadResult repairIfStale(
+            String inquiryNo, InquiryReadModelStore.ReadResult readResult, Long version, int page, int size
+    ) {
+        InquiryStatus status = parseStatus(readResult.status());
+        if (readResult.deadlineAtMs() <= 0 || (status != null && status.isTerminal()))  return readResult;
+
+        long createdAtMs = readResult.deadlineAtMs() - pollingProperties.clientWaitLimit().toMillis();
+        if (System.currentTimeMillis() < createdAtMs + staleInquiryProperties.minTimeout().toMillis())  return readResult;  // 아직 stale 불가
+
+        try {
+            if (!staleInquiryFailService.repairIfStale(inquiryNo))  return readResult;
+        } catch (Exception e) {
+            log.warn("[read-repair] 실패 inquiryNo={} cause={}", inquiryNo, e.toString());
+            return readResult;
+        }
+
+        store.count("read_repair");
+        InquiryReadModelStore.ReadResult again = store.read(inquiryNo, version, page, size);
+        return (again.type() == InquiryReadModelStore.Type.OK
+                || again.type() == InquiryReadModelStore.Type.SAME) ? again : readResult;
+    }
+
+    private InquiryStatus parseStatus(String status) {
+        try {
+            return status == null || status.isBlank() ? null : InquiryStatus.valueOf(status);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     private Timer timer(String name, String path) {

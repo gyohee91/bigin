@@ -8,6 +8,7 @@ public record InquirySnapShot(
         String inquiryNo,
         int total,
         String status,
-        List<LoanLimitProductResultDto> items
+        List<LoanLimitProductResultDto> items,
+        long deadlineAtEpochMs
 ) {
 }

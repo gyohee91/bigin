@@ -4,10 +4,16 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 @ConfigurationProperties(prefix = "app.inquiry-polling")
 public record InquiryPollingProperties(
         @DefaultValue("60s") Duration clientWaitLimit,      // FE가 기다릴 최대 시간 (예시값)
         @DefaultValue("2s") Duration pollInterval           // FE 폴링 간격 안내값
 ) {
+    public long deadlineAtEpochMs(LocalDateTime createdAt) {
+        LocalDateTime baseAt = createdAt != null ? createdAt : LocalDateTime.now();
+        return baseAt.plus(clientWaitLimit).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+    }
 }

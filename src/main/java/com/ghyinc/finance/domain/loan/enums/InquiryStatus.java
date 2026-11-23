@@ -22,5 +22,9 @@ public enum InquiryStatus {
     /** 일부 금융사만 성공 */
     PARTIAL_SUCCESS,
     /** 실패 (종료 상태, 당일 재조회 허용) */
-    FAILED
+    FAILED;
+
+    public boolean isTerminal() {
+        return this == SUCCESS || this == PARTIAL_SUCCESS || this == FAILED;
+    }
 }

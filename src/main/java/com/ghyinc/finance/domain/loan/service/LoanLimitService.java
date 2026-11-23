@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.service;
 
+import com.ghyinc.finance.domain.loan.config.InquiryPollingProperties;
 import com.ghyinc.finance.domain.loan.dto.*;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
@@ -73,6 +74,7 @@ public class LoanLimitService {
     private final LoanLimitProductResultRepository loanLimitProductResultRepository;
     private final RedisLockExecutor lockExecutor;
     private final LoanLimitInquiryCreator inquiryCreator;
+    private final InquiryPollingProperties pollingProperties;
 
     /**
      * 비교대출 한도조회 요청을 처리한다.
@@ -147,6 +149,9 @@ public class LoanLimitService {
         Page<LoanLimitProductResultDto> productResults =
                 loanLimitProductResultRepository.findProductResultsByInquiryId(inquiry.getId(), pageable);
 
-        return LoanLimitPollingResponse.from(inquiry, productResults);
+        return LoanLimitPollingResponse.from(inquiry, productResults)
+                .withDeadline(inquiry.getStatus(),
+                        pollingProperties.deadlineAtEpochMs(inquiry.getCreatedAt()),
+                        pollingProperties.pollInterval().toMillis());
     }
 }

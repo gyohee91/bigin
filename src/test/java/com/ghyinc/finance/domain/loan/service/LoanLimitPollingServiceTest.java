@@ -2,6 +2,8 @@ package com.ghyinc.finance.domain.loan.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ghyinc.finance.domain.loan.config.InquiryPollingProperties;
+import com.ghyinc.finance.domain.loan.config.StaleInquiryProperties;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitPollingResponse;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
@@ -38,11 +40,20 @@ class LoanLimitPollingServiceTest {
     @Mock
     InquirySnapShotLoader snapShotLoader;
 
+    @Mock
+    StaleInquiryFailService staleInquiryFailService;
+
+    @Mock
+    InquiryPollingProperties pollingProperties;
+
+    @Mock
+    StaleInquiryProperties staleInquiryProperties;
+
     ObjectMapper objectMapper = new ObjectMapper();
 
     @BeforeEach
     void setUp() {
-        loanLimitPollingService = new LoanLimitPollingService(store, loanLimitService, snapShotLoader, objectMapper, new SimpleMeterRegistry());
+        loanLimitPollingService = new LoanLimitPollingService(store, loanLimitService, snapShotLoader, objectMapper, new SimpleMeterRegistry(), staleInquiryFailService, pollingProperties, staleInquiryProperties);
     }
 
     private LoanLimitProductResultDto dto(String loReqtNo, Long amount, PartnerInquiryStatus status) {
@@ -115,7 +126,7 @@ class LoanLimitPollingServiceTest {
     @Test
     @DisplayName("미스면 DB 스냅샷을 적재하고 다시 읽는다")
     void getInquiryResult_seedsAndRereads_onMiss() throws JsonProcessingException {
-        InquirySnapShot snapShot = new InquirySnapShot("LL1", 1, "IN_PROGRESS", List.of());
+        InquirySnapShot snapShot = new InquirySnapShot("LL1", 1, "IN_PROGRESS", List.of(), 0L);
         String json = objectMapper.writeValueAsString(this.dto("LR1", 300L, PartnerInquiryStatus.SUCCESS));
         when(store.isEnabled()).thenReturn(true);
         when(store.read("LL1", 3L, 0, 20)).thenReturn(
@@ -140,7 +151,7 @@ class LoanLimitPollingServiceTest {
                 this.dto("LR2", 200L, PartnerInquiryStatus.SEND_SUCCESS),
                 this.dto("LR3", null, PartnerInquiryStatus.PENDING)
         );
-        InquirySnapShot snapShot = new InquirySnapShot("LL1", 3, "IN_PROGRESS", items);
+        InquirySnapShot snapShot = new InquirySnapShot("LL1", 3, "IN_PROGRESS", items, 0L);
         when(store.isEnabled()).thenReturn(true);
         when(store.read("LL1", null, 0, 2))
                 .thenReturn(this.result(InquiryReadModelStore.Type.MISS, 0, 0, 0, 0, List.of()));

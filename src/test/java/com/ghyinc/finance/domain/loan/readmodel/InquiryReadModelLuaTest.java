@@ -75,7 +75,7 @@ class InquiryReadModelLuaTest {
     @Test
     @DisplayName("meta가 없으면 delta는 아무 것도 만들지 않는다")
     void delta_doesNotCreateMeta_whenMetaMissing() {
-        store.upsert(loReqtNo, false, -1, null, List.of(this.dto("LR1", PartnerInquiryStatus.SUCCESS, 100L)));
+        store.upsert(loReqtNo, false, -1, null, List.of(this.dto("LR1", PartnerInquiryStatus.SUCCESS, 100L)), 0L);
 
         assertThat(redis.hasKey(this.metaKey())).isFalse();
         assertThat(store.read(loReqtNo, null, 0, 20).type()).isEqualTo(InquiryReadModelStore.Type.MISS);
@@ -88,7 +88,7 @@ class InquiryReadModelLuaTest {
                 this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, 100L),
                 this.dto("LR2", PartnerInquiryStatus.SEND_SUCCESS, null),
                 this.dto("LR3", PartnerInquiryStatus.SEND_SUCCESS, 300L)
-        ));
+        ), 0L);
 
         InquiryReadModelStore.ReadResult readResult0 = store.read(loReqtNo, null, 0, 2);
         InquiryReadModelStore.ReadResult readResult1 = store.read(loReqtNo, null, 1, 2);
@@ -105,16 +105,16 @@ class InquiryReadModelLuaTest {
     @Test
     @DisplayName("같은 version이면 SAME, 변경이 있으면 version이 증가한다")
     void version_staysOnNoChange_andIncreasesOnChange() {
-        store.upsert(loReqtNo, true, 1, "IN_PROGRESS", List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null)));
+        store.upsert(loReqtNo, true, 1, "IN_PROGRESS", List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null)), 0L);
         InquiryReadModelStore.ReadResult firstResult = store.read(loReqtNo, null, 0, 20);
         assertThat(store.read(loReqtNo, firstResult.version(), 0, 20).type()).isEqualTo(InquiryReadModelStore.Type.SAME);
 
         // 동일 내용 재적용 -> 변경 없음 -> version 유지
-        store.upsert(loReqtNo, false, -1, null, List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null)));
+        store.upsert(loReqtNo, false, -1, null, List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null)), 0L);
         assertThat(store.read(loReqtNo, firstResult.version(), 0, 20).type()).isEqualTo(InquiryReadModelStore.Type.SAME);
 
         // 실제 변경 -> version 증가
-        store.upsert(loReqtNo, false, -1, null, List.of(this.dto("LR1", PartnerInquiryStatus.SUCCESS, 500L)));
+        store.upsert(loReqtNo, false, -1, null, List.of(this.dto("LR1", PartnerInquiryStatus.SUCCESS, 500L)), 0L);
         InquiryReadModelStore.ReadResult changedResult = store.read(loReqtNo, firstResult.version(), 0, 20);
         assertThat(changedResult.type()).isEqualTo(InquiryReadModelStore.Type.OK);
         assertThat(changedResult.version()).isGreaterThan(firstResult.version());
@@ -124,10 +124,10 @@ class InquiryReadModelLuaTest {
     @Test
     @DisplayName("낮은 단계의 늦은 쓰기가 SUCCESS를 덮어쓰지 못한다")
     void stage_isNotDowngradedByLateWrite() {
-        store.upsert(loReqtNo, true, 1, "IN_PROGRESS", List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null)));
-        store.upsert(loReqtNo, false, -1, null, List.of(this.dto("LR1", PartnerInquiryStatus.SUCCESS, 500L)));
+        store.upsert(loReqtNo, true, 1, "IN_PROGRESS", List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null)), 0L);
+        store.upsert(loReqtNo, false, -1, null, List.of(this.dto("LR1", PartnerInquiryStatus.SUCCESS, 500L)), 0L);
         // 뒤늦게 도착한 applyResults delta (SEND_SUCCESS)
-        store.upsert(loReqtNo, false, -1, null, List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null)));
+        store.upsert(loReqtNo, false, -1, null, List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null)), 0L);
 
         InquiryReadModelStore.ReadResult readResult = store.read(loReqtNo, null, 0, 20);
         assertThat(readResult.success()).isEqualTo(1);
@@ -137,18 +137,18 @@ class InquiryReadModelLuaTest {
     @Test
     @DisplayName("전체 수신 완료되면 term이 1이다")
     void term_isOne_whenAllReceived() {
-        store.upsert(loReqtNo, true, 1, "IN_PROGRESS", List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null)));
+        store.upsert(loReqtNo, true, 1, "IN_PROGRESS", List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null)), 0L);
         assertThat(redis.opsForHash().get(this.metaKey(), "term")).isEqualTo("0");
         
-        store.upsert(loReqtNo, false, -1, null, List.of(this.dto("LR1", PartnerInquiryStatus.SUCCESS, 500L)));
+        store.upsert(loReqtNo, false, -1, null, List.of(this.dto("LR1", PartnerInquiryStatus.SUCCESS, 500L)), 0L);
         assertThat(redis.opsForHash().get(this.metaKey(), "term")).isEqualTo("1");
     }
 
     @Test
     @DisplayName("FAILED 상태이면 term이 1이다")
     void term_isOne_whenFailed() {
-        store.upsert(loReqtNo, true, 2, "IN_PROGRESS", List.of());
-        store.upsert(loReqtNo, false, -1, "FAILED", List.of());
+        store.upsert(loReqtNo, true, 2, "IN_PROGRESS", List.of(), 0L);
+        store.upsert(loReqtNo, false, -1, "FAILED", List.of(), 0L);
 
         assertThat(redis.opsForHash().get(this.metaKey(), "term")).isEqualTo("1");
         assertThat(redis.opsForHash().get(this.metaKey(), "status")).isEqualTo("FAILED");
@@ -157,7 +157,7 @@ class InquiryReadModelLuaTest {
     @Test
     @DisplayName("종료되지 않은 건이 reconcile 간격을 넘으면 MISS로 취급한다")
     void read_treatsAsMiss_whenReconcileIntervalExceeded() {
-        store.upsert(loReqtNo, true, 2, "IN_PROGRESS", List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null)));
+        store.upsert(loReqtNo, true, 2, "IN_PROGRESS", List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null)), 0L);
         redis.opsForHash().put(this.metaKey(), "syncedAt", String.valueOf(System.currentTimeMillis() - 60_000));
 
         assertThat(store.read(loReqtNo, null, 0, 20).type()).isEqualTo(InquiryReadModelStore.Type.MISS);

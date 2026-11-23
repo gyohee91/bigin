@@ -51,7 +51,7 @@ class InquiryReadModelStoreTest {
     @Test
     @DisplayName("플래그 ON이면 모든 인자가 String이고 null 금액은 -1이다")
     void apply_shouldPassAllScriptArgsAsStrings_andMapNullAmountToMinusOne() {
-        when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(-1);
+        when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(-1L);
 
         this.store(true).apply(InquiryReadModelEvent.delta("LL1", null,
                 List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null))));
@@ -61,9 +61,10 @@ class InquiryReadModelStoreTest {
         Object[] objects = argumentCaptor.getValue();
         assertThat(Arrays.stream(objects).allMatch(String.class::isInstance));
         assertThat(objects[0]).isEqualTo("D");
-        assertThat(objects[5]).isEqualTo("LR1");    // member
-        assertThat(objects[6]).isEqualTo("-1");     // null amount -> -1
-        assertThat(objects[7]).isEqualTo("1");      // stage
+        assertThat(objects[5]).isEqualTo("0");      // deadline (delta 는 0 = 설정 안 함)
+        assertThat(objects[6]).isEqualTo("LR1");    // member
+        assertThat(objects[7]).isEqualTo("-1");     // null amount -> -1
+        assertThat(objects[8]).isEqualTo("1");      // stage
     }
 
     @Test
@@ -95,23 +96,42 @@ class InquiryReadModelStoreTest {
         InquiryReadModelStore store = this.store(true);
 
         when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class)))
-                .thenReturn(List.of("SAME", "77"));
+                .thenReturn(List.of("SAME", "77", "IN_PROGRESS", "1700000060000"));
         InquiryReadModelStore.ReadResult same = store.read("LL1", 77L, 0, 20);
         assertThat(same.type()).isEqualTo(InquiryReadModelStore.Type.SAME);
         assertThat(same.version()).isEqualTo(77L);
+        assertThat(same.status()).isEqualTo("IN_PROGRESS");
+        assertThat(same.deadlineAtMs()).isEqualTo(1700000060000L);
 
         when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class)))
-                .thenReturn(List.of("OK", "9", "3", "1", "IN_PROGRESS", "3", "{\"a\":1}", "{\"b\":2}"));
+                .thenReturn(List.of("OK", "9", "3", "1", "IN_PROGRESS", "3", "1700000060000", "{\"a\":1}", "{\"b\":2}"));
         InquiryReadModelStore.ReadResult ok = store.read("LL1", null, 0, 20);
         assertThat(ok.type()).isEqualTo(InquiryReadModelStore.Type.OK);
         assertThat(ok.version()).isEqualTo(9L);
         assertThat(ok.total()).isEqualTo(3);
         assertThat(ok.success()).isEqualTo(1);
         assertThat(ok.card()).isEqualTo(3L);
+        assertThat(ok.deadlineAtMs()).isEqualTo(1700000060000L);
         assertThat(ok.itemsJson()).hasSize(2);
 
         when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class)))
                 .thenReturn(List.of("STALE"));
         assertThat(store.read("LL1", null, 0, 20).type()).isEqualTo(InquiryReadModelStore.Type.MISS);
+    }
+
+    @Test
+    @DisplayName("seed 는 deadline 을 ARGV[6] 에 문자열로 전달한다")
+    void upsert_shouldPassDeadlineAsArgv6() {
+        when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(1L);
+
+        this.store(true).upsert("LL1", true, 2, "IN_PROGRESS",
+                List.of(this.dto("LR1", PartnerInquiryStatus.PENDING, 100L)), 1700000060000L);
+
+        ArgumentCaptor<Object[]> captor = ArgumentCaptor.forClass(Object[].class);
+        verify(redis).execute(any(RedisScript.class), anyList(), captor.capture());
+        Object[] a = captor.getValue();
+        assertThat(a[0]).isEqualTo("S");
+        assertThat(a[5]).isEqualTo("1700000060000");
+        assertThat(a[6]).isEqualTo("LR1");
     }
 }

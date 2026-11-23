@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.service;
 
+import com.ghyinc.finance.domain.loan.config.StaleInquiryProperties;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelEvent;
 import com.ghyinc.finance.domain.loan.repository.LoanLimitInquiryRepository;
@@ -17,6 +18,7 @@ import java.util.List;
 public class StaleInquiryFailService {
     private final LoanLimitInquiryRepository loanLimitInquiryRepository;
     private final ApplicationEventPublisher applicationEventPublisher;
+    private final StaleInquiryProperties properties;
 
     @Transactional
     public boolean failIfStale(Long id, String inquiryNo, InquiryStatus expected, LocalDateTime before) {
@@ -45,5 +47,21 @@ public class StaleInquiryFailService {
                     InquiryReadModelEvent.delta(inquiryNo, InquiryStatus.FAILED.name(), List.of()));
         }
         return updated;
+    }
+
+    @Transactional
+    public boolean repairIfStale(String inquiryNo) {
+        LocalDateTime now = LocalDateTime.now().truncatedTo(ChronoUnit.MILLIS);
+        int updated = loanLimitInquiryRepository.failIfStaleByInquiryNo(inquiryNo,
+                now.minus(properties.acceptedTimeout()),
+                now.minus(properties.pendingTimeout()),
+                now.minus(properties.inProgressTimeout()),
+                now);
+        if (updated == 0)   return false;
+        applicationEventPublisher.publishEvent(
+                InquiryReadModelEvent.delta(inquiryNo, InquiryStatus.FAILED.name(), List.of())
+        );
+
+        return true;
     }
 }

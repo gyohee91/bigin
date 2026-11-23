@@ -39,6 +39,7 @@ class StaleInquiryRecoverySchedulerTest {
     private static final Duration PENDING_TIMEOUT = Duration.ofMinutes(2);
     private static final Duration IN_PROGRESS_TIMEOUT = Duration.ofMinutes(3);
     private static final int BATCH_SIZE = 50;
+    private static final Duration FIXED_DELAY = Duration.ofSeconds(10);
     private static final Duration MAX_RUN = Duration.ofSeconds(30);
 
     @Mock
@@ -63,7 +64,7 @@ class StaleInquiryRecoverySchedulerTest {
         return new StaleInquiryRecoveryScheduler(
                 staleInquiryFailService,
                 loanLimitInquiryRepository,
-                new StaleInquiryProperties(ACCEPTED_TIMEOUT, PENDING_TIMEOUT, IN_PROGRESS_TIMEOUT, batchSize, maxRunDuration),
+                new StaleInquiryProperties(ACCEPTED_TIMEOUT, PENDING_TIMEOUT, IN_PROGRESS_TIMEOUT, batchSize, maxRunDuration, FIXED_DELAY),
                 meterRegistry
         );
     }
