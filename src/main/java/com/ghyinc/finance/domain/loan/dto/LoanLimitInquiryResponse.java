@@ -18,7 +18,7 @@ public record LoanLimitInquiryResponse(
         @Schema(description = "성공 여부")
         boolean success,
 
-        @Schema(description = "FE가 폴링을 계속해도 되는 남은 시각(ms). 0 이면 즉시 종료 판단")
+        @Schema(description = "FE가 폴링을 계속해도 되는 남은 시간(ms). 0 이면 즉시 종료 판단")
         long remainingMs,
 
         @Schema(description = "마감 시각(epoch ms). 화면 복원용 보조값")

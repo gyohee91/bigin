@@ -11,5 +11,6 @@ public record StaleInquiryProperties(
         @DefaultValue("2m") Duration pendingTimeout,
         @DefaultValue("5m") Duration inProgressTimeout,
         @DefaultValue("100") int batchSize,
-        @DefaultValue("30s") Duration maxRunDuration    // 한 번 실행의 시간 예상
+        @DefaultValue("30s") Duration maxRunDuration,    // 한 번 실행의 시간 예산
+        @DefaultValue("10s") Duration fixedDelay
 ) {}

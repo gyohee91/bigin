@@ -928,7 +928,7 @@ app:
     in-progress-timeout: 5m
     batch-size: 100
     fixed-delay: PT10S
-    max-run-duration: 30s   # 한 번 실행의 시간 예상
+    max-run-duration: 30s   # 한 번 실행의 시간 예산
   inquiry-polling:
     client-wait-limit: 60s
-    polling-interval: 2s
+    poll-interval: 2s
