@@ -32,28 +32,49 @@ public class StaleInquiryRecoveryScheduler {
             lockAtMostFor = "5m"
     )
     public void failStaleInquiries() {
+        long deadlineNanos = System.nanoTime() + properties.maxRunDuration().toNanos();
         LocalDateTime now = LocalDateTime.now();
-        process(InquiryStatus.ACCEPTED, now.minus(properties.acceptedTimeout()));
-        process(InquiryStatus.PENDING, now.minus(properties.pendingTimeout()));
-        process(InquiryStatus.IN_PROGRESS, now.minus(properties.inProgressTimeout()));
+        process(InquiryStatus.ACCEPTED, now.minus(properties.acceptedTimeout()), deadlineNanos);
+        process(InquiryStatus.PENDING, now.minus(properties.pendingTimeout()), deadlineNanos);
+        process(InquiryStatus.IN_PROGRESS, now.minus(properties.inProgressTimeout()), deadlineNanos);
     }
 
-    private void process(InquiryStatus status, LocalDateTime before) {
-        List<StaleInquiryView> targets =
-                loanLimitInquiryRepository.findStale(status, before, PageRequest.of(0, properties.batchSize()));
-        int failed = 0;
-        for(StaleInquiryView target : targets) {
+    private void process(InquiryStatus status, LocalDateTime before, long deadlineNanos) {
+        int total = 0;
+        while (System.nanoTime() < deadlineNanos) {
+            // FAILED가 된 건은 조회 대상에서 빠지므로 항상 첫 페이지만 다시 읽으면 된다
+            List<StaleInquiryView> staleInquiryViews =
+                    loanLimitInquiryRepository.findStale(status, before, PageRequest.of(0, properties.batchSize()));
+            List<Long> ids = staleInquiryViews.stream().map(StaleInquiryView::getId).toList();
+            if (ids.isEmpty())  break;
+
+            int failed = 0;
             try {
-                if (staleInquiryFailService.failIfStale(target.getId(), target.getInquiryNo(), status, before)) {
-                    failed++;
-                }
+                failed = staleInquiryFailService.failAllIfStale(ids, status, before);
             } catch (Exception e) {
-                log.error("[한도조회 복구] 처리 실패 id={}, status = {}", target.getId(), status, e);
+                log.error("[한도조회 복구] 묶음 처리 실패, 건별 처리로 전환. status = {}, size={}", status, ids.size(), e);
+                meterRegistry.counter("inquiry.recovery.error", "from", status.name()).increment();
+                failed = failOneByOne(staleInquiryViews, status, before);
+            }
+            total += failed;
+            if (failed == 0 || ids.size() < properties.batchSize()) break;  // 진전 없으면 중단 (무한 루프 방지)
+        }
+        if (total > 0) {
+            log.warn("[한도조회 복구] {} 상태에서 멈춘 {}건을 FAILED 처리", status, total);
+            meterRegistry.counter("inquiry.recovery.failed", "from", status.name()).increment(total);
+        }
+    }
+
+    private int failOneByOne(List<StaleInquiryView> staleInquiryViews, InquiryStatus status, LocalDateTime before) {
+        int failed = 0;
+        for(StaleInquiryView view : staleInquiryViews) {
+            try {
+                if (staleInquiryFailService.failIfStale(view.getId(), view.getInquiryNo(), status, before))  failed++;
+            } catch (Exception e) {
+                log.error("[한도조회 복구] 건별 처리 실패 id={}, status={}", view.getId(), status, e);
+                meterRegistry.counter("inquiry.recovery.error", "from", status.name()).increment();
             }
         }
-        if (failed > 0) {
-            log.warn("[한도조회 복구] {} 상태에서 멈춘 {}건을 FAILED 처리", status, failed);
-            meterRegistry.counter("inquiry.recovery.failed", "from", status.name()).increment(failed);
-        }
+        return failed;
     }
 }

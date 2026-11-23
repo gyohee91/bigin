@@ -88,7 +88,7 @@ public interface LoanLimitInquiryRepository extends JpaRepository<LoanLimitInqui
     @Modifying(flushAutomatically = true, clearAutomatically = false)
     @Query("""
            UPDATE LoanLimitInquiry t
-           SET t.status = com.ghyinc.finance.domain.loan.enums.InquiryStatus.FAILED, 
+           SET t.status = com.ghyinc.finance.domain.loan.enums.InquiryStatus.FAILED,
                 t.dedupKey = null,
                 t.updatedAt = :now
            WHERE t.id = :id AND t.status = :expected AND t.updatedAt < :before
@@ -97,4 +97,27 @@ public interface LoanLimitInquiryRepository extends JpaRepository<LoanLimitInqui
                     @Param("expected") InquiryStatus expected,
                     @Param("before") LocalDateTime before,
                     @Param("now") LocalDateTime now);
+
+    @Modifying(flushAutomatically = true, clearAutomatically = false)
+    @Query("""
+           UPDATE LoanLimitInquiry t
+           SET t.status = com.ghyinc.finance.domain.loan.enums.InquiryStatus.FAILED,
+                t.dedupKey = null,
+                t.updatedAt = :now
+           WHERE t.id IN :ids AND t.status = :expected AND t.updatedAt < :before
+           """)
+    int failAllIfStale(@Param("ids") Collection<Long> ids,
+                       @Param("expected") InquiryStatus expected,
+                       @Param("before") LocalDateTime before,
+                       @Param("now") LocalDateTime now);
+
+    @Query("""
+           SELECT t.inquiryNo
+           FROM LoanLimitInquiry t
+           WHERE t.id IN :ids
+                AND t.status = com.ghyinc.finance.domain.loan.enums.InquiryStatus.FAILED
+                AND t.updatedAt >= :since
+           """)
+    List<String> findInquiryNosFailedSince(@Param("ids") Collection<Long> ids,
+                                           @Param("since") LocalDateTime since);
 }

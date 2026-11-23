@@ -21,6 +21,7 @@ import java.time.LocalDateTime;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
 import static org.mockito.Mockito.never;
@@ -90,7 +91,7 @@ class LoanLimitInquiryClaimServiceTest {
     void abort_delegatesToFailIfAccepted() {
         claimService.abort("LL20260101abcdef");
 
-        then(loanLimitInquiryRepository).should().failIfAccepted("LL20260101abcdef", LocalDateTime.now());
+        then(loanLimitInquiryRepository).should().failIfAccepted(eq("LL20260101abcdef"), any(LocalDateTime.class));
         then(loanLimitInquiryRepository).should(never()).save(any());
     }
 
