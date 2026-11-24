@@ -429,4 +429,146 @@ class LoanLimitInquiryRepositoryTest {
         assertThat(first).isEqualTo(1);
         assertThat(second).isZero();
     }
+
+    // ─── keyset 페이징 (findStale / findStaleAfter) ───────────────────────────
+
+    private List<String> nos(List<StaleInquiryView> views) {
+        return views.stream().map(StaleInquiryView::getInquiryNo).toList();
+    }
+
+    @Test
+    @DisplayName("findStale - updatedAt 이 같으면 id 오름차순으로 결정적으로 정렬된다 (커서 경계가 흔들리지 않도록)")
+    void findStale_tieBrokenById() {
+        LocalDateTime same = NOW.minusMinutes(30);
+        saveAt("LL_1", InquiryStatus.PENDING, "k:20260101", same);
+        saveAt("LL_2", InquiryStatus.PENDING, "k:20260102", same);
+        saveAt("LL_3", InquiryStatus.PENDING, "k:20260103", same);
+
+        List<StaleInquiryView> stale = repository.findStale(InquiryStatus.PENDING, NOW.minusMinutes(5), PageRequest.of(0, 10));
+
+        assertThat(nos(stale)).containsExactly("LL_1", "LL_2", "LL_3");
+        assertThat(stale).allSatisfy(v -> assertThat(v.getUpdatedAt()).isEqualTo(same));
+    }
+
+    @Test
+    @DisplayName("findStaleAfter - 커서(updatedAt, id) 이후의 행만, 오래된 순으로 반환한다")
+    void findStaleAfter_returnsOnlyRowsAfterCursor() {
+        saveAt("LL_1", InquiryStatus.PENDING, "k:20260101", NOW.minusMinutes(40));
+        saveAt("LL_2", InquiryStatus.PENDING, "k:20260102", NOW.minusMinutes(30));
+        saveAt("LL_3", InquiryStatus.PENDING, "k:20260103", NOW.minusMinutes(20));
+        saveAt("LL_4", InquiryStatus.PENDING, "k:20260104", NOW.minusMinutes(10));
+        Long idOf2 = repository.findByInquiryNo("LL_2").orElseThrow().getId();
+
+        List<StaleInquiryView> after = repository.findStaleAfter(
+                InquiryStatus.PENDING, NOW.minusMinutes(5), NOW.minusMinutes(30), idOf2, PageRequest.of(0, 10));
+
+        assertThat(nos(after)).containsExactly("LL_3", "LL_4");
+    }
+
+    @Test
+    @DisplayName("findStaleAfter - updatedAt 이 커서와 같으면 id 가 더 큰 행만 포함한다 (같은 시각 행을 건너뛰거나 중복하지 않는다)")
+    void findStaleAfter_sameUpdatedAt_usesIdAsTieBreaker() {
+        LocalDateTime same = NOW.minusMinutes(30);
+        saveAt("LL_1", InquiryStatus.PENDING, "k:20260101", same);
+        saveAt("LL_2", InquiryStatus.PENDING, "k:20260102", same);
+        saveAt("LL_3", InquiryStatus.PENDING, "k:20260103", same);
+        Long idOf1 = repository.findByInquiryNo("LL_1").orElseThrow().getId();
+
+        List<StaleInquiryView> after = repository.findStaleAfter(
+                InquiryStatus.PENDING, NOW.minusMinutes(5), same, idOf1, PageRequest.of(0, 10));
+
+        assertThat(nos(after)).containsExactly("LL_2", "LL_3");
+    }
+
+    @Test
+    @DisplayName("findStaleAfter - 상태·기준 시각 조건과 페이지 크기를 지킨다")
+    void findStaleAfter_respectsStatusBeforeAndPageSize() {
+        saveAt("LL_0", InquiryStatus.PENDING, "k:20260100", NOW.minusMinutes(60));            // 커서 기준 행
+        saveAt("LL_A", InquiryStatus.PENDING, "k:20260101", NOW.minusMinutes(50));
+        saveAt("LL_B", InquiryStatus.PENDING, "k:20260102", NOW.minusMinutes(40));
+        saveAt("LL_C", InquiryStatus.PENDING, "k:20260103", NOW.minusMinutes(30));
+        saveAt("LL_OTHER", InquiryStatus.IN_PROGRESS, "k:20260104", NOW.minusMinutes(45));   // 다른 상태 -> 제외
+        saveAt("LL_FRESH", InquiryStatus.PENDING, "k:20260105", NOW.minusMinutes(1));        // 기준 이후 -> 제외
+        Long cursorId = repository.findByInquiryNo("LL_0").orElseThrow().getId();
+
+        List<StaleInquiryView> page = repository.findStaleAfter(
+                InquiryStatus.PENDING, NOW.minusMinutes(5), NOW.minusMinutes(60), cursorId, PageRequest.of(0, 2));
+
+        assertThat(nos(page)).containsExactly("LL_A", "LL_B");
+    }
+
+    @Test
+    @DisplayName("findStaleAfter - 기준 시각(before)과 같은 updatedAt 은 stale 이 아니다 (엄격한 <)")
+    void findStaleAfter_beforeBoundaryIsExclusive() {
+        LocalDateTime before = NOW.minusMinutes(5);
+        saveAt("LL_0", InquiryStatus.PENDING, "k:20260100", NOW.minusMinutes(60));
+        saveAt("LL_EQ", InquiryStatus.PENDING, "k:20260101", before);
+        Long cursorId = repository.findByInquiryNo("LL_0").orElseThrow().getId();
+
+        assertThat(repository.findStaleAfter(InquiryStatus.PENDING, before, NOW.minusMinutes(60), cursorId, PageRequest.of(0, 10)))
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("findStaleAfter - 커서가 마지막 행 이후이면 빈 목록")
+    void findStaleAfter_cursorAfterLastRow_empty() {
+        saveAt("LL_1", InquiryStatus.PENDING, "k:20260101", NOW.minusMinutes(30));
+        Long id = repository.findByInquiryNo("LL_1").orElseThrow().getId();
+
+        assertThat(repository.findStaleAfter(InquiryStatus.PENDING, NOW.minusMinutes(5), NOW.minusMinutes(30), id, PageRequest.of(0, 10)))
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("keyset 순회 - 같은 updatedAt 행이 페이지 경계에 걸려도 모든 행을 정확히 한 번씩 읽는다")
+    void keysetWalk_visitsEveryRowExactlyOnce() {
+        LocalDateTime same = NOW.minusMinutes(30);
+        saveAt("LL_1", InquiryStatus.PENDING, "k:20260101", NOW.minusMinutes(50));
+        saveAt("LL_2", InquiryStatus.PENDING, "k:20260102", same);
+        saveAt("LL_3", InquiryStatus.PENDING, "k:20260103", same);
+        saveAt("LL_4", InquiryStatus.PENDING, "k:20260104", same);   // 경계(2건 단위)에서 같은 시각이 갈린다
+        saveAt("LL_5", InquiryStatus.PENDING, "k:20260105", NOW.minusMinutes(10));
+        LocalDateTime before = NOW.minusMinutes(5);
+
+        List<String> visited = new ArrayList<>();
+        List<StaleInquiryView> page = repository.findStale(InquiryStatus.PENDING, before, PageRequest.of(0, 2));
+        while (!page.isEmpty()) {
+            visited.addAll(nos(page));
+            StaleInquiryView last = page.get(page.size() - 1);
+            page = repository.findStaleAfter(InquiryStatus.PENDING, before, last.getUpdatedAt(), last.getId(), PageRequest.of(0, 2));
+        }
+
+        assertThat(visited).containsExactly("LL_1", "LL_2", "LL_3", "LL_4", "LL_5");
+    }
+
+    @Test
+    @DisplayName("[회귀] 앞쪽 행이 처리되지 않고 stale 로 남아 있어도 keyset 은 그 뒤 행을 읽는다 (첫 페이지 재조회는 같은 행만 반복)")
+    void keyset_skipsUnprocessedFrontRows_whereFirstPageReReadDoesNot() {
+        saveAt("LL_POISON1", InquiryStatus.PENDING, "k:20260101", NOW.minusMinutes(50));
+        saveAt("LL_POISON2", InquiryStatus.PENDING, "k:20260102", NOW.minusMinutes(40));
+        saveAt("LL_OK1", InquiryStatus.PENDING, "k:20260103", NOW.minusMinutes(30));
+        saveAt("LL_OK2", InquiryStatus.PENDING, "k:20260104", NOW.minusMinutes(20));
+        LocalDateTime before = NOW.minusMinutes(5);
+
+        // 앞쪽 두 건은 처리에 실패했다고 가정(상태가 그대로 PENDING 으로 남음)
+        List<StaleInquiryView> first = repository.findStale(InquiryStatus.PENDING, before, PageRequest.of(0, 2));
+        assertThat(nos(first)).containsExactly("LL_POISON1", "LL_POISON2");
+
+        // 이전 방식: 첫 페이지를 다시 읽으면 또 같은 두 건이라 뒤쪽에 도달하지 못한다
+        assertThat(nos(repository.findStale(InquiryStatus.PENDING, before, PageRequest.of(0, 2))))
+                .containsExactly("LL_POISON1", "LL_POISON2");
+
+        // keyset: 커서를 마지막 행 뒤로 옮겨 뒤쪽 정상 건에 도달한다
+        StaleInquiryView last = first.get(first.size() - 1);
+        List<StaleInquiryView> next = repository.findStaleAfter(
+                InquiryStatus.PENDING, before, last.getUpdatedAt(), last.getId(), PageRequest.of(0, 2));
+        assertThat(nos(next)).containsExactly("LL_OK1", "LL_OK2");
+
+        // 뒤쪽 정상 건은 실제로 FAILED 처리되고, 앞쪽 실패 건은 건드리지 않는다
+        int failed = repository.failAllIfStale(next.stream().map(StaleInquiryView::getId).toList(),
+                InquiryStatus.PENDING, before, NOW);
+        assertThat(failed).isEqualTo(2);
+        assertThat(reload("LL_OK1").getStatus()).isEqualTo(InquiryStatus.FAILED);
+        assertThat(reload("LL_POISON1").getStatus()).isEqualTo(InquiryStatus.PENDING);
+    }
 }

@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class StaleInquiryPropertiesTest {
 
     private static StaleInquiryProperties of(Duration accepted, Duration pending, Duration inProgress) {
-        return new StaleInquiryProperties(accepted, pending, inProgress, 100, Duration.ofSeconds(30), Duration.ofSeconds(10));
+        return new StaleInquiryProperties(accepted, pending, inProgress, 100, Duration.ofSeconds(30), Duration.ofSeconds(10), Duration.ofSeconds(20));
     }
 
     @Test

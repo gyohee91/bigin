@@ -14,7 +14,8 @@ public record StaleInquiryProperties(
         @DefaultValue("5m") Duration inProgressTimeout,
         @DefaultValue("100") int batchSize,
         @DefaultValue("30s") Duration maxRunDuration,    // 한 번 실행의 시간 예산
-        @DefaultValue("10s") Duration fixedDelay
+        @DefaultValue("10s") Duration fixedDelay,
+        @DefaultValue("20s") Duration lockAtLeast
 ) {
     public Duration minTimeout() {
         return Collections.min(List.of(acceptedTimeout, pendingTimeout, inProgressTimeout));

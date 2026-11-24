@@ -44,6 +44,8 @@ class LoanPropertiesBindingTest {
             assertThat(stale.inProgressTimeout()).isEqualTo(Duration.ofMinutes(5));
             assertThat(stale.batchSize()).isEqualTo(100);
             assertThat(stale.maxRunDuration()).isEqualTo(Duration.ofSeconds(30));
+            assertThat(stale.fixedDelay()).isEqualTo(Duration.ofSeconds(10));
+            assertThat(stale.lockAtLeast()).isEqualTo(Duration.ofSeconds(20));
         });
     }
 
@@ -57,7 +59,9 @@ class LoanPropertiesBindingTest {
                 "app.inquiry-recovery.pending-timeout=4m",
                 "app.inquiry-recovery.in-progress-timeout=7m",
                 "app.inquiry-recovery.batch-size=250",
-                "app.inquiry-recovery.max-run-duration=15s"
+                "app.inquiry-recovery.max-run-duration=15s",
+                "app.inquiry-recovery.fixed-delay=PT15S",
+                "app.inquiry-recovery.lock-at-least=25s"
         ).run(ctx -> {
             InquiryPollingProperties polling = ctx.getBean(InquiryPollingProperties.class);
             StaleInquiryProperties stale = ctx.getBean(StaleInquiryProperties.class);
@@ -69,6 +73,8 @@ class LoanPropertiesBindingTest {
             assertThat(stale.inProgressTimeout()).isEqualTo(Duration.ofMinutes(7));
             assertThat(stale.batchSize()).isEqualTo(250);
             assertThat(stale.maxRunDuration()).isEqualTo(Duration.ofSeconds(15));
+            assertThat(stale.fixedDelay()).isEqualTo(Duration.ofSeconds(15));
+            assertThat(stale.lockAtLeast()).isEqualTo(Duration.ofSeconds(25));
         });
     }
 

@@ -73,13 +73,30 @@ public interface LoanLimitInquiryRepository extends JpaRepository<LoanLimitInqui
     int failIfAccepted(@Param("inquiryNo") String inquiryNo, @Param("now") LocalDateTime now);
 
     @Query("""
-           SELECT t.id AS id, t.inquiryNo AS inquiryNo
+           SELECT t.id AS id, t.inquiryNo AS inquiryNo, t.updatedAt AS updatedAt
            FROM LoanLimitInquiry t
            WHERE t.status = :status AND t.updatedAt < :before
-           ORDER BY t.updatedAt ASC
+           ORDER BY t.updatedAt ASC, t.id ASC
            """)
     List<StaleInquiryView> findStale(@Param("status") InquiryStatus status,
                                      @Param("before") LocalDateTime before,
+                                     Pageable pageable);
+
+    /**
+     * keySet: (lastUpdatedAt, lastId) 다음부터 읽는다. 첫 페이지는 findStale을 쓴다
+     */
+    @Query("""
+           SELECT t.id AS id, t.inquiryNo AS inquiryNo, t.updatedAt AS updatedAt
+           FROM LoanLimitInquiry t
+           WHERE t.status = :status AND t.updatedAt < :before
+                AND (t.updatedAt > :lastUpdatedAt
+                    OR (t.updatedAt = :lastUpdatedAt AND t.id > :lastId) )
+           ORDER BY t.updatedAt ASC, t.id ASC
+           """)
+    List<StaleInquiryView> findStaleAfter(@Param("status") InquiryStatus status,
+                                     @Param("before") LocalDateTime before,
+                                     @Param("lastUpdatedAt") LocalDateTime lastUpdatedAt,
+                                     @Param("lastId") Long lastId,
                                      Pageable pageable);
 
     /**

@@ -48,7 +48,7 @@ class LoanLimitPollingServiceTest {
     InquiryPollingProperties pollingProperties = new InquiryPollingProperties(Duration.ofSeconds(60), Duration.ofSeconds(2));
 
     StaleInquiryProperties staleInquiryProperties =
-            new StaleInquiryProperties(Duration.ofMinutes(2), Duration.ofMinutes(2), Duration.ofMinutes(5), 100, Duration.ofSeconds(30), Duration.ofSeconds(10));
+            new StaleInquiryProperties(Duration.ofMinutes(2), Duration.ofMinutes(2), Duration.ofMinutes(5), 100, Duration.ofSeconds(30), Duration.ofSeconds(10), Duration.ofSeconds(20));
 
     ObjectMapper objectMapper = new ObjectMapper();
 

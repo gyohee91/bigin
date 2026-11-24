@@ -222,7 +222,7 @@ class StaleInquiryFailServiceTest {
     // ------------------------------------------------------------------ repairIfStale (read-repair, 단건)
 
     private static final StaleInquiryProperties PROPS = new StaleInquiryProperties(
-            Duration.ofMinutes(2), Duration.ofMinutes(3), Duration.ofMinutes(5), 100, Duration.ofSeconds(30), Duration.ofSeconds(10));
+            Duration.ofMinutes(2), Duration.ofMinutes(3), Duration.ofMinutes(5), 100, Duration.ofSeconds(30), Duration.ofSeconds(10), Duration.ofSeconds(20));
 
     private StaleInquiryFailService withProperties() {
         return new StaleInquiryFailService(loanLimitInquiryRepository, applicationEventPublisher, PROPS);

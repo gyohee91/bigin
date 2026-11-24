@@ -41,6 +41,8 @@ class StaleInquiryRecoverySchedulerTest {
     private static final int BATCH_SIZE = 50;
     private static final Duration FIXED_DELAY = Duration.ofSeconds(10);
     private static final Duration MAX_RUN = Duration.ofSeconds(30);
+    private static final Duration LOCK_AT_LEAST = Duration.ofSeconds(20);
+    private static final LocalDateTime BASE = LocalDateTime.of(2026, 1, 1, 12, 0, 0);
 
     @Mock
     private StaleInquiryFailService staleInquiryFailService;
@@ -58,18 +60,25 @@ class StaleInquiryRecoverySchedulerTest {
         // 기본값: 모든 상태에서 대상 없음. 개별 테스트가 필요한 상태만 덮어쓴다
         lenient().when(loanLimitInquiryRepository.findStale(any(), any(), any(Pageable.class)))
                 .thenReturn(List.of());
+        lenient().when(loanLimitInquiryRepository.findStaleAfter(any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(List.of());
     }
 
     private StaleInquiryRecoveryScheduler newScheduler(int batchSize, Duration maxRunDuration) {
         return new StaleInquiryRecoveryScheduler(
                 staleInquiryFailService,
                 loanLimitInquiryRepository,
-                new StaleInquiryProperties(ACCEPTED_TIMEOUT, PENDING_TIMEOUT, IN_PROGRESS_TIMEOUT, batchSize, maxRunDuration, FIXED_DELAY),
+                new StaleInquiryProperties(ACCEPTED_TIMEOUT, PENDING_TIMEOUT, IN_PROGRESS_TIMEOUT, batchSize, maxRunDuration, FIXED_DELAY, LOCK_AT_LEAST),
                 meterRegistry
         );
     }
 
+    /** updatedAt 은 id 에 비례해 증가(오래된 순서 = id 순서) */
     private static StaleInquiryView view(long id, String inquiryNo) {
+        return view(id, inquiryNo, BASE.plusSeconds(id));
+    }
+
+    private static StaleInquiryView view(long id, String inquiryNo, LocalDateTime updatedAt) {
         return new StaleInquiryView() {
             @Override
             public Long getId() {
@@ -80,14 +89,27 @@ class StaleInquiryRecoverySchedulerTest {
             public String getInquiryNo() {
                 return inquiryNo;
             }
+
+            @Override
+            public LocalDateTime getUpdatedAt() {
+                return updatedAt;
+            }
         };
     }
 
-    /** 해당 상태의 findStale 이 호출될 때마다 차례로 돌려줄 페이지들을 지정한다 (마지막 값은 이후 호출에도 반복) */
+    /**
+     * 첫 페이지는 findStale, 두 번째부터는 findStaleAfter(keyset) 가 차례로 돌려줄 페이지를 지정한다.
+     * 더 이상 지정하지 않은 호출은 기본 stub(빈 목록)이 받는다.
+     */
     @SafeVarargs
     private void stubStalePages(InquiryStatus status, List<StaleInquiryView>... pages) {
-        var stubbing = given(loanLimitInquiryRepository.findStale(eq(status), any(LocalDateTime.class), any(Pageable.class)));
-        stubbing.willReturn(pages[0], java.util.Arrays.copyOfRange(pages, 1, pages.length));
+        given(loanLimitInquiryRepository.findStale(eq(status), any(LocalDateTime.class), any(Pageable.class)))
+                .willReturn(pages[0]);
+        if (pages.length > 1) {
+            given(loanLimitInquiryRepository.findStaleAfter(
+                    eq(status), any(LocalDateTime.class), any(LocalDateTime.class), any(Long.class), any(Pageable.class)))
+                    .willReturn(pages[1], java.util.Arrays.copyOfRange(pages, 2, pages.length));
+        }
     }
 
     private void stubStale(InquiryStatus status, StaleInquiryView... views) {
@@ -207,34 +229,156 @@ class StaleInquiryRecoverySchedulerTest {
     // ------------------------------------------------------------------ 반복·종료 조건
 
     @Test
-    @DisplayName("한 페이지가 가득 차면 다음 페이지를 이어서 처리하고, 마지막 페이지가 차지 않으면 멈춘다")
-    void keepsDrainingWhilePageIsFull_thenStopsOnPartialPage() {
+    @DisplayName("한 페이지가 가득 차면 keyset 커서(마지막 행의 updatedAt, id)로 다음 페이지를 읽고, 마지막 페이지가 차지 않으면 멈춘다")
+    void keepsDrainingWithKeysetCursor_thenStopsOnPartialPage() {
         scheduler = newScheduler(2, MAX_RUN);
+        StaleInquiryView v2 = view(2L, "LL_2");
         stubStalePages(InquiryStatus.PENDING,
-                List.of(view(1L, "LL_1"), view(2L, "LL_2")),     // 가득 참 → 계속
-                List.of(view(3L, "LL_3")));                      // 부분 페이지 → 종료
+                List.of(view(1L, "LL_1"), v2),     // 가득 참 → 계속
+                List.of(view(3L, "LL_3")));        // 부분 페이지 → 종료
         given(staleInquiryFailService.failAllIfStale(any(), eq(InquiryStatus.PENDING), any())).willReturn(2, 1);
-
-        scheduler.failStaleInquiries();
-
-        then(loanLimitInquiryRepository).should(times(2))
-                .findStale(eq(InquiryStatus.PENDING), any(), any(Pageable.class));
-        then(staleInquiryFailService).should(times(2)).failAllIfStale(any(), eq(InquiryStatus.PENDING), any());
-        assertThat(failedCount(InquiryStatus.PENDING)).isEqualTo(3.0);
-    }
-
-    @Test
-    @DisplayName("한 건도 갱신하지 못하면(진전 없음) 페이지가 가득 차 있어도 반복을 멈춘다 (무한 루프 방지)")
-    void stopsWhenNoProgress_evenIfPageIsFull() {
-        scheduler = newScheduler(2, MAX_RUN);
-        stubStale(InquiryStatus.PENDING, view(1L, "LL_1"), view(2L, "LL_2"));    // 매번 같은 가득 찬 페이지
-        given(staleInquiryFailService.failAllIfStale(any(), any(), any())).willReturn(0);
 
         scheduler.failStaleInquiries();
 
         then(loanLimitInquiryRepository).should(times(1))
                 .findStale(eq(InquiryStatus.PENDING), any(), any(Pageable.class));
+        then(loanLimitInquiryRepository).should(times(1)).findStaleAfter(
+                eq(InquiryStatus.PENDING), any(), eq(v2.getUpdatedAt()), eq(2L), any(Pageable.class));
+        then(staleInquiryFailService).should(times(2)).failAllIfStale(any(), eq(InquiryStatus.PENDING), any());
+        assertThat(failedCount(InquiryStatus.PENDING)).isEqualTo(3.0);
+    }
+
+    @Test
+    @DisplayName("커서는 매 페이지의 마지막 행으로 전진하고, 모든 호출은 첫 페이지 번호(0)와 batchSize 로 읽는다")
+    void cursorAdvancesToLastRowOfEachPage() {
+        scheduler = newScheduler(2, MAX_RUN);
+        StaleInquiryView v2 = view(2L, "LL_2");
+        StaleInquiryView v4 = view(4L, "LL_4");
+        stubStalePages(InquiryStatus.PENDING,
+                List.of(view(1L, "LL_1"), v2),
+                List.of(view(3L, "LL_3"), v4),
+                List.of(view(5L, "LL_5")));
+        given(staleInquiryFailService.failAllIfStale(any(), eq(InquiryStatus.PENDING), any())).willReturn(2, 2, 1);
+
+        scheduler.failStaleInquiries();
+
+        ArgumentCaptor<LocalDateTime> lastAt = ArgumentCaptor.forClass(LocalDateTime.class);
+        ArgumentCaptor<Long> lastId = ArgumentCaptor.forClass(Long.class);
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        then(loanLimitInquiryRepository).should(times(2)).findStaleAfter(
+                eq(InquiryStatus.PENDING), any(), lastAt.capture(), lastId.capture(), pageable.capture());
+        assertThat(lastAt.getAllValues()).containsExactly(v2.getUpdatedAt(), v4.getUpdatedAt());
+        assertThat(lastId.getAllValues()).containsExactly(2L, 4L);
+        assertThat(pageable.getAllValues()).allSatisfy(p -> {
+            assertThat(p.getPageNumber()).isZero();         // offset 이 아니라 keyset 이므로 항상 0 페이지
+            assertThat(p.getPageSize()).isEqualTo(2);
+        });
+        assertThat(failedCount(InquiryStatus.PENDING)).isEqualTo(5.0);
+    }
+
+    @Test
+    @DisplayName("[회귀] 앞쪽 행이 계속 처리되지 않아도(진전 0) 커서가 그 뒤로 넘어가 뒤쪽 정상 건을 처리한다")
+    void poisonRowsAtFront_doNotStarveLaterRows() {
+        scheduler = newScheduler(2, MAX_RUN);
+        StaleInquiryView v2 = view(2L, "LL_2");
+        stubStalePages(InquiryStatus.PENDING,
+                List.of(view(1L, "LL_1"), v2),     // 이 두 건은 계속 처리되지 않는 행
+                List.of(view(3L, "LL_3")));        // 뒤쪽 정상 건
+        given(staleInquiryFailService.failAllIfStale(any(), eq(InquiryStatus.PENDING), any())).willReturn(0, 1);
+
+        scheduler.failStaleInquiries();
+
+        then(staleInquiryFailService).should().failAllIfStale(eq(List.of(1L, 2L)), eq(InquiryStatus.PENDING), any());
+        then(staleInquiryFailService).should().failAllIfStale(eq(List.of(3L)), eq(InquiryStatus.PENDING), any());
+        then(loanLimitInquiryRepository).should().findStaleAfter(
+                eq(InquiryStatus.PENDING), any(), eq(v2.getUpdatedAt()), eq(2L), any(Pageable.class));
+        assertThat(failedCount(InquiryStatus.PENDING)).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("모든 페이지가 전부 실패해도(진전 0) 커서가 전진하므로 마지막 페이지에서 끝난다 (무한 루프 없음)")
+    void allPagesFail_stillTerminates() {
+        scheduler = newScheduler(2, MAX_RUN);
+        stubStalePages(InquiryStatus.PENDING,
+                List.of(view(1L, "LL_1"), view(2L, "LL_2")),
+                List.of(view(3L, "LL_3"), view(4L, "LL_4")),
+                List.of(view(5L, "LL_5")));
+        given(staleInquiryFailService.failAllIfStale(any(), any(), any())).willReturn(0);
+
+        scheduler.failStaleInquiries();
+
+        then(loanLimitInquiryRepository).should(times(1)).findStale(eq(InquiryStatus.PENDING), any(), any(Pageable.class));
+        then(loanLimitInquiryRepository).should(times(2)).findStaleAfter(
+                eq(InquiryStatus.PENDING), any(), any(), any(), any(Pageable.class));
+        then(staleInquiryFailService).should(times(3)).failAllIfStale(any(), eq(InquiryStatus.PENDING), any());
         assertThat(failedCount(InquiryStatus.PENDING)).isZero();
+    }
+
+    @Test
+    @DisplayName("가득 찬 페이지 다음 keyset 조회가 비어 있으면 거기서 끝난다")
+    void emptyPageAfterCursor_stops() {
+        scheduler = newScheduler(2, MAX_RUN);
+        stubStalePages(InquiryStatus.PENDING, List.of(view(1L, "LL_1"), view(2L, "LL_2")));
+        given(staleInquiryFailService.failAllIfStale(any(), eq(InquiryStatus.PENDING), any())).willReturn(2);
+
+        scheduler.failStaleInquiries();
+
+        then(loanLimitInquiryRepository).should(times(1)).findStaleAfter(
+                eq(InquiryStatus.PENDING), any(), any(), any(), any(Pageable.class));
+        then(staleInquiryFailService).should(times(1)).failAllIfStale(any(), eq(InquiryStatus.PENDING), any());
+    }
+
+    @Test
+    @DisplayName("updatedAt 이 같은 행이 경계에 있어도 커서는 (updatedAt, id) 쌍으로 마지막 행을 가리킨다")
+    void cursorKeepsIdWhenUpdatedAtTies() {
+        scheduler = newScheduler(2, MAX_RUN);
+        LocalDateTime same = BASE.plusMinutes(1);
+        StaleInquiryView second = view(2L, "LL_2", same);
+        stubStalePages(InquiryStatus.PENDING,
+                List.of(view(1L, "LL_1", same), second),
+                List.of(view(3L, "LL_3", same)));
+        given(staleInquiryFailService.failAllIfStale(any(), eq(InquiryStatus.PENDING), any())).willReturn(2, 1);
+
+        scheduler.failStaleInquiries();
+
+        then(loanLimitInquiryRepository).should().findStaleAfter(
+                eq(InquiryStatus.PENDING), any(), eq(same), eq(2L), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("커서는 상태마다 새로 시작한다 - 다른 상태의 첫 조회는 항상 findStale 이다")
+    void cursorIsResetPerStatus() {
+        scheduler = newScheduler(2, MAX_RUN);
+        stubStalePages(InquiryStatus.ACCEPTED, List.of(view(1L, "LL_1"), view(2L, "LL_2")));
+        given(staleInquiryFailService.failAllIfStale(any(), eq(InquiryStatus.ACCEPTED), any())).willReturn(2);
+
+        scheduler.failStaleInquiries();
+
+        then(loanLimitInquiryRepository).should().findStale(eq(InquiryStatus.PENDING), any(), any(Pageable.class));
+        then(loanLimitInquiryRepository).should().findStale(eq(InquiryStatus.IN_PROGRESS), any(), any(Pageable.class));
+        then(loanLimitInquiryRepository).should(never())
+                .findStaleAfter(eq(InquiryStatus.PENDING), any(), any(), any(), any(Pageable.class));
+        then(loanLimitInquiryRepository).should(never())
+                .findStaleAfter(eq(InquiryStatus.IN_PROGRESS), any(), any(), any(), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("한 사이클 안의 모든 keyset 조회는 같은 기준 시각(before)을 쓴다")
+    void sameBeforeAcrossPagesInOneCycle() {
+        scheduler = newScheduler(2, MAX_RUN);
+        stubStalePages(InquiryStatus.PENDING,
+                List.of(view(1L, "LL_1"), view(2L, "LL_2")),
+                List.of(view(3L, "LL_3")));
+        given(staleInquiryFailService.failAllIfStale(any(), eq(InquiryStatus.PENDING), any())).willReturn(2, 1);
+
+        scheduler.failStaleInquiries();
+
+        ArgumentCaptor<LocalDateTime> first = ArgumentCaptor.forClass(LocalDateTime.class);
+        ArgumentCaptor<LocalDateTime> next = ArgumentCaptor.forClass(LocalDateTime.class);
+        then(loanLimitInquiryRepository).should().findStale(eq(InquiryStatus.PENDING), first.capture(), any(Pageable.class));
+        then(loanLimitInquiryRepository).should().findStaleAfter(
+                eq(InquiryStatus.PENDING), next.capture(), any(), any(), any(Pageable.class));
+        assertThat(next.getValue()).isEqualTo(first.getValue());
     }
 
     @Test
@@ -288,6 +432,28 @@ class StaleInquiryRecoverySchedulerTest {
     }
 
     @Test
+    @DisplayName("묶음 실패 → 건별 폴백도 전부 실패해도 커서는 전진해 다음 페이지를 이어서 읽는다")
+    void bulkAndPerRowFailure_stillAdvancesCursor() {
+        scheduler = newScheduler(2, MAX_RUN);
+        StaleInquiryView v2 = view(2L, "LL_2");
+        stubStalePages(InquiryStatus.PENDING,
+                List.of(view(1L, "LL_1"), v2),
+                List.of(view(3L, "LL_3")));
+        given(staleInquiryFailService.failAllIfStale(eq(List.of(1L, 2L)), eq(InquiryStatus.PENDING), any()))
+                .willThrow(new IllegalStateException("bulk failed"));
+        given(staleInquiryFailService.failIfStale(any(), any(), eq(InquiryStatus.PENDING), any()))
+                .willThrow(new IllegalStateException("row failed"));
+        given(staleInquiryFailService.failAllIfStale(eq(List.of(3L)), eq(InquiryStatus.PENDING), any())).willReturn(1);
+
+        scheduler.failStaleInquiries();
+
+        then(loanLimitInquiryRepository).should().findStaleAfter(
+                eq(InquiryStatus.PENDING), any(), eq(v2.getUpdatedAt()), eq(2L), any(Pageable.class));
+        assertThat(failedCount(InquiryStatus.PENDING)).isEqualTo(1.0);
+        assertThat(errorCount(InquiryStatus.PENDING)).isEqualTo(3.0);    // 묶음 1 + 건별 2
+    }
+
+    @Test
     @DisplayName("한 상태에서 묶음·건별 모두 실패해도 다음 상태 처리는 계속된다")
     void failureInOneStatus_doesNotBlockNextStatus() {
         stubStale(InquiryStatus.ACCEPTED, view(1L, "LL_1"));
@@ -303,5 +469,20 @@ class StaleInquiryRecoverySchedulerTest {
         then(staleInquiryFailService).should().failAllIfStale(eq(List.of(2L)), eq(InquiryStatus.PENDING), any());
         assertThat(failedCount(InquiryStatus.PENDING)).isEqualTo(1.0);
         assertThat(failedCount(InquiryStatus.ACCEPTED)).isZero();
+    }
+
+    // ------------------------------------------------------------------ 스케줄 설정
+
+    @Test
+    @DisplayName("@Scheduled 주기와 @SchedulerLock 최소 보유 시간은 설정(placeholder)으로 읽고, 최대 보유 시간은 5분이다")
+    void scheduleAnnotations_useConfigurableValues() throws NoSuchMethodException {
+        var method = StaleInquiryRecoveryScheduler.class.getMethod("failStaleInquiries");
+
+        var scheduled = method.getAnnotation(org.springframework.scheduling.annotation.Scheduled.class);
+        var lock = method.getAnnotation(net.javacrumbs.shedlock.spring.annotation.SchedulerLock.class);
+
+        assertThat(scheduled.fixedDelayString()).contains("app.inquiry-recovery.fixed-delay");
+        assertThat(lock.lockAtLeastFor()).contains("app.inquiry-recovery.lock-at-least");
+        assertThat(lock.lockAtMostFor()).isEqualTo("5m");
     }
 }
