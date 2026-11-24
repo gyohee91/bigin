@@ -26,6 +26,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.atMost;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -451,6 +453,42 @@ class StaleInquiryRecoverySchedulerTest {
                 eq(InquiryStatus.PENDING), any(), eq(v2.getUpdatedAt()), eq(2L), any(Pageable.class));
         assertThat(failedCount(InquiryStatus.PENDING)).isEqualTo(1.0);
         assertThat(errorCount(InquiryStatus.PENDING)).isEqualTo(3.0);    // 묶음 1 + 건별 2
+    }
+
+    @Test
+    @DisplayName("건별 폴백 중에도 시간 예산을 지킨다 - 예산을 다 쓰면 남은 행은 처리하지 않고 중단한다")
+    void perRowFallback_respectsTimeBudget() {
+        scheduler = newScheduler(BATCH_SIZE, Duration.ofMillis(100));
+        stubStale(InquiryStatus.ACCEPTED,
+                view(1L, "LL_1"), view(2L, "LL_2"), view(3L, "LL_3"), view(4L, "LL_4"), view(5L, "LL_5"));
+        given(staleInquiryFailService.failAllIfStale(any(), eq(InquiryStatus.ACCEPTED), any()))
+                .willThrow(new IllegalStateException("bulk failed"));
+        given(staleInquiryFailService.failIfStale(any(), any(), eq(InquiryStatus.ACCEPTED), any()))
+                .willAnswer(invocation -> {
+                    Thread.sleep(60);       // 느린 DB 를 흉내낸다. 두 건이면 예산(100ms)을 넘는다
+                    return true;
+                });
+
+        scheduler.failStaleInquiries();
+
+        // 정확한 호출 수는 실행 환경 속도에 따라 달라질 수 있어 범위로 검증한다 (5건 전부 처리되면 안 된다)
+        then(staleInquiryFailService).should(atLeast(1)).failIfStale(any(), any(), eq(InquiryStatus.ACCEPTED), any());
+        then(staleInquiryFailService).should(atMost(3)).failIfStale(any(), any(), eq(InquiryStatus.ACCEPTED), any());
+        then(staleInquiryFailService).should(never()).failIfStale(eq(5L), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("건별 폴백 - 예산이 충분하면 모든 행을 처리한다 (예산 확인이 정상 경로를 막지 않는다)")
+    void perRowFallback_processesAllRowsWhenBudgetRemains() {
+        stubStale(InquiryStatus.ACCEPTED, view(1L, "LL_1"), view(2L, "LL_2"), view(3L, "LL_3"));
+        given(staleInquiryFailService.failAllIfStale(any(), eq(InquiryStatus.ACCEPTED), any()))
+                .willThrow(new IllegalStateException("bulk failed"));
+        given(staleInquiryFailService.failIfStale(any(), any(), eq(InquiryStatus.ACCEPTED), any())).willReturn(true);
+
+        scheduler.failStaleInquiries();
+
+        then(staleInquiryFailService).should(times(3)).failIfStale(any(), any(), eq(InquiryStatus.ACCEPTED), any());
+        assertThat(failedCount(InquiryStatus.ACCEPTED)).isEqualTo(3.0);
     }
 
     @Test

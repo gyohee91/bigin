@@ -125,7 +125,7 @@ public class StaleInquiryRecoveryScheduler {
             } catch (Exception e) {
                 log.error("[한도조회 복구] 묶음 처리 실패, 건별 처리로 전환. status = {}, size={}", status, ids.size(), e);
                 meterRegistry.counter("inquiry.recovery.error", "from", status.name()).increment();
-                failed = failOneByOne(staleInquiryViews, status, before);
+                failed = failOneByOne(staleInquiryViews, status, before, deadlineNanos);
             }
             total += failed;
 
@@ -147,11 +147,22 @@ public class StaleInquiryRecoveryScheduler {
      * 한 건이 실패해도(poison row) 나머지는 계속 처리하고, 실패 건은 {@code inquiry.recovery.error} 로 센다.
      * 실패한 행은 stale 상태로 남아 다음 사이클에 다시 시도된다.
      *
+     * <p>행 루프도 사이클의 시간 예산({@code deadlineNanos})을 지킨다. DB 가 느린 상황에서 chunk 하나(batchSize 건)를
+     * 건별로 처리하다가 예산을 크게 넘기지 않도록, 예산을 다 쓰면 남은 행은 처리하지 않고 중단한다.
+     * 처리하지 못한 행은 stale 상태로 남아 다음 사이클에 다시 시도된다.</p>
+     *
+     * @param deadlineNanos {@link System#nanoTime()} 기준 종료 시각
      * @return 건별 처리에서 실제로 FAILED 로 바뀐 건수
      */
-    private int failOneByOne(List<StaleInquiryView> staleInquiryViews, InquiryStatus status, LocalDateTime before) {
+    private int failOneByOne(List<StaleInquiryView> staleInquiryViews, InquiryStatus status, LocalDateTime before, long deadlineNanos) {
         int failed = 0;
-        for(StaleInquiryView view : staleInquiryViews) {
+        for (int i = 0; i < staleInquiryViews.size(); i++) {
+            if (System.nanoTime() >= deadlineNanos) {
+                log.warn("[한도조회 복구] 건별 처리 중 시간 예산 소진. status={}, 처리 {}건 / 남은 {}건은 다음 사이클로",
+                        status, i, staleInquiryViews.size() - i);
+                break;
+            }
+            StaleInquiryView view = staleInquiryViews.get(i);
             try {
                 if (staleInquiryFailService.failIfStale(view.getId(), view.getInquiryNo(), status, before))  failed++;
             } catch (Exception e) {
