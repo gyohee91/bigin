@@ -14,6 +14,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -46,7 +47,8 @@ public interface LoanLimitProductResultRepository extends JpaRepository<LoanLimi
     @Modifying
     @Query("""
             UPDATE LoanLimitInquiry i
-            SET i.successProductCount = i.successProductCount + 1
+            SET i.successProductCount = i.successProductCount + 1,
+                i.updatedAt = :now
             WHERE i.id = (
                 SELECT t.loanLimitInquiry.id FROM LoanLimitProductResult t
                 WHERE t.loReqtNo = :loReqtNo AND t.productCode = :productCode
@@ -54,7 +56,8 @@ public interface LoanLimitProductResultRepository extends JpaRepository<LoanLimi
             """)
     int incrementSuccessProductCount(
             @Param("loReqtNo") String loReqtNo,
-            @Param("productCode") String productCode
+            @Param("productCode") String productCode,
+            @Param("now") LocalDateTime now
     );
 
     @Query("SELECT t.loanLimitInquiry FROM LoanLimitProductResult t WHERE t.loReqtNo = :loReqtNo AND t.productCode = :productCode")

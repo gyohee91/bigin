@@ -6,6 +6,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+
 /**
  * {@link LoanLimitResultService}의 콜백 카운트 증가 전용 협력자.
  *
@@ -44,6 +46,6 @@ public class LoanLimitCounterService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int incrementSuccessCount(String loReqtNo, String productCode) {
-        return loanLimitProductResultRepository.incrementSuccessProductCount(loReqtNo, productCode);
+        return loanLimitProductResultRepository.incrementSuccessProductCount(loReqtNo, productCode, LocalDateTime.now());
     }
 }
