@@ -27,4 +27,16 @@ public enum InquiryStatus {
     public boolean isTerminal() {
         return this == SUCCESS || this == PARTIAL_SUCCESS || this == FAILED;
     }
+
+    /**
+     * 알 수 없거나 비어 있으면 null (폴링 응답 판별용: null이면 종료 상태를 보지 않는다)
+     */
+    public static InquiryStatus parseOrNull(String value) {
+        if (value == null || value.isBlank())   return null;
+        try {
+            return valueOf(value.trim());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
 }

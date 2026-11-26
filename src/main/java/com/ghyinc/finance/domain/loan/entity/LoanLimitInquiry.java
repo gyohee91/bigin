@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.entity;
 
+import com.ghyinc.finance.domain.loan.dto.InquiryProgress;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitRequest;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.JobType;
@@ -117,21 +118,15 @@ public class LoanLimitInquiry extends BaseTimeEntity {
         this.successProductCount = 0;
     }
 
-    public void incrementSuccessCount() {
-        this.successProductCount++;
-    }
-
     /**
      * 한도결과 수신 진행률 (0 ~ 100)
      */
     public int getProgressRate() {
-        if (totalProductCount == 0)
-            return 0;
-        return (int) ((successProductCount * 100.0) / totalProductCount);
+        return new InquiryProgress(totalProductCount, successProductCount).rate();
     }
 
     public boolean isAllResultReceived() {
-        return totalProductCount > 0 && successProductCount >= totalProductCount;
+        return new InquiryProgress(totalProductCount, successProductCount).allReceived();
     }
 
     /**

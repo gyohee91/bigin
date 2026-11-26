@@ -1,8 +1,12 @@
 package com.ghyinc.finance.domain.loan.dto;
 
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
+import com.ghyinc.finance.domain.loan.enums.PartnerCode;
+import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -17,6 +21,10 @@ class LoanLimitPollingResponseTest {
                 .successProductCount(1)
                 .inquiryStatus("IN_PROGRESS")
                 .build();
+    }
+
+    private LoanLimitProductResultDto dto(String no) {
+        return new LoanLimitProductResultDto(no, PartnerCode.KAKAO_BANK, "k1", PartnerInquiryStatus.SUCCESS, null, 100L, 5.5);
     }
 
     @Test
@@ -119,5 +127,45 @@ class LoanLimitPollingResponseTest {
         assertThat(r.changed()).isFalse();
         assertThat(r.version()).isEqualTo(9L);
         assertThat(r.expired()).isTrue();
+    }
+
+    @Test
+    @DisplayName("of: 진행률/페이징 계산과 status == inquiryStatus")
+    void of_calculatesProgressAndPaging() {
+        var r = LoanLimitPollingResponse.of("LL1", "IN_PROGRESS", new InquiryProgress(3, 1),
+                List.of(dto("A"), dto("B")), 3, 0, 2);
+
+        assertThat(r.progressRate()).isEqualTo(33);
+        assertThat(r.allResultReceived()).isFalse();
+        assertThat(r.totalPages()).isEqualTo(2);
+        assertThat(r.hasNext()).isTrue();
+        assertThat(r.totalElements()).isEqualTo(3);
+        assertThat(r.status()).isEqualTo("IN_PROGRESS");
+        assertThat(r.inquiryStatus()).isEqualTo("IN_PROGRESS");
+    }
+
+    @Test
+    @DisplayName("of: 마지막 페이지는 hasNext=false")
+    void of_lastPage() {
+        var r = LoanLimitPollingResponse.of("LL1", "SUCCESS", new InquiryProgress(3, 3),
+                List.of(dto("C")), 3, 1, 2);
+        assertThat(r.hasNext()).isFalse();
+        assertThat(r.allResultReceived()).isTrue();
+    }
+
+    @Test
+    @DisplayName("of: status 가 빈 문자열이면 두 필드 모두 null")
+    void of_blankStatus_isNull() {
+        var r = LoanLimitPollingResponse.of("LL1", "", new InquiryProgress(0, 0), List.of(), 0, 0, 20);
+        assertThat(r.status()).isNull();
+        assertThat(r.inquiryStatus()).isNull();
+        assertThat(r.totalPages()).isEqualTo(0);   // 요소 0개, size 20 -> ceil(0/20)=0
+    }
+
+    @Test
+    @DisplayName("of: size 가 0 이하여도 0 으로 나누지 않는다")
+    void of_sizeZero_doesNotDivideByZero() {
+        var r = LoanLimitPollingResponse.of("LL1", "SUCCESS", new InquiryProgress(1, 1), List.of(), 1, 0, 0);
+        assertThat(r.totalPages()).isEqualTo(1);
     }
 }

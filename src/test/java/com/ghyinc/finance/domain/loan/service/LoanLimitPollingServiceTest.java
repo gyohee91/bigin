@@ -388,4 +388,93 @@ class LoanLimitPollingServiceTest {
 
         verify(staleInquiryFailService).repairIfStale("LL1");
     }
+
+    // ───────────────────────── 계약: DB 경로와 같은 필드 ─────────────────────────
+
+    @Test
+    @DisplayName("Redis 히트 응답은 status 와 inquiryStatus 가 같다")
+    void hit_hasSameStatusAndInquiryStatus() {
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", null, 0, 20))
+                .thenReturn(this.result(InquiryReadModelStore.Type.OK, "IN_PROGRESS", 0L));
+
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult("LL1", 0, 20, null);
+
+        assertThat(response.status()).isEqualTo("IN_PROGRESS");
+        assertThat(response.inquiryStatus()).isEqualTo("IN_PROGRESS");
+    }
+
+    @Test
+    @DisplayName("Redis status 가 빈 문자열이면 두 필드 모두 null (응답에서 생략)")
+    void hit_blankStatus_isNull() {
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", null, 0, 20))
+                .thenReturn(this.result(InquiryReadModelStore.Type.OK, "", 0L));
+
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult("LL1", 0, 20, null);
+
+        assertThat(response.status()).isNull();
+        assertThat(response.inquiryStatus()).isNull();
+    }
+
+    @Test
+    @DisplayName("스냅샷 직접 응답도 status 와 inquiryStatus 가 같다")
+    void snapShotFallback_hasSameStatusAndInquiryStatus() {
+        InquirySnapShot snapShot = new InquirySnapShot("LL1", 1, "SUCCESS", List.of(), 0L);
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", null, 0, 20))
+                .thenReturn(this.result(InquiryReadModelStore.Type.MISS, 0, 0, 0, 0, List.of()));
+        when(snapShotLoader.load("LL1")).thenReturn(snapShot);
+        when(store.seed(snapShot)).thenReturn(false);
+
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult("LL1", 0, 20, null);
+
+        assertThat(response.status()).isEqualTo("SUCCESS");
+        assertThat(response.inquiryStatus()).isEqualTo("SUCCESS");
+    }
+
+    // ───────────────────────── 파싱 실패 -> MISS ─────────────────────────
+
+    private static final String BROKEN_JSON = "{\"loReqtNo\":\"LR1\",\"status\":\"NO_SUCH_STATUS\"}";   // enum 불일치
+
+    @Test
+    @DisplayName("저장된 JSON 을 파싱할 수 없으면 500 대신 MISS 로 취급해 DB 에서 다시 만들고 응답한다")
+    void parseFailure_treatedAsMiss_andRebuilt() throws JsonProcessingException {
+        String valid = objectMapper.writeValueAsString(this.dto("LR1", 300L, PartnerInquiryStatus.SUCCESS));
+        InquirySnapShot snapShot = new InquirySnapShot("LL1", 1, "IN_PROGRESS", List.of(), 0L);
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", null, 0, 20)).thenReturn(
+                this.result(InquiryReadModelStore.Type.OK, 9L, 1, 0, 1, List.of(BROKEN_JSON)),
+                this.result(InquiryReadModelStore.Type.OK, 100L, 1, 1, 1, List.of(valid)));
+        when(snapShotLoader.load("LL1")).thenReturn(snapShot);
+        when(store.seed(snapShot)).thenReturn(true);
+
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult("LL1", 0, 20, null);
+
+        assertThat(response.version()).isEqualTo(100L);
+        assertThat(response.productResults()).hasSize(1);
+        verify(store).count("parse_fail");
+        verify(store, times(2)).read("LL1", null, 0, 20);
+    }
+
+    @Test
+    @DisplayName("재적재 후에도 파싱이 안 되면 스냅샷으로 직접 응답한다 (무한 반복 없음)")
+    void parseFailure_persists_fallsBackToSnapShot() {
+        List<LoanLimitProductResultDto> items = List.of(this.dto("LR1", 300L, PartnerInquiryStatus.SUCCESS));
+        InquirySnapShot snapShot = new InquirySnapShot("LL1", 1, "SUCCESS", items, 0L);
+        when(store.isEnabled()).thenReturn(true);
+        when(store.read("LL1", null, 0, 20))
+                .thenReturn(this.result(InquiryReadModelStore.Type.OK, 9L, 1, 0, 1, List.of(BROKEN_JSON)));
+        when(snapShotLoader.load("LL1")).thenReturn(snapShot);
+        when(store.seed(snapShot)).thenReturn(true);
+
+        LoanLimitPollingResponse response = loanLimitPollingService.getInquiryResult("LL1", 0, 20, null);
+
+        assertThat(response.version()).isNull();
+        assertThat(response.productResults()).hasSize(1);
+        assertThat(response.allResultReceived()).isTrue();
+        verify(store, times(2)).count("parse_fail");
+        verify(store).count("fallback");
+        verify(store, times(2)).read("LL1", null, 0, 20);
+    }
 }

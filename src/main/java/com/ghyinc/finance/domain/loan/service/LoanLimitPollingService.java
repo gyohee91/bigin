@@ -1,8 +1,10 @@
 package com.ghyinc.finance.domain.loan.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.config.InquiryPollingProperties;
 import com.ghyinc.finance.domain.loan.config.StaleInquiryProperties;
+import com.ghyinc.finance.domain.loan.dto.InquiryProgress;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitPollingResponse;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
@@ -20,6 +22,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * FE 폴링 전용 진입점. 이 클래스는 @Transactional이 아니다(Redis 히트 시 DB 커넥션을 잡지 않기 위해)
@@ -39,87 +42,139 @@ public class LoanLimitPollingService {
     private final InquiryPollingProperties pollingProperties;
     private final StaleInquiryProperties staleInquiryProperties;
 
+    private static final InquiryReadModelStore.ReadResult MISS_RESULT = new InquiryReadModelStore.ReadResult(InquiryReadModelStore.Type.MISS, 0, 0, 0, null, 0, List.of());
+
+    private enum PollPath {
+        DB, REDIS, UNCHANGED, REBUILD, FALLBACK_DOWN, FALLBACK_SEED;
+
+        String tag() {
+            return name().toLowerCase(Locale.ROOT);
+        }
+    }
+
+    private record Polled(LoanLimitPollingResponse response, PollPath path) {}
+
+    /**
+     * 읽기 결과 + 파싱된 항목. 파싱 실패는 MISS로 강등된 값으로 표현한다.
+     * @param readResult
+     * @param items
+     */
+    private record Parsed(InquiryReadModelStore.ReadResult readResult, List<LoanLimitProductResultDto> items) {
+        static Parsed miss() {
+            return new Parsed(MISS_RESULT, List.of());
+        }
+    }
+
     public LoanLimitPollingResponse getInquiryResult(String inquiryNo, int page, int size, Long version) {
-        Pageable pageable = PageRequest.of(page, size);
+        Pageable pageable = PageRequest.of(page, size); // 입력 검증(page>=0, size>=1)을 더한다
 
         Timer.Sample sample = Timer.start(meterRegistry);
-        String path = "db";   // 플래그 OFF(AS-IS) 경로
+        PollPath path = PollPath.DB;   // 플래그 OFF(AS-IS) 경로
 
         try {
             if (!store.isEnabled()) {
                 return loanLimitService.getInquiryResult(inquiryNo, pageable);
             }
 
-            InquiryReadModelStore.ReadResult readResult = store.read(inquiryNo, version, page, size);
-            path = "redis";
+            path = PollPath.REDIS;
+            Polled polled = this.pollFromReadModel(inquiryNo, pageable, version);
+            path = polled.path();
 
-            // Redis 장애 -> 기존 DB 경로
-            if (readResult.type() == InquiryReadModelStore.Type.DOWN) {
-                path = "fallback_down";
-                store.count("fallback");
-                return loanLimitService.getInquiryResult(inquiryNo, pageable);
-            }
-
-            // MISS/stale -> DB 재구성 + 병합 적재
-            if (readResult.type() == InquiryReadModelStore.Type.MISS) {
-                path = "rebuild";
-                InquirySnapShot snapShot = snapShotLoader.load(inquiryNo);
-                if (store.seed(snapShot)) {
-                    // 적재본을 다시 읽어 version과 내용을 일치시킨다
-                    readResult = store.read(inquiryNo, version, page, size);
-                }
-                if (readResult.type() == InquiryReadModelStore.Type.MISS || readResult.type() == InquiryReadModelStore.Type.DOWN) {
-                    path = "fallback_seed";
-                    store.count("fallback");
-                    return this.decorate(this.fromSnapShot(snapShot, page, size),
-                            snapShot.status(), snapShot.deadlineAtEpochMs());
-                }
-            }
-
-            if (readResult.type() == InquiryReadModelStore.Type.SAME || readResult.type() == InquiryReadModelStore.Type.OK) {
-                readResult = this.repairIfStale(inquiryNo, readResult, version, page, size);
-            }
-
-            if (readResult.type() == InquiryReadModelStore.Type.SAME) {
-                path = path.equals("rebuild") ? "rebuild" : "unchanged";
-                return this.decorate(LoanLimitPollingResponse.unchanged(inquiryNo, readResult.version()),
-                        readResult.status(), readResult.deadlineAtMs());
-            }
-
-            return this.decorate(this.toResponse(inquiryNo, readResult, page, size),
-                    readResult.status(), readResult.deadlineAtMs());
+            return polled.response();
         } finally {
-            sample.stop(this.timer("polling.service", path));
+            sample.stop(this.timer("polling.service", path.tag()));
         }
     }
 
-    private LoanLimitPollingResponse toResponse(String inquiryNo, InquiryReadModelStore.ReadResult readResult, int page, int size) {
-        List<LoanLimitProductResultDto> items = new ArrayList<>(readResult.itemsJson().size());
-        Timer.Sample parse = Timer.start(meterRegistry);
-        try {
-            for (String json : readResult.itemsJson())
-                items.add(objectMapper.readValue(json, LoanLimitProductResultDto.class));
-        } catch (Exception e) {
-            throw new IllegalStateException("읽기모델 역직렬화 실패. inquiryNo=" + inquiryNo, e);
-        } finally {
-            parse.stop(this.timer("polling.readmodel.parse", null));
+    private Polled pollFromReadModel(String inquiryNo, Pageable pageable, Long version) {
+        int page = pageable.getPageNumber();
+        int size = pageable.getPageSize();
+
+        InquiryReadModelStore.ReadResult firstReadResult = store.read(inquiryNo, version, page, size);
+
+        // Redis 장애 -> 기존 DB 경로
+        if (firstReadResult.type() == InquiryReadModelStore.Type.DOWN) {
+            store.count("fallback");
+            return new Polled(loanLimitService.getInquiryResult(inquiryNo, pageable), PollPath.FALLBACK_DOWN);
         }
-        int totalPages = size == 0 ? 1 : (int) Math.ceil((double) readResult.card() / size);
-        return LoanLimitPollingResponse.builder()
-                .inquiryNo(inquiryNo)
-                .totalProductCount(readResult.total())
-                .successProductCount(readResult.success())
-                .progressRate(readResult.total() == 0 ? 0 : (int) (readResult.success() * 100.0 / readResult.total()))
-                .allResultReceived(readResult.total() > 0 && readResult.success() >= readResult.total())
-                .productResults(items)
-                .currentPage(page)
-                .totalPages(totalPages)
-                .totalElements(readResult.card())
-                .hasNext(page + 1 < totalPages)
+
+        Parsed parsed = this.parse(inquiryNo, firstReadResult);
+        PollPath path = PollPath.REDIS;
+
+        // MISS/STALE/파싱 실패 -> DB 재구성 + 병합 적재
+        if (parsed.readResult().type() == InquiryReadModelStore.Type.MISS) {
+            path = PollPath.REBUILD;
+            InquirySnapShot snapShot = snapShotLoader.load(inquiryNo);
+
+            // 적재본을 다시 읽어 version과 내용을 일치시킨다.
+            parsed = store.seed(snapShot)
+                    ? this.parse(inquiryNo, store.read(inquiryNo, version, page, size))
+                    : Parsed.miss();
+
+            InquiryReadModelStore.Type type = parsed.readResult().type();
+            if (type == InquiryReadModelStore.Type.MISS || type == InquiryReadModelStore.Type.DOWN) {
+                store.count("fallback");
+                LoanLimitPollingResponse response = this.decorate(
+                        this.fromSnapShot(snapShot, page, size),
+                        snapShot.status(), snapShot.deadlineAtEpochMs()
+                );
+                return new Polled(response, PollPath.FALLBACK_SEED);
+            }
+        }
+
+        parsed = this.repairIfStale(inquiryNo, parsed, version, page, size);
+        InquiryReadModelStore.ReadResult readResult = parsed.readResult();
+
+        if (readResult.type() == InquiryReadModelStore.Type.SAME) {
+            PollPath samePath = path == PollPath.REBUILD ? PollPath.REBUILD : PollPath.UNCHANGED;
+            LoanLimitPollingResponse response = this.decorate(
+                    LoanLimitPollingResponse.unchanged(inquiryNo, readResult.version()),
+                    readResult.status(),
+                    readResult.deadlineAtMs()
+            );
+            return new Polled(response, samePath);
+        }
+
+        return new Polled(this.decorate(
+                this.toResponse(inquiryNo, parsed, page, size),
+                readResult.status(),
+                readResult.deadlineAtMs()
+        ), path);
+    }
+
+    private LoanLimitPollingResponse toResponse(String inquiryNo, Parsed parsed, int page, int size) {
+        InquiryReadModelStore.ReadResult readResult = parsed.readResult();
+        return LoanLimitPollingResponse.of(
+                inquiryNo,
+                readResult.status(),
+                new InquiryProgress(readResult.total(), readResult.success()),
+                parsed.items(),
+                readResult.card(),
+                page,
+                size
+        ).toBuilder()
                 .version(readResult.version())
                 .changed(true)
-                .inquiryStatus(readResult.status())
                 .build();
+    }
+
+    private Parsed parse(String inquiryNo, InquiryReadModelStore.ReadResult readResult) {
+        if(readResult.type() != InquiryReadModelStore.Type.OK)
+            return new Parsed(readResult, List.of());
+        Timer.Sample sample = Timer.start(meterRegistry);
+        try {
+            List<LoanLimitProductResultDto> items = new ArrayList<>(readResult.itemsJson().size());
+            for(String json : readResult.itemsJson()) {
+                items.add(objectMapper.readValue(json, LoanLimitProductResultDto.class));
+            }
+            return new Parsed(readResult, items);
+        } catch (JsonProcessingException e) {
+            store.count("parse_fail");
+            log.warn("[ReadModel] 항목 역직렬화 실패 -> MISS 로 처리. inquiryNo={} cause={}", inquiryNo, e.toString());
+            return Parsed.miss();
+        } finally {
+            sample.stop(this.timer("polling.readmodel.parse", null));
+        }
     }
 
     /**
@@ -127,57 +182,47 @@ public class LoanLimitPollingService {
      */
     private LoanLimitPollingResponse fromSnapShot(InquirySnapShot snapShot, int page, int size) {
         List<LoanLimitProductResultDto> all = snapShot.items();
-        int from = Math.min(page * size, all.size());
-        int to = Math.min(from + size, all.size());
+        int from = (int) Math.min((long) page * size, all.size());
+        int to = (int) Math.min((long)  from + size, all.size());
         int success = (int) all.stream().filter(d -> d.status() == PartnerInquiryStatus.SUCCESS).count();
-        int totalPages = size == 0 ? 1 : (int) Math.ceil((double) all.size() / size);
-        return LoanLimitPollingResponse.builder()
-                .inquiryNo(snapShot.inquiryNo())
-                .totalProductCount(snapShot.total())
-                .successProductCount(success)
-                .progressRate(snapShot.total() == 0 ? 0 : (int) (success * 100.0 / snapShot.total()))
-                .allResultReceived(snapShot.total() > 0 && success >= snapShot.total())
-                .productResults(new ArrayList<>(all.subList(from, to)))
-                .currentPage(page)
-                .totalPages(totalPages)
-                .totalElements(all.size())
-                .hasNext(page + 1 < totalPages)
-                .inquiryStatus(snapShot.status())
-                .build();
+        return LoanLimitPollingResponse.of(
+                snapShot.inquiryNo(),
+                snapShot.status(),
+                new InquiryProgress(snapShot.total(), success),
+                new ArrayList<>(all.subList(from, to)),
+                all.size(),
+                page,
+                size
+        );
     }
 
     private LoanLimitPollingResponse decorate(LoanLimitPollingResponse response, String status, long deadlineAtMs) {
-        return response.withDeadline(parseStatus(status), deadlineAtMs, pollingProperties.pollInterval().toMillis());
+        return response.withDeadline(InquiryStatus.parseOrNull(status), deadlineAtMs,
+                pollingProperties.pollInterval().toMillis());
     }
 
-    private InquiryReadModelStore.ReadResult repairIfStale(
-            String inquiryNo, InquiryReadModelStore.ReadResult readResult, Long version, int page, int size
+    private Parsed repairIfStale(
+            String inquiryNo, Parsed currentReadResult, Long version, int page, int size
     ) {
-        InquiryStatus status = parseStatus(readResult.status());
-        if (readResult.deadlineAtMs() <= 0 || (status != null && status.isTerminal()))  return readResult;
+        InquiryReadModelStore.ReadResult readResult = currentReadResult.readResult();
+        InquiryStatus status = InquiryStatus.parseOrNull(readResult.status());
+        if (readResult.deadlineAtMs() <= 0 || (status != null && status.isTerminal()))  return currentReadResult;
 
         long createdAtMs = readResult.deadlineAtMs() - pollingProperties.clientWaitLimit().toMillis();
-        if (System.currentTimeMillis() < createdAtMs + staleInquiryProperties.minTimeout().toMillis())  return readResult;  // 아직 stale 불가
+        if (System.currentTimeMillis() < createdAtMs + staleInquiryProperties.minTimeout().toMillis())  return currentReadResult;  // 아직 stale 불가
 
         try {
-            if (!staleInquiryFailService.repairIfStale(inquiryNo))  return readResult;
+            if (!staleInquiryFailService.repairIfStale(inquiryNo))  return currentReadResult;
         } catch (Exception e) {
             log.warn("[read-repair] 실패 inquiryNo={} cause={}", inquiryNo, e.toString());
-            return readResult;
+            return currentReadResult;
         }
 
         store.count("read_repair");
-        InquiryReadModelStore.ReadResult again = store.read(inquiryNo, version, page, size);
-        return (again.type() == InquiryReadModelStore.Type.OK
-                || again.type() == InquiryReadModelStore.Type.SAME) ? again : readResult;
-    }
-
-    private InquiryStatus parseStatus(String status) {
-        try {
-            return status == null || status.isBlank() ? null : InquiryStatus.valueOf(status);
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
+        Parsed again = this.parse(inquiryNo, store.read(inquiryNo, version, page, size));
+        InquiryReadModelStore.Type type = again.readResult().type();
+        return (type == InquiryReadModelStore.Type.OK
+                || type == InquiryReadModelStore.Type.SAME) ? again : currentReadResult;
     }
 
     private Timer timer(String name, String path) {

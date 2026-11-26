@@ -63,8 +63,6 @@ public class InquiryReadModelStore {
                         -- 주의: 큰 수는 string.format('%.0f') 로 출력할 것 (일부 Windows Redis 빌드는 %d 가 32bit)
                         local mode   = ARGV[1]
                         local ttl    = tonumber(ARGV[2])
-                        local mode   = ARGV[1]
-                        local ttl    = tonumber(ARGV[2])
                         local now    = tonumber(ARGV[3])
                         local total  = tonumber(ARGV[4])
                         local status = ARGV[5]
@@ -177,12 +175,12 @@ public class InquiryReadModelStore {
     private final long downBackoffMs;
 
     // ── WRITE_LUA 인자 규약 ─────────────────────────────────────────
-    // ARGV[1..5] 헤더: mode, ttl, now, total,status
+    // ARGV[1..6] 헤더: mode, ttl, now, total, status, deadline
     // ARGV[6..]  항목: (member, score, stage, json) x N
     private static final String MODE_SEED = "S";
     private static final String MODE_DELTA = "D";
     private static final int WRITE_HEADER_SIZE = 6;
-    private static final int WRITE_TIME_SIZE = 4;
+    private static final int WRITE_ITEM_SIZE = 4;
     private static final long NULL_AMOUNT_SCORE = -1L;  // 금액 null -> 맨 뒤
 
     // ── READ_LUA 응답 규약 : {code, ver, total, success, status, card, json...} ──
@@ -258,7 +256,7 @@ public class InquiryReadModelStore {
 
     public boolean upsert(String inquiryNo, boolean seed, int total, String status, List<LoanLimitProductResultDto> items, long deadlineAtMs) {
         try {
-            List<Object> args = new ArrayList<>(WRITE_HEADER_SIZE + items.size() * WRITE_TIME_SIZE);
+            List<Object> args = new ArrayList<>(WRITE_HEADER_SIZE + items.size() * WRITE_ITEM_SIZE);
             args.add(seed ? MODE_SEED : MODE_DELTA);                // ARGV[1] mode
             args.add(String.valueOf(ttlSec));                       // ARGV[2] ttl
             args.add(String.valueOf(System.currentTimeMillis()));   // ARGV[3] now

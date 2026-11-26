@@ -3,6 +3,7 @@ package com.ghyinc.finance.domain.loan.dto;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.ghyinc.finance.domain.loan.entity.LoanLimitInquiry;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
+import com.ghyinc.finance.global.common.TextUtils;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 import org.springframework.data.domain.Page;
@@ -75,6 +76,29 @@ public record LoanLimitPollingResponse(
                 .totalElements(productResults.getTotalElements())
                 .hasNext(productResults.hasNext())
                 .inquiryStatus(inquiry.getStatus().name())
+                .build();
+    }
+
+    /**
+     * 읽기모델/스냅샷 경로 공용 조립. 진행률·페이징 계산과 status/inquiryStatus 채우기를 한 곳에서 한다.
+     * (DB 경로 from() 과 같은 필드를 같은 값으로 채워야 한다 - 계약 테스트 참고)
+     */
+    public static LoanLimitPollingResponse of(String inquiryNo, String status, InquiryProgress progress,
+                                              List<LoanLimitProductResultDto> pageItems, long totalElements, int page, int size) {
+        int totalPages = size <= 0 ? 1 : (int) Math.ceil((double) totalElements / size);
+        return LoanLimitPollingResponse.builder()
+                .inquiryNo(inquiryNo)
+                .status(TextUtils.nullIfBlank(status))      // Redis는 값이 없으면 null을 돌려줌
+                .inquiryStatus(TextUtils.nullIfBlank(status))
+                .totalProductCount(progress.total())
+                .successProductCount(progress.success())
+                .progressRate(progress.rate())
+                .allResultReceived(progress.allReceived())
+                .productResults(pageItems)
+                .currentPage(page)
+                .totalPages(totalPages)
+                .totalElements(totalElements)
+                .hasNext(page + 1 < totalPages)
                 .build();
     }
 
