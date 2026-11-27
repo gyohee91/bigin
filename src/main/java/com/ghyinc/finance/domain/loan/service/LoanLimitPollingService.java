@@ -1,17 +1,12 @@
 package com.ghyinc.finance.domain.loan.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.config.InquiryPollingProperties;
-import com.ghyinc.finance.domain.loan.config.StaleInquiryProperties;
 import com.ghyinc.finance.domain.loan.dto.InquiryProgress;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitPollingResponse;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
-import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelStore;
-import com.ghyinc.finance.domain.loan.readmodel.InquirySnapShot;
-import com.ghyinc.finance.domain.loan.readmodel.InquirySnapShotLoader;
+import com.ghyinc.finance.domain.loan.readmodel.*;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
@@ -22,7 +17,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 /**
  * FE 폴링 전용 진입점. 이 클래스는 @Transactional이 아니다(Redis 히트 시 DB 커넥션을 잡지 않기 위해)
@@ -32,38 +26,31 @@ import java.util.Locale;
 @Service
 @RequiredArgsConstructor
 public class LoanLimitPollingService {
-    private final InquiryReadModelStore store;
+    private final PollingReadModel readModel;
     private final LoanLimitService loanLimitService;
     private final InquirySnapShotLoader snapShotLoader;
-    private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
 
-    private final StaleInquiryFailService staleInquiryFailService;
+    private final StaleInquiryRepair staleInquiryRepair;
     private final InquiryPollingProperties pollingProperties;
-    private final StaleInquiryProperties staleInquiryProperties;
 
-    private static final InquiryReadModelStore.ReadResult MISS_RESULT = new InquiryReadModelStore.ReadResult(InquiryReadModelStore.Type.MISS, 0, 0, 0, null, 0, List.of());
-
+    /** polling.service 타이머와 path 태그. 값은 기존 문자열과 같게 유지(대시보드 호환) */
     private enum PollPath {
-        DB, REDIS, UNCHANGED, REBUILD, FALLBACK_DOWN, FALLBACK_SEED;
+        DB("db"), REDIS("redis"), UNCHANGED("unchanged"), REBUILD("rebuild"),
+        FALLBACK_DOWN("fallback_down"), FALLBACK_SEED("fallback_seed");
+
+        private final String tag;
+
+        PollPath(String tag) {
+            this.tag = tag;
+        }
 
         String tag() {
-            return name().toLowerCase(Locale.ROOT);
+            return tag;
         }
     }
 
     private record Polled(LoanLimitPollingResponse response, PollPath path) {}
-
-    /**
-     * 읽기 결과 + 파싱된 항목. 파싱 실패는 MISS로 강등된 값으로 표현한다.
-     * @param readResult
-     * @param items
-     */
-    private record Parsed(InquiryReadModelStore.ReadResult readResult, List<LoanLimitProductResultDto> items) {
-        static Parsed miss() {
-            return new Parsed(MISS_RESULT, List.of());
-        }
-    }
 
     public LoanLimitPollingResponse getInquiryResult(String inquiryNo, int page, int size, Long version) {
         Pageable pageable = PageRequest.of(page, size); // 입력 검증(page>=0, size>=1)을 더한다
@@ -72,7 +59,7 @@ public class LoanLimitPollingService {
         PollPath path = PollPath.DB;   // 플래그 OFF(AS-IS) 경로
 
         try {
-            if (!store.isEnabled()) {
+            if (!readModel.isEnabled()) {
                 return loanLimitService.getInquiryResult(inquiryNo, pageable);
             }
 
@@ -82,7 +69,7 @@ public class LoanLimitPollingService {
 
             return polled.response();
         } finally {
-            sample.stop(this.timer("polling.service", path.tag()));
+            sample.stop(this.timer(path.tag()));
         }
     }
 
@@ -90,91 +77,66 @@ public class LoanLimitPollingService {
         int page = pageable.getPageNumber();
         int size = pageable.getPageSize();
 
-        InquiryReadModelStore.ReadResult firstReadResult = store.read(inquiryNo, version, page, size);
+        PollingView firstReadResult = readModel.read(inquiryNo, version, page, size);
 
         // Redis 장애 -> 기존 DB 경로
-        if (firstReadResult.type() == InquiryReadModelStore.Type.DOWN) {
-            store.count("fallback");
+        if (firstReadResult instanceof PollingView.Down) {
+            readModel.count("fallback");
             return new Polled(loanLimitService.getInquiryResult(inquiryNo, pageable), PollPath.FALLBACK_DOWN);
         }
 
-        Parsed parsed = this.parse(inquiryNo, firstReadResult);
         PollPath path = PollPath.REDIS;
+        PollingView.Found found;
 
-        // MISS/STALE/파싱 실패 -> DB 재구성 + 병합 적재
-        if (parsed.readResult().type() == InquiryReadModelStore.Type.MISS) {
+        if (firstReadResult instanceof PollingView.Found firstFound) {
+            found = firstFound;
+        } else {
+            // MISS(없음/STALE/파싱 실패) -> DB 재구성 + 병합 적재
             path = PollPath.REBUILD;
             InquirySnapShot snapShot = snapShotLoader.load(inquiryNo);
 
             // 적재본을 다시 읽어 version과 내용을 일치시킨다.
-            parsed = store.seed(snapShot)
-                    ? this.parse(inquiryNo, store.read(inquiryNo, version, page, size))
-                    : Parsed.miss();
+            PollingView reload = readModel.seed(snapShot)
+                    ? readModel.read(inquiryNo, version, page, size)
+                    : PollingView.Miss.INSTANCE;
 
-            InquiryReadModelStore.Type type = parsed.readResult().type();
-            if (type == InquiryReadModelStore.Type.MISS || type == InquiryReadModelStore.Type.DOWN) {
-                store.count("fallback");
+            if (!(reload instanceof PollingView.Found rebuilt)) {
+                readModel.count("fallback");
                 LoanLimitPollingResponse response = this.decorate(
                         this.fromSnapShot(snapShot, page, size),
                         snapShot.status(), snapShot.deadlineAtEpochMs()
                 );
                 return new Polled(response, PollPath.FALLBACK_SEED);
             }
+            found = rebuilt;
         }
 
-        parsed = this.repairIfStale(inquiryNo, parsed, version, page, size);
-        InquiryReadModelStore.ReadResult readResult = parsed.readResult();
+        found = this.repairIfStale(inquiryNo, found, version, page, size);
 
-        if (readResult.type() == InquiryReadModelStore.Type.SAME) {
-            PollPath samePath = path == PollPath.REBUILD ? PollPath.REBUILD : PollPath.UNCHANGED;
-            LoanLimitPollingResponse response = this.decorate(
-                    LoanLimitPollingResponse.unchanged(inquiryNo, readResult.version()),
-                    readResult.status(),
-                    readResult.deadlineAtMs()
-            );
-            return new Polled(response, samePath);
-        }
-
-        return new Polled(this.decorate(
-                this.toResponse(inquiryNo, parsed, page, size),
-                readResult.status(),
-                readResult.deadlineAtMs()
-        ), path);
+        PollPath resultPath = (found instanceof PollingView.Unchanged && path != PollPath.REBUILD)
+                ? PollPath.UNCHANGED : path;
+        return new Polled(this.toResponse(inquiryNo, found, page, size), resultPath);
     }
 
-    private LoanLimitPollingResponse toResponse(String inquiryNo, Parsed parsed, int page, int size) {
-        InquiryReadModelStore.ReadResult readResult = parsed.readResult();
-        return LoanLimitPollingResponse.of(
-                inquiryNo,
-                readResult.status(),
-                new InquiryProgress(readResult.total(), readResult.success()),
-                parsed.items(),
-                readResult.card(),
-                page,
-                size
-        ).toBuilder()
-                .version(readResult.version())
-                .changed(true)
-                .build();
-    }
-
-    private Parsed parse(String inquiryNo, InquiryReadModelStore.ReadResult readResult) {
-        if(readResult.type() != InquiryReadModelStore.Type.OK)
-            return new Parsed(readResult, List.of());
-        Timer.Sample sample = Timer.start(meterRegistry);
-        try {
-            List<LoanLimitProductResultDto> items = new ArrayList<>(readResult.itemsJson().size());
-            for(String json : readResult.itemsJson()) {
-                items.add(objectMapper.readValue(json, LoanLimitProductResultDto.class));
-            }
-            return new Parsed(readResult, items);
-        } catch (JsonProcessingException e) {
-            store.count("parse_fail");
-            log.warn("[ReadModel] 항목 역직렬화 실패 -> MISS 로 처리. inquiryNo={} cause={}", inquiryNo, e.toString());
-            return Parsed.miss();
-        } finally {
-            sample.stop(this.timer("polling.readmodel.parse", null));
+    private LoanLimitPollingResponse toResponse(String inquiryNo, PollingView.Found found, int page, int size) {
+        LoanLimitPollingResponse response;
+        if (found instanceof PollingView.Hit hit) {
+            response = LoanLimitPollingResponse.of(
+                            inquiryNo,
+                            hit.status(),
+                            new InquiryProgress(hit.total(), hit.success()),
+                            hit.items(),
+                            hit.totalElements(),
+                            page,
+                            size
+                    ).toBuilder()
+                    .version(hit.version())
+                    .changed(true)
+                    .build();
+        } else {
+            response = LoanLimitPollingResponse.unchanged(inquiryNo, found.version());
         }
+        return this.decorate(response, found.status(), found.deadlineAtMs());
     }
 
     /**
@@ -201,33 +163,21 @@ public class LoanLimitPollingService {
                 pollingProperties.pollInterval().toMillis());
     }
 
-    private Parsed repairIfStale(
-            String inquiryNo, Parsed currentReadResult, Long version, int page, int size
+    private PollingView.Found repairIfStale(
+            String inquiryNo, PollingView.Found found, Long version, int page, int size
     ) {
-        InquiryReadModelStore.ReadResult readResult = currentReadResult.readResult();
-        InquiryStatus status = InquiryStatus.parseOrNull(readResult.status());
-        if (readResult.deadlineAtMs() <= 0 || (status != null && status.isTerminal()))  return currentReadResult;
+        InquiryStatus status = InquiryStatus.parseOrNull(found.status());
+        if (!staleInquiryRepair.repairIfDue(inquiryNo, status, found.deadlineAtMs()))  return found;
 
-        long createdAtMs = readResult.deadlineAtMs() - pollingProperties.clientWaitLimit().toMillis();
-        if (System.currentTimeMillis() < createdAtMs + staleInquiryProperties.minTimeout().toMillis())  return currentReadResult;  // 아직 stale 불가
-
-        try {
-            if (!staleInquiryFailService.repairIfStale(inquiryNo))  return currentReadResult;
-        } catch (Exception e) {
-            log.warn("[read-repair] 실패 inquiryNo={} cause={}", inquiryNo, e.toString());
-            return currentReadResult;
-        }
-
-        store.count("read_repair");
-        Parsed again = this.parse(inquiryNo, store.read(inquiryNo, version, page, size));
-        InquiryReadModelStore.Type type = again.readResult().type();
-        return (type == InquiryReadModelStore.Type.OK
-                || type == InquiryReadModelStore.Type.SAME) ? again : currentReadResult;
+        readModel.count("read_repair");
+        PollingView again = readModel.read(inquiryNo, version, page, size);
+        return again instanceof PollingView.Found foundAgain ? foundAgain : found;
     }
 
-    private Timer timer(String name, String path) {
-        Timer.Builder b = Timer.builder(name).publishPercentiles(0.5, 0.95, 0.99);
-        if (path != null) b.tag("path", path);
-        return b.register(meterRegistry);
+    private Timer timer(String path) {
+        return Timer.builder("polling.service")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .tag("path", path)
+                .register(meterRegistry);
     }
 }
