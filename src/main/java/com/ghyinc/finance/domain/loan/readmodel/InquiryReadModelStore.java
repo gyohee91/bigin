@@ -3,7 +3,8 @@ package com.ghyinc.finance.domain.loan.readmodel;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
-import io.micrometer.core.instrument.MeterRegistry;
+import com.ghyinc.finance.domain.loan.readmodel.PollingMetrics.Outcome;
+import com.ghyinc.finance.domain.loan.readmodel.PollingMetrics.RedisOp;
 import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -168,7 +169,7 @@ public class InquiryReadModelStore {
 
     private final StringRedisTemplate redis;
     private final ObjectMapper objectMapper;
-    private final MeterRegistry meterRegistry;
+    private final PollingMetrics metrics;
     private final boolean enabled;
     private final long ttlSec;
     private final long reconcileMs;
@@ -201,14 +202,14 @@ public class InquiryReadModelStore {
     public InquiryReadModelStore(
             StringRedisTemplate redis,
             ObjectMapper objectMapper,
-            MeterRegistry meterRegistry,
+            PollingMetrics metrics,
             @Value("${polling.read-model.enabled:false}") boolean enabled,
             @Value("${polling.read-model.ttl-seconds:180}") long ttlSec,
             @Value("${polling.read-model.reconcile-seconds:15}") long reconcileMs,
             @Value("${polling.read-model.down-backoff-ms:3000}") long downBackoffMs) {
         this.redis = redis;
         this.objectMapper = objectMapper;
-        this.meterRegistry = meterRegistry;
+        this.metrics = metrics;
         this.enabled = enabled;
         this.ttlSec = ttlSec;
         this.reconcileMs = reconcileMs * 1000L;
@@ -217,10 +218,6 @@ public class InquiryReadModelStore {
 
     public boolean isEnabled() {
         return enabled;
-    }
-
-    public void count(String result) {
-        meterRegistry.counter("polling.readmodel", "result", result).increment();
     }
 
     private static List<String> keys(String inquiryNo) {
@@ -273,19 +270,19 @@ public class InquiryReadModelStore {
             }
 
             Long version;
-            Timer.Sample sample = Timer.start(meterRegistry);
-            String outcome = "error";
+            Timer.Sample sample = metrics.start();
+            boolean ok = false;
             try {
                 version = redis.execute(writeScript, keys(inquiryNo), args.toArray());
-                outcome = "ok";
+                ok = true;
             } finally {
-                this.stopTimer(sample, "write", outcome);
+                metrics.stopRedis(sample, RedisOp.WRITE, ok);
             }
 
-            this.count(version != null && version == -1 ? "write_skipped_no_meta": "write_ok");
+            metrics.count(version != null && version == -1 ? Outcome.WRITE_SKIPPED_NO_META : Outcome.WRITE_OK);
             return true;
         } catch (Exception ex) {
-            this.count("write_fail");
+            metrics.count(Outcome.WRITE_FAIL);
             this.markDown(ex);
             return false;
         }
@@ -310,31 +307,31 @@ public class InquiryReadModelStore {
             String reconcile    = String.valueOf(reconcileMs);
 
             List<?> redisList;
-            Timer.Sample sample = Timer.start(meterRegistry);
-            String outcome = "error";
+            Timer.Sample sample = metrics.start();
+            boolean ok = false;
             try {
                 redisList = redis.execute(readScript, keyList.subList(0, 3),
                         clientVer, offset, limit, now, reconcile);
-                outcome = "ok";
+                ok = true;
             } finally {
-                this.stopTimer(sample, "read", outcome);
+                metrics.stopRedis(sample, RedisOp.READ, ok);
             }
 
             if (redisList == null || redisList.isEmpty()) {
-                this.count("miss");
+                metrics.count(Outcome.MISS);
                 return ReadResult.of(Type.MISS);
             }
 
             String code = String.valueOf(redisList.get(R_CODE));
             switch (code) {
                 case "SAME" -> {
-                    this.count("unchanged");
+                    metrics.count(Outcome.UNCHANGED);
                     return new ReadResult(Type.SAME, Long.parseLong(String.valueOf(redisList.get(R_VER))),
                             0, 0, String.valueOf(redisList.get(S_STATUS)), 0, List.of(),
                             Long.parseLong(String.valueOf(redisList.get(S_DEADLINE))));
                 }
                 case "OK" -> {
-                    this.count("hit");
+                    metrics.count(Outcome.HIT);
                     List<String> json = new ArrayList<>(Math.max(0, redisList.size() - R_ITEM_FROM));
                     for (int i = R_ITEM_FROM; i < redisList.size(); i++) {
                         json.add(String.valueOf(redisList.get(i)));
@@ -351,23 +348,14 @@ public class InquiryReadModelStore {
                     );
                 }
                 default -> {    // MISS / STALE
-                    this.count(code.toLowerCase());
+                    metrics.count("STALE".equals(code) ? Outcome.STALE : Outcome.MISS);
                     return ReadResult.of(Type.MISS);
                 }
             }
         } catch (Exception e) {
-            this.count("read_fail");
+            metrics.count(Outcome.READ_FAIL);
             this.markDown(e);
             return ReadResult.of(Type.DOWN);
         }
-    }
-
-    private void stopTimer(Timer.Sample sample, String op, String outcome) {
-        sample.stop(Timer.builder("polling.readmodel.redis")
-                        .description("Redis 읽기모델 호출 시간 (redis.execute 구간만)")
-                        .tag("op", op)
-                        .tag("outcome", outcome)
-                        .publishPercentiles(0.5, 0.95, 0.99)
-                .register(meterRegistry));
     }
 }

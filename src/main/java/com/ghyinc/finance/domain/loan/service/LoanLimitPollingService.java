@@ -7,6 +7,8 @@ import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.readmodel.*;
+import com.ghyinc.finance.domain.loan.readmodel.PollingMetrics.Path;
+import com.ghyinc.finance.domain.loan.readmodel.PollingMetrics.Outcome;
 import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,20 +35,20 @@ public class LoanLimitPollingService {
     private final StaleInquiryRepair staleInquiryRepair;
     private final InquiryPollingProperties pollingProperties;
 
-    private record Polled(LoanLimitPollingResponse response, PollingMetrics.Path path) {}
+    private record Polled(LoanLimitPollingResponse response, Path path) {}
 
     public LoanLimitPollingResponse getInquiryResult(String inquiryNo, int page, int size, Long version) {
         Pageable pageable = PageRequest.of(page, size); // 입력 검증(page>=0, size>=1)을 더한다
 
         Timer.Sample sample = metrics.start();
-        PollingMetrics.Path path = PollingMetrics.Path.DB;   // 플래그 OFF(AS-IS) 경로
+        Path path = Path.DB;   // 플래그 OFF(AS-IS) 경로
 
         try {
             if (!readModel.isEnabled()) {
                 return loanLimitService.getInquiryResult(inquiryNo, pageable);
             }
 
-            path = PollingMetrics.Path.REDIS;
+            path = Path.REDIS;
             Polled polled = this.pollFromReadModel(inquiryNo, pageable, version);
             path = polled.path();
 
@@ -64,18 +66,18 @@ public class LoanLimitPollingService {
 
         // Redis 장애 -> 기존 DB 경로
         if (firstReadResult instanceof PollingView.Down) {
-            metrics.count(PollingMetrics.Outcome.FALLBACK);
-            return new Polled(loanLimitService.getInquiryResult(inquiryNo, pageable), PollingMetrics.Path.FALLBACK_DOWN);
+            metrics.count(Outcome.FALLBACK);
+            return new Polled(loanLimitService.getInquiryResult(inquiryNo, pageable), Path.FALLBACK_DOWN);
         }
 
-        PollingMetrics.Path path = PollingMetrics.Path.REDIS;
+        Path path = Path.REDIS;
         PollingView.Found found;
 
         if (firstReadResult instanceof PollingView.Found firstFound) {
             found = firstFound;
         } else {
             // MISS(없음/STALE/파싱 실패) -> DB 재구성 + 병합 적재
-            path = PollingMetrics.Path.REBUILD;
+            path = Path.REBUILD;
             InquirySnapShot snapShot = snapShotLoader.load(inquiryNo);
 
             // 적재본을 다시 읽어 version과 내용을 일치시킨다.
@@ -84,20 +86,20 @@ public class LoanLimitPollingService {
                     : PollingView.Miss.INSTANCE;
 
             if (!(reload instanceof PollingView.Found rebuilt)) {
-                metrics.count(PollingMetrics.Outcome.FALLBACK);
+                metrics.count(Outcome.FALLBACK);
                 LoanLimitPollingResponse response = this.decorate(
                         this.fromSnapShot(snapShot, page, size),
                         snapShot.status(), snapShot.deadlineAtEpochMs()
                 );
-                return new Polled(response, PollingMetrics.Path.FALLBACK_SEED);
+                return new Polled(response, Path.FALLBACK_SEED);
             }
             found = rebuilt;
         }
 
         found = this.repairIfStale(inquiryNo, found, version, page, size);
 
-        PollingMetrics.Path resultPath = (found instanceof PollingView.Unchanged && path != PollingMetrics.Path.REBUILD)
-                ? PollingMetrics.Path.UNCHANGED : path;
+        Path resultPath = (found instanceof PollingView.Unchanged && path != Path.REBUILD)
+                ? Path.UNCHANGED : path;
         return new Polled(this.toResponse(inquiryNo, found, page, size), resultPath);
     }
 
@@ -152,7 +154,7 @@ public class LoanLimitPollingService {
         InquiryStatus status = InquiryStatus.parseOrNull(found.status());
         if (!staleInquiryRepair.repairIfDue(inquiryNo, status, found.deadlineAtMs()))  return found;
 
-        metrics.count(PollingMetrics.Outcome.READ_REPAIR);
+        metrics.count(Outcome.READ_REPAIR);
         PollingView again = readModel.read(inquiryNo, version, page, size);
         return again instanceof PollingView.Found foundAgain ? foundAgain : found;
     }

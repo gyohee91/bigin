@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
+import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelStore.Type;
+import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelStore.ReadResult;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -26,10 +28,15 @@ import static org.mockito.Mockito.*;
 class InquiryReadModelStoreTest {
     @Mock
     StringRedisTemplate redis;
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
     private InquiryReadModelStore store(boolean enabled) {
-        return new InquiryReadModelStore(redis, new ObjectMapper(), new SimpleMeterRegistry(),
+        return new InquiryReadModelStore(redis, new ObjectMapper(), new PollingMetrics(meterRegistry),
                 enabled, 3600, 15, 3000);
+    }
+
+    private double counter(String result) {
+        return meterRegistry.get("polling.readmodel").tag("result", result).counter().count();
     }
 
     private LoanLimitProductResultDto dto(String loReqtNo, PartnerInquiryStatus status, Long amount) {
@@ -74,8 +81,8 @@ class InquiryReadModelStoreTest {
                 .thenThrow(new RuntimeException("boom"));
         InquiryReadModelStore store = this.store(true);
 
-        assertThat(store.read("LL1", null, 0, 20).type()).isEqualTo(InquiryReadModelStore.Type.DOWN);
-        assertThat(store.read("LL1", null, 0, 20).type()).isEqualTo(InquiryReadModelStore.Type.DOWN);
+        assertThat(store.read("LL1", null, 0, 20).type()).isEqualTo(Type.DOWN);
+        assertThat(store.read("LL1", null, 0, 20).type()).isEqualTo(Type.DOWN);
 
         verify(redis, times(1)).execute(any(RedisScript.class), anyList(), any(Object[].class));
     }
@@ -97,16 +104,16 @@ class InquiryReadModelStoreTest {
 
         when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class)))
                 .thenReturn(List.of("SAME", "77", "IN_PROGRESS", "1700000060000"));
-        InquiryReadModelStore.ReadResult same = store.read("LL1", 77L, 0, 20);
-        assertThat(same.type()).isEqualTo(InquiryReadModelStore.Type.SAME);
+        ReadResult same = store.read("LL1", 77L, 0, 20);
+        assertThat(same.type()).isEqualTo(Type.SAME);
         assertThat(same.version()).isEqualTo(77L);
         assertThat(same.status()).isEqualTo("IN_PROGRESS");
         assertThat(same.deadlineAtMs()).isEqualTo(1700000060000L);
 
         when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class)))
                 .thenReturn(List.of("OK", "9", "3", "1", "IN_PROGRESS", "3", "1700000060000", "{\"a\":1}", "{\"b\":2}"));
-        InquiryReadModelStore.ReadResult ok = store.read("LL1", null, 0, 20);
-        assertThat(ok.type()).isEqualTo(InquiryReadModelStore.Type.OK);
+        ReadResult ok = store.read("LL1", null, 0, 20);
+        assertThat(ok.type()).isEqualTo(Type.OK);
         assertThat(ok.version()).isEqualTo(9L);
         assertThat(ok.total()).isEqualTo(3);
         assertThat(ok.success()).isEqualTo(1);
@@ -116,7 +123,7 @@ class InquiryReadModelStoreTest {
 
         when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class)))
                 .thenReturn(List.of("STALE"));
-        assertThat(store.read("LL1", null, 0, 20).type()).isEqualTo(InquiryReadModelStore.Type.MISS);
+        assertThat(store.read("LL1", null, 0, 20).type()).isEqualTo(Type.MISS);
     }
 
     @Test

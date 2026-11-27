@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
+import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelStore.Type;
+import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelStore.ReadResult;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -34,14 +36,14 @@ class RedisPollingReadModelTest {
         readModel = new RedisPollingReadModel(store, objectMapper, new PollingMetrics(meterRegistry));
     }
 
-    private InquiryReadModelStore.ReadResult result(InquiryReadModelStore.Type type, List<String> json) {
-        return new InquiryReadModelStore.ReadResult(type, 9L, 3, 1, "IN_PROGRESS", 3, json, 1234L);
+    private ReadResult result(Type type, List<String> json) {
+        return new ReadResult(type, 9L, 3, 1, "IN_PROGRESS", 3, json, 1234L);
     }
 
     @Test
     @DisplayName("DOWN -> DOWN")
     void read_down() {
-        when(store.read("LL1", null, 0, 20)).thenReturn(this.result(InquiryReadModelStore.Type.MISS, List.of()));
+        when(store.read("LL1", null, 0, 20)).thenReturn(this.result(Type.MISS, List.of()));
 
         assertThat(readModel.read("LL1", null, 0, 20)).isSameAs(PollingView.Miss.INSTANCE);
     }
@@ -49,7 +51,7 @@ class RedisPollingReadModelTest {
     @Test
     @DisplayName("SAME -> Unchanged (버전, 상태, 마감 시각 유지)")
     void read_same() {
-        when(store.read("LL1", 9L, 0, 20)).thenReturn(this.result(InquiryReadModelStore.Type.SAME, List.of()));
+        when(store.read("LL1", 9L, 0, 20)).thenReturn(this.result(Type.SAME, List.of()));
 
         assertThat(readModel.read("LL1", 9L, 0, 20))
                 .isEqualTo(new PollingView.Unchanged(9L, "IN_PROGRESS", 1234L));
@@ -61,7 +63,7 @@ class RedisPollingReadModelTest {
         LoanLimitProductResultDto dto =
                 new LoanLimitProductResultDto("LR1", PartnerCode.KAKAO_BANK, "k1", PartnerInquiryStatus.SUCCESS, null, 300L, 5.5);
         when(store.read("LL1", null, 0, 20)).thenReturn(
-                this.result(InquiryReadModelStore.Type.OK, List.of(objectMapper.writeValueAsString(dto)))
+                this.result(Type.OK, List.of(objectMapper.writeValueAsString(dto)))
         );
 
         PollingView view = readModel.read("LL1", null, 0, 20);
@@ -80,7 +82,7 @@ class RedisPollingReadModelTest {
     @Test
     @DisplayName("OK 인데 항목 없으면 빈 목록의 Hit")
     void read_ok_emptyItems() {
-        when(store.read("LL1", null, 0, 20)).thenReturn(this.result(InquiryReadModelStore.Type.OK, List.of()));
+        when(store.read("LL1", null, 0, 20)).thenReturn(this.result(Type.OK, List.of()));
 
         PollingView view = readModel.read("LL1", null, 0, 20);
 
@@ -92,7 +94,7 @@ class RedisPollingReadModelTest {
     @DisplayName("저장된 JSON을 파싱할 수 없으면 예외 대신 MISS로 돌리고 parse_fail을 센다")
     void read_ok_parseFail_becomeMiss() {
         when(store.read("LL1", null, 0, 20))
-                .thenReturn(this.result(InquiryReadModelStore.Type.OK, List.of(BROKEN_JSON)));
+                .thenReturn(this.result(Type.OK, List.of(BROKEN_JSON)));
 
         assertThat(readModel.read("LL1", null, 0, 20)).isSameAs(PollingView.Miss.INSTANCE);
         assertThat(meterRegistry.get("polling.readmodel")

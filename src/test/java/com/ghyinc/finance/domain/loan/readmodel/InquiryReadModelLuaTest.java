@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
+import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelStore.Type;
+import com.ghyinc.finance.domain.loan.readmodel.InquiryReadModelStore.ReadResult;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.*;
 import org.redisson.Redisson;
@@ -49,7 +51,7 @@ class InquiryReadModelLuaTest {
 
     @BeforeEach
     void setUp() {
-        store = new InquiryReadModelStore(redis, new ObjectMapper(), new SimpleMeterRegistry(), true, 60, 15, 3000);
+        store = new InquiryReadModelStore(redis, new ObjectMapper(), new PollingMetrics(new SimpleMeterRegistry()), true, 60, 15, 3000);
         loReqtNo = "TEST-" + UUID.randomUUID();
     }
 
@@ -78,7 +80,7 @@ class InquiryReadModelLuaTest {
         store.upsert(loReqtNo, false, -1, null, List.of(this.dto("LR1", PartnerInquiryStatus.SUCCESS, 100L)), 0L);
 
         assertThat(redis.hasKey(this.metaKey())).isFalse();
-        assertThat(store.read(loReqtNo, null, 0, 20).type()).isEqualTo(InquiryReadModelStore.Type.MISS);
+        assertThat(store.read(loReqtNo, null, 0, 20).type()).isEqualTo(Type.MISS);
     }
 
     @Test
@@ -90,10 +92,10 @@ class InquiryReadModelLuaTest {
                 this.dto("LR3", PartnerInquiryStatus.SEND_SUCCESS, 300L)
         ), 0L);
 
-        InquiryReadModelStore.ReadResult readResult0 = store.read(loReqtNo, null, 0, 2);
-        InquiryReadModelStore.ReadResult readResult1 = store.read(loReqtNo, null, 1, 2);
+        ReadResult readResult0 = store.read(loReqtNo, null, 0, 2);
+        ReadResult readResult1 = store.read(loReqtNo, null, 1, 2);
 
-        assertThat(readResult0.type()).isEqualTo(InquiryReadModelStore.Type.OK);
+        assertThat(readResult0.type()).isEqualTo(Type.OK);
         assertThat(readResult0.card()).isEqualTo(3L);
         assertThat(readResult0.itemsJson()).hasSize(2);
         assertThat(readResult0.itemsJson().get(0)).contains("\"LR3\"");
@@ -106,17 +108,17 @@ class InquiryReadModelLuaTest {
     @DisplayName("같은 version이면 SAME, 변경이 있으면 version이 증가한다")
     void version_staysOnNoChange_andIncreasesOnChange() {
         store.upsert(loReqtNo, true, 1, "IN_PROGRESS", List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null)), 0L);
-        InquiryReadModelStore.ReadResult firstResult = store.read(loReqtNo, null, 0, 20);
-        assertThat(store.read(loReqtNo, firstResult.version(), 0, 20).type()).isEqualTo(InquiryReadModelStore.Type.SAME);
+        ReadResult firstResult = store.read(loReqtNo, null, 0, 20);
+        assertThat(store.read(loReqtNo, firstResult.version(), 0, 20).type()).isEqualTo(Type.SAME);
 
         // 동일 내용 재적용 -> 변경 없음 -> version 유지
         store.upsert(loReqtNo, false, -1, null, List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null)), 0L);
-        assertThat(store.read(loReqtNo, firstResult.version(), 0, 20).type()).isEqualTo(InquiryReadModelStore.Type.SAME);
+        assertThat(store.read(loReqtNo, firstResult.version(), 0, 20).type()).isEqualTo(Type.SAME);
 
         // 실제 변경 -> version 증가
         store.upsert(loReqtNo, false, -1, null, List.of(this.dto("LR1", PartnerInquiryStatus.SUCCESS, 500L)), 0L);
-        InquiryReadModelStore.ReadResult changedResult = store.read(loReqtNo, firstResult.version(), 0, 20);
-        assertThat(changedResult.type()).isEqualTo(InquiryReadModelStore.Type.OK);
+        ReadResult changedResult = store.read(loReqtNo, firstResult.version(), 0, 20);
+        assertThat(changedResult.type()).isEqualTo(Type.OK);
         assertThat(changedResult.version()).isGreaterThan(firstResult.version());
         assertThat(changedResult.success()).isEqualTo(1);
     }
@@ -129,7 +131,7 @@ class InquiryReadModelLuaTest {
         // 뒤늦게 도착한 applyResults delta (SEND_SUCCESS)
         store.upsert(loReqtNo, false, -1, null, List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null)), 0L);
 
-        InquiryReadModelStore.ReadResult readResult = store.read(loReqtNo, null, 0, 20);
+        ReadResult readResult = store.read(loReqtNo, null, 0, 20);
         assertThat(readResult.success()).isEqualTo(1);
         assertThat(readResult.itemsJson().get(0)).contains("\"SUCCESS\"").contains("500");
     }
@@ -160,6 +162,6 @@ class InquiryReadModelLuaTest {
         store.upsert(loReqtNo, true, 2, "IN_PROGRESS", List.of(this.dto("LR1", PartnerInquiryStatus.SEND_SUCCESS, null)), 0L);
         redis.opsForHash().put(this.metaKey(), "syncedAt", String.valueOf(System.currentTimeMillis() - 60_000));
 
-        assertThat(store.read(loReqtNo, null, 0, 20).type()).isEqualTo(InquiryReadModelStore.Type.MISS);
+        assertThat(store.read(loReqtNo, null, 0, 20).type()).isEqualTo(Type.MISS);
     }
 }

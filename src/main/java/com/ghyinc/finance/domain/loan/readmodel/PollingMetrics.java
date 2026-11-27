@@ -41,6 +41,17 @@ public class PollingMetrics {
      * polling.readmodel 의 result 태그 중 서비스/어댑터가 기록하는 것
      */
     public enum Outcome {
+        // 읽기
+        HIT("hit"),
+        UNCHANGED("unchanged"),
+        MISS("miss"),
+        STALE("stale"),
+        READ_FAIL("read_fail"),
+        // 쓰기
+        WRITE_OK("write_ok"),
+        WRITE_FAIL("write_fail"),
+        WRITE_SKIPPED_NO_META("write_skipped_no_meta"),
+        // 서비스/어댑터
         FALLBACK("fallback"),
         READ_REPAIR("read_repair"),
         PARSE_FAIL("parse_fail");
@@ -52,9 +63,25 @@ public class PollingMetrics {
         }
     }
 
+    /**
+     * polling.readmodel.redis 의 op 태그
+     */
+    public enum RedisOp {
+        READ("read"),
+        WRITE("write");
+
+        private final String tag;
+
+        RedisOp(String tag) {
+            this.tag = tag;
+        }
+    }
+
     private final MeterRegistry meterRegistry;
     private final Map<Path, Timer> serviceTimer = new EnumMap<>(Path.class);
     private final Map<Outcome, Counter> counters = new EnumMap<>(Outcome.class);
+    private final Map<RedisOp, Timer> redisOkTimers = new EnumMap<>(RedisOp.class);
+    private final Map<RedisOp, Timer> redisErrorTimers = new EnumMap<>(RedisOp.class);
     private final Timer parseTimer;
 
     public PollingMetrics(MeterRegistry meterRegistry) {
@@ -74,7 +101,20 @@ public class PollingMetrics {
                             .register(meterRegistry)
             );
         }
+        for (RedisOp op : RedisOp.values()) {
+            redisOkTimers.put(op, this.redisTimer(op, "ok"));
+            redisErrorTimers.put(op, this.redisTimer(op, "error"));
+        }
         this.parseTimer = Timer.builder("polling.readmodel.parse")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .register(meterRegistry);
+    }
+
+    private Timer redisTimer(RedisOp op, String outcome) {
+        return Timer.builder("polling.readmodel.redis")
+                .description("Redis 읽기모델 호출 시간 (redis.execute 구간만)")
+                .tag("op", op.tag)
+                .tag("outcome", outcome)
                 .publishPercentiles(0.5, 0.95, 0.99)
                 .register(meterRegistry);
     }
@@ -89,6 +129,10 @@ public class PollingMetrics {
 
     public void count(Outcome outcome) {
         counters.get(outcome).increment();
+    }
+
+    public void stopRedis(Timer.Sample sample, RedisOp op, boolean ok) {
+        sample.stop((ok ? redisOkTimers : redisErrorTimers).get(op));
     }
 
     public void stopParse(Timer.Sample sample) {
