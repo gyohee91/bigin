@@ -7,7 +7,6 @@ import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
 import com.ghyinc.finance.domain.loan.enums.InquiryStatus;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
 import com.ghyinc.finance.domain.loan.readmodel.*;
-import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,47 +28,31 @@ public class LoanLimitPollingService {
     private final PollingReadModel readModel;
     private final LoanLimitService loanLimitService;
     private final InquirySnapShotLoader snapShotLoader;
-    private final MeterRegistry meterRegistry;
+    private final PollingMetrics metrics;
 
     private final StaleInquiryRepair staleInquiryRepair;
     private final InquiryPollingProperties pollingProperties;
 
-    /** polling.service 타이머와 path 태그. 값은 기존 문자열과 같게 유지(대시보드 호환) */
-    private enum PollPath {
-        DB("db"), REDIS("redis"), UNCHANGED("unchanged"), REBUILD("rebuild"),
-        FALLBACK_DOWN("fallback_down"), FALLBACK_SEED("fallback_seed");
-
-        private final String tag;
-
-        PollPath(String tag) {
-            this.tag = tag;
-        }
-
-        String tag() {
-            return tag;
-        }
-    }
-
-    private record Polled(LoanLimitPollingResponse response, PollPath path) {}
+    private record Polled(LoanLimitPollingResponse response, PollingMetrics.Path path) {}
 
     public LoanLimitPollingResponse getInquiryResult(String inquiryNo, int page, int size, Long version) {
         Pageable pageable = PageRequest.of(page, size); // 입력 검증(page>=0, size>=1)을 더한다
 
-        Timer.Sample sample = Timer.start(meterRegistry);
-        PollPath path = PollPath.DB;   // 플래그 OFF(AS-IS) 경로
+        Timer.Sample sample = metrics.start();
+        PollingMetrics.Path path = PollingMetrics.Path.DB;   // 플래그 OFF(AS-IS) 경로
 
         try {
             if (!readModel.isEnabled()) {
                 return loanLimitService.getInquiryResult(inquiryNo, pageable);
             }
 
-            path = PollPath.REDIS;
+            path = PollingMetrics.Path.REDIS;
             Polled polled = this.pollFromReadModel(inquiryNo, pageable, version);
             path = polled.path();
 
             return polled.response();
         } finally {
-            sample.stop(this.timer(path.tag()));
+           metrics.stop(sample, path);
         }
     }
 
@@ -81,18 +64,18 @@ public class LoanLimitPollingService {
 
         // Redis 장애 -> 기존 DB 경로
         if (firstReadResult instanceof PollingView.Down) {
-            readModel.count("fallback");
-            return new Polled(loanLimitService.getInquiryResult(inquiryNo, pageable), PollPath.FALLBACK_DOWN);
+            metrics.count(PollingMetrics.Outcome.FALLBACK);
+            return new Polled(loanLimitService.getInquiryResult(inquiryNo, pageable), PollingMetrics.Path.FALLBACK_DOWN);
         }
 
-        PollPath path = PollPath.REDIS;
+        PollingMetrics.Path path = PollingMetrics.Path.REDIS;
         PollingView.Found found;
 
         if (firstReadResult instanceof PollingView.Found firstFound) {
             found = firstFound;
         } else {
             // MISS(없음/STALE/파싱 실패) -> DB 재구성 + 병합 적재
-            path = PollPath.REBUILD;
+            path = PollingMetrics.Path.REBUILD;
             InquirySnapShot snapShot = snapShotLoader.load(inquiryNo);
 
             // 적재본을 다시 읽어 version과 내용을 일치시킨다.
@@ -101,20 +84,20 @@ public class LoanLimitPollingService {
                     : PollingView.Miss.INSTANCE;
 
             if (!(reload instanceof PollingView.Found rebuilt)) {
-                readModel.count("fallback");
+                metrics.count(PollingMetrics.Outcome.FALLBACK);
                 LoanLimitPollingResponse response = this.decorate(
                         this.fromSnapShot(snapShot, page, size),
                         snapShot.status(), snapShot.deadlineAtEpochMs()
                 );
-                return new Polled(response, PollPath.FALLBACK_SEED);
+                return new Polled(response, PollingMetrics.Path.FALLBACK_SEED);
             }
             found = rebuilt;
         }
 
         found = this.repairIfStale(inquiryNo, found, version, page, size);
 
-        PollPath resultPath = (found instanceof PollingView.Unchanged && path != PollPath.REBUILD)
-                ? PollPath.UNCHANGED : path;
+        PollingMetrics.Path resultPath = (found instanceof PollingView.Unchanged && path != PollingMetrics.Path.REBUILD)
+                ? PollingMetrics.Path.UNCHANGED : path;
         return new Polled(this.toResponse(inquiryNo, found, page, size), resultPath);
     }
 
@@ -169,15 +152,8 @@ public class LoanLimitPollingService {
         InquiryStatus status = InquiryStatus.parseOrNull(found.status());
         if (!staleInquiryRepair.repairIfDue(inquiryNo, status, found.deadlineAtMs()))  return found;
 
-        readModel.count("read_repair");
+        metrics.count(PollingMetrics.Outcome.READ_REPAIR);
         PollingView again = readModel.read(inquiryNo, version, page, size);
         return again instanceof PollingView.Found foundAgain ? foundAgain : found;
-    }
-
-    private Timer timer(String path) {
-        return Timer.builder("polling.service")
-                .publishPercentiles(0.5, 0.95, 0.99)
-                .tag("path", path)
-                .register(meterRegistry);
     }
 }

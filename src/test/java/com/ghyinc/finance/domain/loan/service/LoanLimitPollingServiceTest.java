@@ -44,12 +44,13 @@ class LoanLimitPollingServiceTest {
     InquiryPollingProperties pollingProperties = new InquiryPollingProperties(Duration.ofSeconds(60), Duration.ofSeconds(2));
 
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    PollingMetrics metrics = new PollingMetrics(meterRegistry);
 
     @BeforeEach
     void setUp() {
         lenient().when(readModel.isEnabled()).thenReturn(true);
         loanLimitPollingService = new LoanLimitPollingService(
-                readModel, loanLimitService, snapShotLoader, meterRegistry,
+                readModel, loanLimitService, snapShotLoader, metrics,
                 staleInquiryRepair, pollingProperties);
     }
 
@@ -75,8 +76,24 @@ class LoanLimitPollingServiceTest {
         return System.currentTimeMillis() - elapsed.toMillis() + pollingProperties.clientWaitLimit().toMillis();
     }
 
-    private boolean hasTimer(String path) {
-        return meterRegistry.find("polling.service").tag("path", path).timer() != null;
+    /**
+     * 해당 path로 기록된 polling.service 호출 횟수
+     */
+    private long timeCount(String path) {
+        return meterRegistry.get("polling.service")
+                .tag("path", path)
+                .timer()
+                .count();
+    }
+
+    /**
+     * polling.readmodel{result=...} 카운터 값
+     */
+    private double counter(String result) {
+        return meterRegistry.get("polling.readmodel")
+                .tag("result", result)
+                .counter()
+                .count();
     }
 
     @Test
@@ -89,7 +106,7 @@ class LoanLimitPollingServiceTest {
         assertThat(loanLimitPollingService.getInquiryResult("LL1", 0, 20, 5L)).isSameAs(asIs);
         verify(readModel, never()).read(any(), any(), anyInt(), anyInt());
         verifyNoInteractions(snapShotLoader);
-        assertThat(this.hasTimer("db")).isTrue();
+        assertThat(this.timeCount("db")).isEqualTo(1L);
     }
 
     @Test
@@ -109,7 +126,7 @@ class LoanLimitPollingServiceTest {
         assertThat(response.hasNext()).isFalse();
         assertThat(response.productResults()).hasSize(1);
         verifyNoInteractions(loanLimitService, snapShotLoader);
-        assertThat(this.hasTimer("redis")).isTrue();
+        assertThat(this.timeCount("redis")).isEqualTo(1L);
     }
 
     @Test
@@ -123,7 +140,7 @@ class LoanLimitPollingServiceTest {
         assertThat(response.changed()).isFalse();
         assertThat(response.version()).isEqualTo(9L);
         assertThat(response.productResults()).isNull();
-        assertThat(this.hasTimer("unchanged")).isTrue();
+        assertThat(this.timeCount("unchanged")).isEqualTo(1L);
     }
 
     @Test
@@ -134,8 +151,8 @@ class LoanLimitPollingServiceTest {
         when(loanLimitService.getInquiryResult(eq("LL1"), any(Pageable.class))).thenReturn(asIs);
 
         assertThat(loanLimitPollingService.getInquiryResult("LL1", 0, 20, null)).isSameAs(asIs);
-        verify(readModel).count("fallback");
-        assertThat(this.hasTimer("fallback_down")).isTrue();
+        assertThat(this.counter("fallback")).isEqualTo(1.0);
+        assertThat(this.timeCount("fallback_down")).isEqualTo(1L);
     }
 
     @Test
@@ -154,7 +171,7 @@ class LoanLimitPollingServiceTest {
         assertThat(response.version()).isEqualTo(100L);
         assertThat(response.allResultReceived()).isTrue();
         verify(readModel, times(2)).read("LL1", 3L, 0, 20);
-        assertThat(this.hasTimer("rebuild")).isTrue();
+        assertThat(this.timeCount("rebuild")).isEqualTo(1L);
     }
 
     @Test
@@ -179,8 +196,8 @@ class LoanLimitPollingServiceTest {
         assertThat(response.totalPages()).isEqualTo(2);
         assertThat(response.hasNext()).isTrue();
         assertThat(response.successProductCount()).isEqualTo(1);
-        verify(readModel).count("fallback");
-        assertThat(this.hasTimer("fallback_seed")).isTrue();
+        assertThat(this.counter("fallback")).isEqualTo(1.0);
+        assertThat(this.timeCount("fallback_seed")).isEqualTo(1L);
     }
 
     // ───────────────────────── 마감 판단(decorate) ─────────────────────────
@@ -284,7 +301,7 @@ class LoanLimitPollingServiceTest {
         assertThat(response.inquiryStatus()).isEqualTo("FAILED");
         assertThat(response.expired()).isFalse();           // 종료 상태
         assertThat(response.remainingMs()).isZero();
-        verify(readModel).count("read_repair");
+        assertThat(this.counter("read_repair")).isEqualTo(1.0);
         verify(readModel, times(2)).read("LL1", null, 0, 20);
     }
 
@@ -300,7 +317,7 @@ class LoanLimitPollingServiceTest {
         assertThat(response.inquiryStatus()).isEqualTo("IN_PROGRESS");
         assertThat(response.expired()).isTrue();
         verify(readModel, times(1)).read("LL1", null, 0, 20);
-        verify(readModel, never()).count("read_repair");
+        assertThat(this.counter("read_repair")).isZero();
     }
 
     @Test

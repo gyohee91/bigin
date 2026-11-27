@@ -3,7 +3,6 @@ package com.ghyinc.finance.domain.loan.readmodel;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
-import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,7 +17,7 @@ import java.util.List;
 public class RedisPollingReadModel implements PollingReadModel {
     private final InquiryReadModelStore store;
     private final ObjectMapper objectMapper;
-    private final MeterRegistry meterRegistry;
+    private final PollingMetrics metrics;
 
     @Override
     public boolean isEnabled() {
@@ -28,11 +27,6 @@ public class RedisPollingReadModel implements PollingReadModel {
     @Override
     public boolean seed(InquirySnapShot snapShot) {
         return store.seed(snapShot);
-    }
-
-    @Override
-    public void count(String result) {
-        store.count(result);
     }
 
     @Override
@@ -51,7 +45,7 @@ public class RedisPollingReadModel implements PollingReadModel {
      * 500 을 내지 않고 Miss 로 돌려 DB 에서 다시 만들게 한다.
      */
     private PollingView toHit(String inquiryNo, InquiryReadModelStore.ReadResult readResult) {
-        Timer.Sample sample = Timer.start(meterRegistry);
+        Timer.Sample sample = metrics.start();
         try {
             List<LoanLimitProductResultDto> items = new ArrayList<>(readResult.itemsJson().size());
             for (String json : readResult.itemsJson()) {
@@ -60,11 +54,11 @@ public class RedisPollingReadModel implements PollingReadModel {
             return new PollingView.Hit(readResult.version(), readResult.total(), readResult.success(),
                     readResult.status(), readResult.card(), items, readResult.deadlineAtMs());
         } catch (JsonProcessingException e) {
-            store.count("parse_fail");
+            metrics.count(PollingMetrics.Outcome.PARSE_FAIL);
             log.warn("[ReadModel] 항목 역직렬화 실패 -> MISS 로 처리. inquiryNo={} cause={}", inquiryNo, e.toString());
             return PollingView.Miss.INSTANCE;
         } finally {
-            sample.stop(Timer.builder("polling.readmodel.parse").publishPercentiles(0.5, 0.95, 0.99).register(meterRegistry));
+            metrics.stopParse(sample);
         }
     }
 }

@@ -10,7 +10,4 @@ public interface PollingReadModel {
 
     /** DB 스냅샷 적재. 성공하면 true */
     boolean seed(InquirySnapShot snapShot);
-
-    /** 결과 카운터. 매트릭 분리(PollingMetrics) 단계에서 이 포트 밖으로 옮길 예정 */
-    void count(String result);
 }

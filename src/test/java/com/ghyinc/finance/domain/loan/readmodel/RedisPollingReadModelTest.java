@@ -16,7 +16,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -28,10 +27,11 @@ class RedisPollingReadModelTest {
 
     ObjectMapper objectMapper = new ObjectMapper();
     RedisPollingReadModel readModel;
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
     @BeforeEach
     void setUp() {
-        readModel = new RedisPollingReadModel(store, objectMapper, new SimpleMeterRegistry());
+        readModel = new RedisPollingReadModel(store, objectMapper, new PollingMetrics(meterRegistry));
     }
 
     private InquiryReadModelStore.ReadResult result(InquiryReadModelStore.Type type, List<String> json) {
@@ -95,7 +95,10 @@ class RedisPollingReadModelTest {
                 .thenReturn(this.result(InquiryReadModelStore.Type.OK, List.of(BROKEN_JSON)));
 
         assertThat(readModel.read("LL1", null, 0, 20)).isSameAs(PollingView.Miss.INSTANCE);
-        verify(store).count("parse_fail");
+        assertThat(meterRegistry.get("polling.readmodel")
+                .tag("result", "parse_fail")
+                .counter().count()
+        ).isEqualTo(1.0);
     }
 
     @Test
@@ -107,7 +110,5 @@ class RedisPollingReadModelTest {
 
         assertThat(readModel.isEnabled()).isTrue();
         assertThat(readModel.seed(snapShot)).isTrue();
-        readModel.count("fallback");
-        verify(store).count("fallback");
     }
 }
