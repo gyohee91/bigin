@@ -51,6 +51,8 @@ public class PollingMetrics {
         WRITE_OK("write_ok"),
         WRITE_FAIL("write_fail"),
         WRITE_SKIPPED_NO_META("write_skipped_no_meta"),
+        WRITE_SKIPPED_DOWN("write_skipped_down"),           // Redis 구간이라 쓰기를 건너뜀(reconcile 로 복귀)
+        WRITE_FAIL_SERIALIZE("write_fail_serialize"), // 직렬화/인자 조립 실패(Redis 문제는 아님 -> down 처리 안함)
         // 서비스/어댑터
         FALLBACK("fallback"),
         READ_REPAIR("read_repair"),

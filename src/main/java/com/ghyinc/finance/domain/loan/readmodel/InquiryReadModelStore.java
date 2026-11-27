@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.readmodel;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
 import com.ghyinc.finance.domain.loan.enums.PartnerInquiryStatus;
@@ -30,6 +31,29 @@ public class InquiryReadModelStore {
 
         static ReadResult of(Type t) {
             return new ReadResult(t, 0, 0, 0, null, 0, List.of(), 0L);
+        }
+    }
+
+    private record WriteCommand(
+            boolean seed, long ttlSec, long nowMs, int total, String status, long deadlineAtMs, List<WriteItem> items
+    ) {
+        record WriteItem(String member, long score, int stage, String json) {}
+
+        Object[] toArgs() {
+            List<String> args = new ArrayList<>(WRITE_HEADER_SIZE + items.size() * WRITE_ITEM_SIZE);
+            args.add(seed ? MODE_SEED : MODE_DELTA);    // ARGS[1] mode
+            args.add(String.valueOf(ttlSec));           // ARGS[2] ttl
+            args.add(String.valueOf(nowMs));            // ARGS[3] now
+            args.add(String.valueOf(total));            // ARGS[4] total
+            args.add(status == null ? "" : status);     // ARGS[5] status
+            args.add(String.valueOf(deadlineAtMs));     // ARGS[6] deadline
+            for (WriteItem item : items) {              // ARGS[7..] (member, score, stage, json)
+                args.add(item.member());
+                args.add(String.valueOf(item.score()));
+                args.add(String.valueOf(item.stage()));
+                args.add(item.json());
+            }
+            return args.toArray();
         }
     }
 
@@ -235,10 +259,36 @@ public class InquiryReadModelStore {
     }
 
     /**
+     * 쓰기 가능 여부. 비활성이면 조용히 false, Redis down 구간이면 건너뛴 건수를 센다
+     * (건너띈 변경은 reconcile 로 복구되므로, 얼마나 쌓이는지 보기 위한 지표).
+     */
+    private boolean writable() {
+        if (!enabled)   return false;
+        if (this.isDown()) {
+            metrics.count(Outcome.WRITE_SKIPPED_DOWN);
+            return false;
+        }
+        return true;
+    }
+
+    private WriteCommand toCommand(
+            boolean seed, int total, String status, List<LoanLimitProductResultDto> items, long deadlineAtMs
+    ) throws JsonProcessingException {
+        List<WriteCommand.WriteItem> writeItems = new ArrayList<>(items.size());
+        for (LoanLimitProductResultDto dto : items) {
+            long score = dto.amount() == null ? NULL_AMOUNT_SCORE : dto.amount();
+            writeItems.add(new WriteCommand.WriteItem(
+                    dto.loReqtNo(), score, stage(dto.status()), objectMapper.writeValueAsString(dto)
+            ));
+        }
+        return new WriteCommand(seed, ttlSec, System.currentTimeMillis(), total, status, deadlineAtMs, writeItems);
+    }
+
+    /**
      * 이벤트(커밋 후) 반영. 실패해도 예외 전파 없음(다음 폴링에서 stale/miss -> DB 재구성으로 복구)
      */
     public void apply(InquiryReadModelEvent event) {
-        if (!enabled || this.isDown()) return;
+        if (!this.writable()) return;
         this.upsert(event.inquiryNo(), event.seed(), event.total(), event.inquiryStatus(), event.items(), event.deadlineAtEpochMs());
 
     }
@@ -247,33 +297,26 @@ public class InquiryReadModelStore {
      * 캐시 미스/stale 시 DB 스내샷을 병합 적재 (write-back)
      */
     public boolean seed(InquirySnapShot snapShot) {
-        if (!enabled || this.isDown())  return false;
+        if (!writable())  return false;
         return this.upsert(snapShot.inquiryNo(), true, snapShot.total(), snapShot.status(), snapShot.items(), snapShot.deadlineAtEpochMs());
     }
 
     public boolean upsert(String inquiryNo, boolean seed, int total, String status, List<LoanLimitProductResultDto> items, long deadlineAtMs) {
+        Object[] args;
         try {
-            List<Object> args = new ArrayList<>(WRITE_HEADER_SIZE + items.size() * WRITE_ITEM_SIZE);
-            args.add(seed ? MODE_SEED : MODE_DELTA);                // ARGV[1] mode
-            args.add(String.valueOf(ttlSec));                       // ARGV[2] ttl
-            args.add(String.valueOf(System.currentTimeMillis()));   // ARGV[3] now
-            args.add(String.valueOf(total));                        // ARGV[4] total
-            args.add(status == null ? "" : status);                 // ARGV[5] status
-            args.add(String.valueOf(deadlineAtMs));                 // ARGV[6] deadline
+            args = this.toCommand(seed, total, status, items, deadlineAtMs).toArgs();
+        } catch (Exception e) {
+            metrics.count(Outcome.WRITE_FAIL_SERIALIZE);
+            log.warn("[ReadModel] 쓰기 인자 조립 실패(Redis 상태와 무관). inquiryNo={} cause={}", inquiryNo, e.toString());
+            return false;
+        }
 
-            // 항목 (member, score, stage, json)
-            for(LoanLimitProductResultDto dto : items) {
-                args.add(dto.loReqtNo());
-                args.add(String.valueOf(dto.amount() == null ? NULL_AMOUNT_SCORE : dto.amount()));    // 금액 null -> -1(맨뒤)
-                args.add(String.valueOf(stage(dto.status())));
-                args.add(objectMapper.writeValueAsString(dto));
-            }
-
+        try {
             Long version;
             Timer.Sample sample = metrics.start();
             boolean ok = false;
             try {
-                version = redis.execute(writeScript, keys(inquiryNo), args.toArray());
+                version = redis.execute(writeScript, keys(inquiryNo), args);
                 ok = true;
             } finally {
                 metrics.stopRedis(sample, RedisOp.WRITE, ok);
@@ -301,7 +344,7 @@ public class InquiryReadModelStore {
 
             // REDIS_LUA ARGV 순서: clientVer, offset, limit, now, reconcile
             String clientVer    = clientVersion == null ? "" : String.valueOf(clientVersion);
-            String offset       = String.valueOf(page * size);
+            String offset       = String.valueOf((long) page * size);
             String limit        = String.valueOf(size);
             String now          = String.valueOf(System.currentTimeMillis());
             String reconcile    = String.valueOf(reconcileMs);

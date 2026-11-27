@@ -70,7 +70,8 @@ class PollingMetricsTest {
     @DisplayName("readmodel result 카운터 11종이 모두 0으로 등록된다")
     void registersAllOutcomes() {
         for (String result : new String[]{"hit", "unchanged", "miss", "stale", "read_fail",
-                "write_ok", "write_fail", "write_skipped_no_meta", "fallback", "read_repair", "parse_fail"}) {
+                "write_ok", "write_fail", "write_skipped_no_meta", "fallback", "read_repair", "parse_fail",
+                "write_skipped_down", "write_fail_serialize"}) {
             assertThat(meterRegistry.get("polling.readmodel").tag("result", result).counter().count()).isZero();
         }
     }

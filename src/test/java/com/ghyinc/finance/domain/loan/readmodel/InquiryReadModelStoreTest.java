@@ -1,5 +1,6 @@
 package com.ghyinc.finance.domain.loan.readmodel;
 
+import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ghyinc.finance.domain.loan.dto.LoanLimitProductResultDto;
 import com.ghyinc.finance.domain.loan.enums.PartnerCode;
@@ -31,7 +32,11 @@ class InquiryReadModelStoreTest {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
     private InquiryReadModelStore store(boolean enabled) {
-        return new InquiryReadModelStore(redis, new ObjectMapper(), new PollingMetrics(meterRegistry),
+        return this.store(enabled, new ObjectMapper());
+    }
+
+    private InquiryReadModelStore store(boolean enabled, ObjectMapper objectMapper) {
+        return new InquiryReadModelStore(redis, objectMapper, new PollingMetrics(meterRegistry),
                 enabled, 3600, 15, 3000);
     }
 
@@ -66,7 +71,7 @@ class InquiryReadModelStoreTest {
         ArgumentCaptor<Object[]> argumentCaptor = ArgumentCaptor.forClass(Object[].class);
         verify(redis).execute(any(RedisScript.class), anyList(), argumentCaptor.capture());
         Object[] objects = argumentCaptor.getValue();
-        assertThat(Arrays.stream(objects).allMatch(String.class::isInstance));
+        assertThat(Arrays.stream(objects).allMatch(String.class::isInstance)).isTrue();
         assertThat(objects[0]).isEqualTo("D");
         assertThat(objects[5]).isEqualTo("0");      // deadline (delta 는 0 = 설정 안 함)
         assertThat(objects[6]).isEqualTo("LR1");    // member
@@ -140,5 +145,64 @@ class InquiryReadModelStoreTest {
         assertThat(a[0]).isEqualTo("S");
         assertThat(a[5]).isEqualTo("1700000060000");
         assertThat(a[6]).isEqualTo("LR1");
+    }
+
+    @Test
+    @DisplayName("직렬화 실패는 write_fail_serialize 로만 세고, Redis 를 호출하지 않으며 down 처리하지 않는다")
+    void upsert_serializationFailure_doesNotMarkDown() throws Exception {
+        ObjectMapper broken = mock(ObjectMapper.class);
+        when(broken.writeValueAsString(any())).thenThrow(new JsonMappingException(null, "boom"));
+        InquiryReadModelStore store = this.store(true, broken);
+
+        boolean written = store.upsert("LL1", true, 1, "IN_PROGRESS",
+                List.of(this.dto("LR1", PartnerInquiryStatus.PENDING, 100L)), 0L);
+
+        assertThat(written).isFalse();
+        assertThat(this.counter("write_fail_serialize")).isEqualTo(1.0);
+        assertThat(this.counter("write_fail")).isZero();
+        verifyNoInteractions(redis);
+
+        // down 이 아니므로 이어지는 읽기는 Redis 로 간다
+        when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(List.of());
+        assertThat(store.read("LL1", null, 0, 20).type()).isEqualTo(Type.MISS);
+        verify(redis, times(1)).execute(any(RedisScript.class), anyList(), any(Object[].class));
+    }
+
+    @Test
+    @DisplayName("Redis 쓰기 실패는 write_fail 로 세고 backoff 에 들어간다. 이후 쓰기는 write_skipped_down 으로 센다")
+    void upsert_redisFailure_marksDown_andLaterWritesAreCountedAsSkipped() {
+        when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class)))
+                .thenThrow(new RuntimeException("boom"));
+        InquiryReadModelStore store = this.store(true);
+        InquiryReadModelEvent event = InquiryReadModelEvent.delta("LL1", null,
+                List.of(this.dto("LR1", PartnerInquiryStatus.SUCCESS, 100L)));
+
+        store.apply(event);
+        store.apply(event);
+
+        assertThat(this.counter("write_fail")).isEqualTo(1.0);
+        assertThat(this.counter("write_skipped_down")).isEqualTo(1.0);
+        verify(redis, times(1)).execute(any(RedisScript.class), anyList(), any(Object[].class));
+    }
+
+    @Test
+    @DisplayName("플래그 OFF 이면 skipped_down 도 세지 않는다")
+    void apply_disabled_doesNotCountSkipped() {
+        this.store(false).apply(InquiryReadModelEvent.delta("LL1", null,
+                List.of(this.dto("LR1", PartnerInquiryStatus.SUCCESS, 100L))));
+
+        assertThat(this.counter("write_skipped_down")).isZero();
+    }
+
+    @Test
+    @DisplayName("offset 은 int 오버플로 없이 계산한다")
+    void read_offsetDoesNotOverflow() {
+        when(redis.execute(any(RedisScript.class), anyList(), any(Object[].class))).thenReturn(List.of());
+
+        this.store(true).read("LL1", null, 100_000, 100_000);
+
+        ArgumentCaptor<Object[]> captor = ArgumentCaptor.forClass(Object[].class);
+        verify(redis).execute(any(RedisScript.class), anyList(), captor.capture());
+        assertThat(captor.getValue()[1]).isEqualTo("10000000000");   // clientVer, offset, limit, now, reconcile
     }
 }
